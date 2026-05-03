@@ -1,0 +1,16 @@
+{
+  "name": "solar-service-crm-web",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Solar Service CRM Web SaaS",
+  "scripts": {
+    "dev": "concurrently -n BACKEND,FRONTEND -c green,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "build:frontend": "npm --prefix frontend run build",
+    "start": "node backend/server.js",
+    "server": "node run.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "cross-env": "^7.0.3"
+  }
+}
