@@ -18,9 +18,9 @@ const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthSt
 const app = express();
 
 const PORT = process.env.PORT || 5050;
-const JWT_SECRET = String(process.env.JWT_SECRET || '').trim();
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET is required. Set JWT_SECRET in backend/.env before starting server.');
+const JWT_SECRET = String(process.env.JWT_SECRET || '').trim() || 'railway-fallback-jwt-secret-change-me';
+if (!String(process.env.JWT_SECRET || '').trim()) {
+  console.warn('JWT_SECRET is missing in environment. Using fallback secret. Set JWT_SECRET in Railway Variables for production security.');
 }
 
 const TRUSTED_ORIGINS = String(process.env.CORS_ORIGINS || '')
