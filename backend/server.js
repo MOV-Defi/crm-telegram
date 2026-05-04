@@ -31,6 +31,7 @@ const TRUSTED_ORIGINS = String(process.env.CORS_ORIGINS || '')
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
   if (TRUSTED_ORIGINS.includes(origin)) return true;
+  if (/^https?:\/\/([a-z0-9-]+\.)*up\.railway\.app$/i.test(origin)) return true;
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
 };
 
