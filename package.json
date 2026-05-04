@@ -4,6 +4,7 @@
   "private": true,
   "description": "Solar Service CRM Web SaaS",
   "scripts": {
+    "postinstall": "npm --prefix backend install --omit=dev",
     "dev": "concurrently -n BACKEND,FRONTEND -c green,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
     "build:frontend": "npm --prefix frontend run build",
     "start": "node backend/server.js",
