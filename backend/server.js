@@ -211,7 +211,7 @@ app.patch('/api/system/users/:id/role', verifyAuthToken, requireAdmin, (req, res
 app.get('/api/system/users', verifyAuthToken, requireAdmin, (req, res) => {
   try {
     const users = db.central.prepare(`
-      SELECT id, username, role, created_at
+      SELECT id, username, role
       FROM users
       ORDER BY id ASC
     `).all();
