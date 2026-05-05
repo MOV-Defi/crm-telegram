@@ -488,17 +488,36 @@ setInterval(async () => {
 }, 60000);
 
 // Сервінг фронтенду
-const frontendDistDir = path.resolve(
-  process.env.FRONTEND_DIST_DIR || path.join(__dirname, '..', 'frontend', 'dist')
-);
+const resolveFrontendDistDir = () => {
+  const candidates = [
+    String(process.env.FRONTEND_DIST_DIR || '').trim(),
+    path.join(__dirname, '..', 'frontend', 'dist'),
+    path.join(process.cwd(), 'frontend', 'dist'),
+    '/app/frontend/dist'
+  ]
+    .filter(Boolean)
+    .map((p) => path.resolve(p));
 
-if (fs.existsSync(frontendDistDir)) {
+  const uniqueCandidates = [...new Set(candidates)];
+  const existing = uniqueCandidates.find((p) => fs.existsSync(path.join(p, 'index.html')));
+  return { existing, candidates: uniqueCandidates };
+};
+
+const { existing: frontendDistDir, candidates: frontendDistCandidates } = resolveFrontendDistDir();
+
+if (frontendDistDir) {
+  console.log(`[frontend] Serving static files from: ${frontendDistDir}`);
   app.use('/api', (req, res) => {
     res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
   });
   app.use(express.static(frontendDistDir));
   app.get(/^\/(?!api|uploads).*/, (req, res) => {
     res.sendFile(path.join(frontendDistDir, 'index.html'));
+  });
+} else {
+  console.warn(`[frontend] Dist directory not found. Tried: ${frontendDistCandidates.join(', ')}`);
+  app.get('/', (_req, res) => {
+    res.status(503).send(`Frontend build not found. Tried: ${frontendDistCandidates.join(', ')}`);
   });
 }
 
