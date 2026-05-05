@@ -77,13 +77,17 @@ const sendServerError = (res, message = 'Internal server error') => (
 );
 
 const bootstrapAdminFromEnv = async () => {
-  const username = String(process.env.BOOTSTRAP_ADMIN_USERNAME || '').trim() || 'olegvillomi';
-  const password = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || '').trim() || 'Qwerty123!';
+  const username = String(process.env.BOOTSTRAP_ADMIN_USERNAME || '').trim();
+  const password = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || '').trim();
   if (!username) return;
 
   try {
     const existing = db.central.prepare('SELECT id, username, role FROM users WHERE username = ?').get(username);
     if (!existing) {
+      if (!password) {
+        console.warn(`BOOTSTRAP_ADMIN_USERNAME is set (${username}), but BOOTSTRAP_ADMIN_PASSWORD is missing. Skipping admin bootstrap.`);
+        return;
+      }
       const hash = await bcrypt.hash(password, 10);
       const info = db.central
         .prepare('INSERT INTO users (username, role, password_hash) VALUES (?, ?, ?)')
@@ -93,9 +97,13 @@ const bootstrapAdminFromEnv = async () => {
     }
 
     db.central.prepare('UPDATE users SET role = ? WHERE id = ?').run('admin', existing.id);
-    const hash = await bcrypt.hash(password, 10);
-    db.central.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, existing.id);
-    console.log(`Bootstrap admin updated: ${username} (role=admin, password reset)`);
+    if (password) {
+      const hash = await bcrypt.hash(password, 10);
+      db.central.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, existing.id);
+      console.log(`Bootstrap admin updated: ${username} (role=admin, password reset)`);
+      return;
+    }
+    console.log(`Bootstrap admin role ensured: ${username} (role=admin)`);
   } catch (error) {
     console.error('bootstrap admin error:', error);
   }
