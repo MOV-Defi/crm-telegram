@@ -18,9 +18,9 @@ const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthSt
 const app = express();
 
 const PORT = process.env.PORT || 5050;
-const JWT_SECRET = String(process.env.JWT_SECRET || '').trim() || 'railway-fallback-jwt-secret-change-me';
-if (!String(process.env.JWT_SECRET || '').trim()) {
-  console.warn('JWT_SECRET is missing in environment. Using fallback secret. Set JWT_SECRET in Railway Variables for production security.');
+const JWT_SECRET = String(process.env.JWT_SECRET || '').trim();
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET is required in environment.');
 }
 
 const TRUSTED_ORIGINS = String(process.env.CORS_ORIGINS || '')
@@ -167,27 +167,6 @@ app.post('/api/system/login', authLimiter, async (req, res) => {
     const username = String(req.body?.username || '').trim();
     const password = String(req.body?.password || '');
     if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
-
-    const bootstrapUsername = String(process.env.BOOTSTRAP_ADMIN_USERNAME || '').trim();
-    const bootstrapPassword = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || '');
-
-    if (bootstrapUsername && bootstrapPassword && username === bootstrapUsername && password === bootstrapPassword) {
-      let user = db.central.prepare('SELECT * FROM users WHERE username = ?').get(username);
-      const hash = await bcrypt.hash(password, 10);
-
-      if (!user) {
-        const info = db.central
-          .prepare('INSERT INTO users (username, role, password_hash) VALUES (?, ?, ?)')
-          .run(username, 'admin', hash);
-        user = db.central.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-      } else {
-        db.central.prepare('UPDATE users SET role = ?, password_hash = ? WHERE id = ?').run('admin', hash, user.id);
-        user = { ...user, role: 'admin', password_hash: hash };
-      }
-
-      const token = jwt.sign({ userId: user.id, username: user.username, role: 'admin' }, JWT_SECRET, { expiresIn: '7d' });
-      return res.json({ success: true, token, username: user.username, role: 'admin' });
-    }
 
     const user = db.central.prepare('SELECT * FROM users WHERE username = ?').get(username);
     if (!user) return res.status(400).json({ error: 'Invalid credentials' });
