@@ -303,8 +303,8 @@ app.post('/api/auth/start', async (req, res) => {
       const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
       const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
 
-      const API_ID = idRow ? idRow.value : process.env.API_ID;
-      const API_HASH = hashRow ? hashRow.value : process.env.API_HASH;
+      const API_ID = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
+      const API_HASH = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
 
       if (!API_ID || !API_HASH) {
         return res.status(500).json({ success: false, error: 'Налаштування API відсутні. Будь ласка, вкажіть API ID та API HASH в налаштуваннях.' });

@@ -48,10 +48,12 @@ router.get('/telegram', (req, res) => {
     try {
         const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
         const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
+        const apiId = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
+        const apiHash = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
         res.json({ 
-            configured: !!(idRow && hashRow),
-            apiId: idRow ? idRow.value : req.app.locals.API_ID || '',
-            apiHash: hashRow ? hashRow.value.substring(0, 4) + '...' + hashRow.value.substring(hashRow.value.length - 4) : ''
+            configured: !!(apiId && apiHash),
+            apiId,
+            apiHash: apiHash ? apiHash.substring(0, 4) + '...' + apiHash.substring(apiHash.length - 4) : ''
         });
     } catch (e) {
         console.error('settings/telegram POST error:', e);
