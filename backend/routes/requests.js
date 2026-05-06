@@ -12,16 +12,6 @@ const crypto = require('crypto');
 
 const router = express.Router();
 
-const isAdmin = (req) => {
-  return req.username === 'villomi'; // Hardcoded admin
-};
-
-const restrictToAdmin = (req, res, next) => {
-  if (!isAdmin(req)) {
-    return res.status(403).json({ error: 'Тільки адміністратор може редагувати шаблони' });
-  }
-  next();
-};
 
 const upload = multer({ dest: runtimePaths.mediaDir });
 const MAX_FILE_BASENAME = 80;
@@ -1108,7 +1098,7 @@ router.get('/templates', (req, res) => {
   }
 });
 
-router.put('/templates/:id', restrictToAdmin, (req, res) => {
+router.put('/templates/:id', (req, res) => {
   const { targetChatId, targetChatName } = req.body;
 
   try {
