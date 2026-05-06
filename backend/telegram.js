@@ -2,6 +2,9 @@ const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const db = require('./db');
 const context = require('./context');
+const runtimePaths = require('./runtime-paths');
+const fs = require('fs');
+const path = require('path');
 
 const clientsData = new Map();
 
@@ -31,14 +34,43 @@ const resetAuthState = (state) => {
     state.authResolvers = { phoneNumber: null, phoneCode: null, password: null };
 };
 
+const sessionsDir = path.join(runtimePaths.dataRoot, 'telegram_sessions');
+if (!fs.existsSync(sessionsDir)) {
+  fs.mkdirSync(sessionsDir, { recursive: true });
+}
+
+const getSessionFilePath = (userId) => path.join(sessionsDir, `user_${String(userId)}.session`);
+
 const getSession = () => {
+  const userId = context.getUserId();
+  const filePath = getSessionFilePath(userId);
+
+  // 1) Пріоритет: стабільний persistent файл у /data
+  try {
+    if (fs.existsSync(filePath)) {
+      const value = String(fs.readFileSync(filePath, 'utf8') || '').trim();
+      if (value) return value;
+    }
+  } catch (_) {}
+
+  // 2) Fallback: значення з settings (для сумісності зі старими даними)
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('tg_session');
-  return row ? row.value : '';
+  return String(row?.value || '').trim();
 };
 
 const saveSession = (sessionString) => {
+  const userId = context.getUserId();
+  const filePath = getSessionFilePath(userId);
+  const safeValue = String(sessionString || '').trim();
+
+  // Зберігаємо і в settings, і у persistent файл
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
-    .run('tg_session', sessionString);
+    .run('tg_session', safeValue);
+  try {
+    fs.writeFileSync(filePath, safeValue, 'utf8');
+  } catch (error) {
+    console.error(`[User ${userId}] Failed to write telegram session file:`, error.message);
+  }
 };
 
 const initTelegramClient = async (apiId, apiHash) => {
@@ -173,6 +205,7 @@ const disconnectTelegramClient = async () => {
 
 const logoutTelegramClient = async () => {
     try {
+        const userId = context.getUserId();
         const state = getTenantState();
         if (state.client) {
             try {
@@ -188,6 +221,10 @@ const logoutTelegramClient = async () => {
         state.authFlowPromise = null;
         state.authFlowActive = false;
         db.prepare("DELETE FROM settings WHERE key = 'tg_session'").run();
+        try {
+          const filePath = getSessionFilePath(userId);
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        } catch (_) {}
     } catch(e) {}
 };
 
