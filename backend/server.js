@@ -140,7 +140,8 @@ app.use('/uploads', verifyAuthToken, express.static(runtimePaths.uploadsDir));
 // --- SYSTEM AUTH ROUTES (Без контексту) ---
 app.post('/api/system/register', authLimiter, async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const username = String(req.body?.username || '').trim();
+    const password = String(req.body?.password || '');
     if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
     const existing = db.central.prepare('SELECT id FROM users WHERE username = ?').get(username);
@@ -163,7 +164,31 @@ app.post('/api/system/register', authLimiter, async (req, res) => {
 
 app.post('/api/system/login', authLimiter, async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const username = String(req.body?.username || '').trim();
+    const password = String(req.body?.password || '');
+    if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
+
+    const bootstrapUsername = String(process.env.BOOTSTRAP_ADMIN_USERNAME || '').trim();
+    const bootstrapPassword = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || '');
+
+    if (bootstrapUsername && bootstrapPassword && username === bootstrapUsername && password === bootstrapPassword) {
+      let user = db.central.prepare('SELECT * FROM users WHERE username = ?').get(username);
+      const hash = await bcrypt.hash(password, 10);
+
+      if (!user) {
+        const info = db.central
+          .prepare('INSERT INTO users (username, role, password_hash) VALUES (?, ?, ?)')
+          .run(username, 'admin', hash);
+        user = db.central.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+      } else {
+        db.central.prepare('UPDATE users SET role = ?, password_hash = ? WHERE id = ?').run('admin', hash, user.id);
+        user = { ...user, role: 'admin', password_hash: hash };
+      }
+
+      const token = jwt.sign({ userId: user.id, username: user.username, role: 'admin' }, JWT_SECRET, { expiresIn: '7d' });
+      return res.json({ success: true, token, username: user.username, role: 'admin' });
+    }
+
     const user = db.central.prepare('SELECT * FROM users WHERE username = ?').get(username);
     if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
