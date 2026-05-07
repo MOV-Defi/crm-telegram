@@ -350,6 +350,7 @@ function App({ currentUser: initialUser }) {
   const [documentError, setDocumentError] = useState('');
   const [newDocumentCategory, setNewDocumentCategory] = useState('');
   const [canManageDocuments, setCanManageDocuments] = useState(false);
+  const [canViewWarehouseOrders, setCanViewWarehouseOrders] = useState(false);
   const [canManageWarehouseOrders, setCanManageWarehouseOrders] = useState(false);
   const [warehouseOrders, setWarehouseOrders] = useState([]);
   const [warehouseOrdersLoading, setWarehouseOrdersLoading] = useState(false);
@@ -394,7 +395,8 @@ function App({ currentUser: initialUser }) {
 
   const ADMIN_PERMISSION_OPTIONS = [
       ['can_manage_documents', 'Керування документами'],
-      ['can_manage_warehouse_orders', 'Керування замовленнями (Склад)']
+      ['can_view_warehouse_orders', 'Склад: тільки перегляд'],
+      ['can_edit_warehouse_orders', 'Склад: перегляд + редагування']
   ];
 
   useEffect(() => {
@@ -1321,7 +1323,12 @@ function App({ currentUser: initialUser }) {
       if (!isAuthenticated) return;
       fetch(`${API_URL}/orders/permissions`)
           .then((res) => res.json())
-          .then((data) => setCanManageWarehouseOrders(Boolean(data?.canManage)))
+          .then((data) => {
+              const canEdit = Boolean(data?.canEdit ?? data?.canManage);
+              const canView = Boolean(data?.canView ?? canEdit);
+              setCanViewWarehouseOrders(canView);
+              setCanManageWarehouseOrders(canEdit);
+          })
           .catch(() => {});
   }, [isAuthenticated]);
 
@@ -2432,7 +2439,10 @@ function App({ currentUser: initialUser }) {
           const orders = await parseApiJson(ordersRes, 'Не вдалося завантажити замовлення');
           const permissions = await parseApiJson(permissionsRes, 'Не вдалося завантажити права по замовленнях');
           setWarehouseOrders(Array.isArray(orders) ? orders : []);
-          setCanManageWarehouseOrders(Boolean(permissions?.canManage));
+          const canEdit = Boolean(permissions?.canEdit ?? permissions?.canManage);
+          const canView = Boolean(permissions?.canView ?? canEdit);
+          setCanViewWarehouseOrders(canView);
+          setCanManageWarehouseOrders(canEdit);
       } catch (error) {
           alert(error.message || 'Помилка завантаження замовлень');
       } finally {
@@ -2724,8 +2734,15 @@ function App({ currentUser: initialUser }) {
   const handlePermissionToggle = async (key, value) => {
       if (!selectedAdminUserId) return;
       try {
+          const patch = { [key]: value };
+          if (key === 'can_edit_warehouse_orders' && value) {
+              patch.can_view_warehouse_orders = true;
+          }
+          if (key === 'can_view_warehouse_orders' && !value) {
+              patch.can_edit_warehouse_orders = false;
+          }
           const res = await fetch(`${API_URL}/system/users/${selectedAdminUserId}/permissions`, {
-              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ permissions: { [key]: value } })
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ permissions: patch })
           });
           const data = await parseApiJson(res, 'Не вдалося оновити доступ');
           setSelectedAdminPermissions(data?.permissions || {});
@@ -5940,6 +5957,13 @@ function App({ currentUser: initialUser }) {
                   </div>
               </div>
 
+              {!canViewWarehouseOrders && !warehouseOrdersLoading ? (
+                  <div className="bg-amber-500/10 border border-amber-500/40 rounded-2xl p-4 text-amber-200 text-sm">
+                      У вас лише базовий доступ. Для перегляду замовлень потрібен дозвіл "Склад: тільки перегляд" або "Склад: перегляд + редагування".
+                  </div>
+              ) : (
+              <>
+
               {canManageWarehouseOrders && (
                   <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4 space-y-3">
                       <div className="text-sm font-semibold text-slate-200">Додати вручну (для складу)</div>
@@ -6070,6 +6094,8 @@ function App({ currentUser: initialUser }) {
                       </div>
                   )}
               </div>
+              </>
+              )}
           </div>
       </div>
       )}
@@ -6277,6 +6303,7 @@ function App({ currentUser: initialUser }) {
                                   <input
                                       type="checkbox"
                                       checked={Boolean(selectedAdminPermissions[key])}
+                                      disabled={key === 'can_view_warehouse_orders' && Boolean(selectedAdminPermissions.can_edit_warehouse_orders)}
                                       onChange={(e) => handlePermissionToggle(key, e.target.checked)}
                                   />
                               </label>

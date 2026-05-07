@@ -9,7 +9,9 @@ const crypto = require('crypto');
 const router = express.Router();
 const upload = multer({ dest: runtimePaths.mediaDir });
 
-const MANAGE_KEY = 'can_manage_warehouse_orders';
+const VIEW_KEY = 'can_view_warehouse_orders';
+const EDIT_KEY = 'can_edit_warehouse_orders';
+const LEGACY_MANAGE_KEY = 'can_manage_warehouse_orders';
 const STATUS_SET = new Set(['new', 'in_progress', 'ready', 'issued', 'rejected']);
 const REQUEST_TYPE_SET = new Set(['reservation', 'issuance']);
 const PROJECT_RE = /про(?:е|є)кт\s*[:\-]?\s*["«]?([^"\n»]+)["»]?/i;
@@ -37,17 +39,28 @@ const normalizeOrderRow = (row) => {
   };
 };
 
-const canManageOrders = (req) => {
-  if (req.userRole === 'admin') return true;
+const getPermissionValue = (userId, permissionKey) => {
   const row = db.central.prepare(`
     SELECT is_allowed FROM user_permissions WHERE user_id = ? AND permission_key = ?
-  `).get(req.userId, MANAGE_KEY);
+  `).get(userId, permissionKey);
   return Number(row?.is_allowed || 0) === 1;
+};
+
+const canEditOrders = (req) => {
+  if (req.userRole === 'admin') return true;
+  return getPermissionValue(req.userId, EDIT_KEY) || getPermissionValue(req.userId, LEGACY_MANAGE_KEY);
+};
+
+const canViewOrders = (req) => {
+  if (req.userRole === 'admin') return true;
+  return getPermissionValue(req.userId, VIEW_KEY) || canEditOrders(req);
 };
 
 router.get('/permissions', (req, res) => {
   try {
-    res.json({ canManage: canManageOrders(req) });
+    const canEdit = canEditOrders(req);
+    const canView = canViewOrders(req);
+    res.json({ canView, canEdit, canManage: canEdit });
   } catch (_) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -55,6 +68,7 @@ router.get('/permissions', (req, res) => {
 
 router.get('/', (req, res) => {
   try {
+    if (!canViewOrders(req)) return res.status(403).json({ error: 'Недостатньо прав' });
     const rows = db.central.prepare(`
       SELECT *
       FROM warehouse_orders
@@ -69,7 +83,7 @@ router.get('/', (req, res) => {
 
 router.post('/', upload.single('file'), (req, res) => {
   try {
-    if (!canManageOrders(req)) return res.status(403).json({ error: 'Недостатньо прав' });
+    if (!canEditOrders(req)) return res.status(403).json({ error: 'Недостатньо прав' });
     const chatId = String(req.body?.chatId || '').trim();
     const chatName = String(req.body?.chatName || '').trim();
     const messageId = Number.parseInt(req.body?.messageId, 10);
@@ -131,7 +145,7 @@ router.post('/', upload.single('file'), (req, res) => {
 
 router.patch('/:id/status', (req, res) => {
   try {
-    if (!canManageOrders(req)) return res.status(403).json({ error: 'Недостатньо прав' });
+    if (!canEditOrders(req)) return res.status(403).json({ error: 'Недостатньо прав' });
     const id = Number.parseInt(req.params.id, 10);
     const nextStatus = String(req.body?.status || '').trim();
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Некоректний ID' });
@@ -158,7 +172,7 @@ router.patch('/:id/status', (req, res) => {
 
 router.patch('/:id', upload.single('file'), (req, res) => {
   try {
-    if (!canManageOrders(req)) return res.status(403).json({ error: 'Недостатньо прав' });
+    if (!canEditOrders(req)) return res.status(403).json({ error: 'Недостатньо прав' });
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Некоректний ID' });
 
