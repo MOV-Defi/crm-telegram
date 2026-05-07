@@ -368,6 +368,7 @@ function App({ currentUser: initialUser }) {
   const [adminUsers, setAdminUsers] = useState([]);
   const [selectedAdminUserId, setSelectedAdminUserId] = useState('');
   const [selectedAdminPermissions, setSelectedAdminPermissions] = useState({});
+  const [showAdminPermissionsModal, setShowAdminPermissionsModal] = useState(false);
   const [loadingAdminUsers, setLoadingAdminUsers] = useState(false);
   const [newDocumentTemplate, setNewDocumentTemplate] = useState({
       categoryId: '',
@@ -390,6 +391,11 @@ function App({ currentUser: initialUser }) {
           return Number(a?.id || 0) - Number(b?.id || 0);
       })
   );
+
+  const ADMIN_PERMISSION_OPTIONS = [
+      ['can_manage_documents', 'Керування документами'],
+      ['can_manage_warehouse_orders', 'Керування замовленнями (Склад)']
+  ];
 
   useEffect(() => {
       try {
@@ -2685,9 +2691,6 @@ function App({ currentUser: initialUser }) {
           const data = await parseApiJson(res, 'Не вдалося завантажити користувачів');
           const users = Array.isArray(data?.users) ? data.users : [];
           setAdminUsers(users);
-          if (!selectedAdminUserId && users.length > 0) {
-              setSelectedAdminUserId(String(users[0].id));
-          }
       } catch (error) {
           alert(error.message || 'Помилка завантаження користувачів');
       } finally {
@@ -2729,6 +2732,11 @@ function App({ currentUser: initialUser }) {
       } catch (error) {
           alert(error.message || 'Помилка оновлення доступу');
       }
+  };
+
+  const openAdminPermissionsModal = (userId) => {
+      setSelectedAdminUserId(String(userId));
+      setShowAdminPermissionsModal(true);
   };
 
   useEffect(() => { if (activeTab === 'adminUsers') loadAdminUsers(); }, [activeTab, isSystemAdmin]);
@@ -6209,21 +6217,25 @@ function App({ currentUser: initialUser }) {
 
       {activeTab === 'adminUsers' && isSystemAdmin && (
       <div className="flex-1 bg-slate-950 p-4 md:p-6 overflow-y-auto">
-          <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 bg-slate-900/80 border border-slate-700/50 rounded-2xl p-4">
+          <div className="max-w-7xl mx-auto">
+              <div className="bg-slate-900/80 border border-slate-700/50 rounded-2xl p-4">
                   <h2 className="text-2xl font-bold text-slate-100 mb-4">Користувачі</h2>
                   {loadingAdminUsers ? <div className="text-slate-400">Завантаження...</div> : (
                   <div className="space-y-2">
                       {adminUsers.map((u) => {
-                          const isSelected = String(selectedAdminUserId) === String(u.id);
                           return (
-                          <div key={u.id} className={`flex items-center justify-between rounded-xl border p-3 transition ${isSelected ? 'border-blue-500/60 bg-blue-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
+                          <div key={u.id} className="flex items-center justify-between rounded-xl border p-3 transition border-slate-700 bg-slate-800/50">
                               <div>
                                   <div className="text-slate-100 font-medium">{u.username}</div>
                                   <div className="text-xs text-slate-400">id: {u.id} • роль: {u.role}</div>
                               </div>
                               <div className="flex items-center gap-2">
-                                  <button onClick={() => setSelectedAdminUserId(String(u.id))} className={`px-3 py-1.5 rounded-lg border transition ${isSelected ? 'border-blue-400 text-blue-200 bg-blue-500/20' : 'border-slate-600 text-slate-200 hover:bg-slate-700'}`}>Доступи</button>
+                                  <button
+                                      onClick={() => openAdminPermissionsModal(u.id)}
+                                      className="px-3 py-1.5 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-700 transition"
+                                  >
+                                      Доступи
+                                  </button>
                                   <button onClick={() => handleAdminRoleChange(u.id, u.role === 'admin' ? 'user' : 'admin')} className="px-3 py-1.5 rounded-lg border border-blue-500/40 text-blue-300 hover:bg-blue-500/20">{u.role === 'admin' ? 'Зробити user' : 'Зробити admin'}</button>
                               </div>
                           </div>
@@ -6231,31 +6243,48 @@ function App({ currentUser: initialUser }) {
                   </div>
                   )}
               </div>
-              <div className="bg-slate-900/80 border border-slate-700/50 rounded-2xl p-4">
-                  <h3 className="text-lg font-semibold text-slate-100 mb-3">Точкові доступи</h3>
-                  <div className="text-xs text-slate-400 mb-3">
-                    {selectedAdminUserId
-                      ? `Обрано користувача: ${adminUsers.find((u) => String(u.id) === String(selectedAdminUserId))?.username || selectedAdminUserId}`
-                      : 'Обери користувача кнопкою "Доступи"'}
-                  </div>
-                  {selectedAdminUserId ? (
-                  <div className="space-y-2 text-sm">
-                      {[
-                        ['can_manage_documents','Керування документами'],
-                        ['can_manage_tags','Керування тегами'],
-                        ['can_manage_broadcasts','Керування розсилками'],
-                        ['can_manage_requests','Керування заявами'],
-                        ['can_manage_warehouse_orders','Керування замовленнями (Склад)']
-                      ].map(([key,label]) => (
-                        <label key={key} className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/40 p-2">
-                          <span className="text-slate-200">{label}</span>
-                          <input type="checkbox" checked={Boolean(selectedAdminPermissions[key])} onChange={(e)=>handlePermissionToggle(key,e.target.checked)} />
-                        </label>
-                      ))}
-                  </div>
-                  ) : <div className="text-slate-500">Користувача не обрано</div>}
-              </div>
           </div>
+
+          {showAdminPermissionsModal && selectedAdminUserId && (
+              <div
+                  className="fixed inset-0 z-[1200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+                  onClick={() => setShowAdminPermissionsModal(false)}
+              >
+                  <div
+                      className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-5"
+                      onClick={(e) => e.stopPropagation()}
+                  >
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                          <div>
+                              <h3 className="text-xl font-semibold text-slate-100">Доступи користувача</h3>
+                              <p className="text-sm text-slate-400 mt-1">
+                                  {adminUsers.find((u) => String(u.id) === String(selectedAdminUserId))?.username || selectedAdminUserId}
+                              </p>
+                          </div>
+                          <button
+                              className="text-slate-400 hover:text-white transition"
+                              onClick={() => setShowAdminPermissionsModal(false)}
+                              aria-label="Закрити"
+                          >
+                              ✕
+                          </button>
+                      </div>
+
+                      <div className="space-y-2 text-sm">
+                          {ADMIN_PERMISSION_OPTIONS.map(([key, label]) => (
+                              <label key={key} className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/40 p-3">
+                                  <span className="text-slate-200">{label}</span>
+                                  <input
+                                      type="checkbox"
+                                      checked={Boolean(selectedAdminPermissions[key])}
+                                      onChange={(e) => handlePermissionToggle(key, e.target.checked)}
+                                  />
+                              </label>
+                          ))}
+                      </div>
+                  </div>
+              </div>
+          )}
       </div>
       )}
 
