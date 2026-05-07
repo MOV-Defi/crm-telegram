@@ -19,7 +19,9 @@ const getTenantState = () => {
     
     if (!clientsData.has(userId)) {
         clientsData.set(userId, {
+            userId,
             client: null,
+            clientOwnerUserId: null,
             authResolvers: { phoneNumber: null, phoneCode: null, password: null },
             authCache: { phoneNumber: null, phoneCode: null, password: null },
             authFlowActive: false,
@@ -53,9 +55,9 @@ const getSession = () => {
     }
   } catch (_) {}
 
-  // 2) Fallback: значення з settings (для сумісності зі старими даними)
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('tg_session');
-  return String(row?.value || '').trim();
+  // Intentional: do not fallback to legacy DB session key.
+  // This prevents accidental cross-account reuse when old data exists.
+  return '';
 };
 
 const saveSession = (sessionString) => {
@@ -75,12 +77,14 @@ const saveSession = (sessionString) => {
 
 const initTelegramClient = async (apiId, apiHash) => {
   const state = getTenantState();
+  const userId = context.getUserId();
   const sessionString = getSession();
   const stringSession = new StringSession(sessionString);
   
   state.client = new TelegramClient(stringSession, parseInt(apiId), apiHash, {
     connectionRetries: 5,
   });
+  state.clientOwnerUserId = userId;
 
   if (sessionString) {
     try {
@@ -182,7 +186,13 @@ const resolveAuthStep = (step, value) => {
 
 const getClient = () => {
     try {
-        return getTenantState().client;
+        const state = getTenantState();
+        const currentUserId = context.getUserId();
+        if (state.client && state.clientOwnerUserId !== currentUserId) {
+            console.warn(`[User ${currentUserId}] Blocked foreign telegram client reuse (owner: ${state.clientOwnerUserId}).`);
+            return null;
+        }
+        return state.client;
     } catch (e) {
         return null;
     }
@@ -196,6 +206,7 @@ const disconnectTelegramClient = async () => {
                 await state.client.disconnect();
             } catch(e) {}
             state.client = null;
+            state.clientOwnerUserId = null;
         }
         resetAuthState(state);
         state.authFlowPromise = null;
@@ -216,6 +227,7 @@ const logoutTelegramClient = async () => {
                 await state.client.disconnect();
             } catch(e) {}
             state.client = null;
+            state.clientOwnerUserId = null;
         }
         resetAuthState(state);
         state.authFlowPromise = null;
