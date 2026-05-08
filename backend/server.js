@@ -299,8 +299,12 @@ app.patch('/api/system/users/:id/permissions', verifyAuthToken, requireAdmin, (r
     if (Object.prototype.hasOwnProperty.call(nextPatch, 'can_edit_warehouse_orders') && nextPatch.can_edit_warehouse_orders) {
       nextPatch.can_view_warehouse_orders = true;
     }
+    if (Object.prototype.hasOwnProperty.call(nextPatch, 'can_edit_warehouse_orders') && !nextPatch.can_edit_warehouse_orders) {
+      nextPatch.can_manage_warehouse_orders = false;
+    }
     if (Object.prototype.hasOwnProperty.call(nextPatch, 'can_view_warehouse_orders') && !nextPatch.can_view_warehouse_orders) {
       nextPatch.can_edit_warehouse_orders = false;
+      nextPatch.can_manage_warehouse_orders = false;
     }
 
     for (const [key, value] of Object.entries(nextPatch)) {
