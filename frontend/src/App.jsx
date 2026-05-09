@@ -3559,6 +3559,36 @@ function App({ currentUser: initialUser }) {
       });
   }, [dialogs, folders, activeFolderId, searchQuery, localPins]);
 
+  const groupedDialogs = React.useMemo(() => {
+      const byLowerName = new Map(filteredDialogs.map((dialog) => [String(dialog.name || '').trim().toLowerCase(), dialog]));
+      const childIds = new Set();
+      const childrenByParentId = new Map();
+
+      for (const dialog of filteredDialogs) {
+          const name = String(dialog.name || '').trim();
+          const parts = name.split(' / ').map((part) => part.trim()).filter(Boolean);
+          if (parts.length < 2) continue;
+          const parentName = parts[0].toLowerCase();
+          const parentDialog = byLowerName.get(parentName);
+          if (!parentDialog || String(parentDialog.id) === String(dialog.id)) continue;
+          childIds.add(String(dialog.id));
+          const list = childrenByParentId.get(String(parentDialog.id)) || [];
+          list.push(dialog);
+          childrenByParentId.set(String(parentDialog.id), list);
+      }
+
+      const result = [];
+      for (const dialog of filteredDialogs) {
+          if (childIds.has(String(dialog.id))) continue;
+          result.push({ dialog, level: 0 });
+          const children = childrenByParentId.get(String(dialog.id)) || [];
+          for (const child of children) {
+              result.push({ dialog: child, level: 1 });
+          }
+      }
+      return result;
+  }, [filteredDialogs]);
+
   useEffect(() => {
       localStorage.setItem('tgcrm-muted-notification-chat-ids', JSON.stringify(mutedNotificationChatIds));
   }, [mutedNotificationChatIds]);
@@ -4643,11 +4673,11 @@ function App({ currentUser: initialUser }) {
           </div>
           <div className="dialogs-list flex-1 overflow-y-auto overflow-x-hidden min-h-0">
               {loadingDialogs && <div className="p-4 text-center text-slate-500 text-sm">Завантаження чатів...</div>}
-              {filteredDialogs.map(dialog => (
+              {groupedDialogs.map(({ dialog, level }) => (
                   <div 
                       key={dialog.id} 
                       onClick={() => handleDialogClick(dialog)}
-                      className={`p-3 border-b border-slate-800/50 cursor-pointer transition flex items-center gap-3 ${selectedDialog?.id === dialog.id ? 'bg-blue-600/20 shadow-inner' : 'hover:bg-slate-800/50'}`}
+                      className={`p-3 border-b border-slate-800/50 cursor-pointer transition flex items-center gap-3 ${selectedDialog?.id === dialog.id ? 'bg-blue-600/20 shadow-inner' : 'hover:bg-slate-800/50'} ${level === 1 ? 'pl-7' : ''}`}
                   >
                       <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-500 flex-shrink-0 flex items-center justify-center font-bold text-white text-lg overflow-hidden">
                           {dialog.avatarPath ? (
@@ -4658,7 +4688,7 @@ function App({ currentUser: initialUser }) {
                       </div>
                       <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-center mb-1">
-                              <h4 className="font-semibold text-slate-200 truncate pr-2">{dialog.name}</h4>
+                              <h4 className="font-semibold text-slate-200 truncate pr-2">{level === 1 ? `↳ ${dialog.name}` : dialog.name}</h4>
                           </div>
                           <div className="flex items-center gap-1 mb-1 overflow-x-hidden">
                               {assignments.filter(a => a.chat_id === String(dialog.id)).slice(0, 3).map(a => {
