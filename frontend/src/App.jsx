@@ -106,6 +106,15 @@ function App({ currentUser: initialUser }) {
   const [chatTopicsByDialogId, setChatTopicsByDialogId] = useState({});
   const [loadingTopicsByDialogId, setLoadingTopicsByDialogId] = useState({});
   const [selectedTopicKey, setSelectedTopicKey] = useState(null);
+  const [expandedTopicGroups, setExpandedTopicGroups] = useState(() => {
+      try {
+          const raw = localStorage.getItem('tgcrm-expanded-topic-groups');
+          const parsed = raw ? JSON.parse(raw) : {};
+          return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (_) {
+          return {};
+      }
+  });
   const [loadingDialogs, setLoadingDialogs] = useState(false);
   const [activeTab, setActiveTab] = useState('messenger');
   const [currentUser, setCurrentUser] = useState(initialUser || localStorage.getItem('saas_username') || null);
@@ -3569,6 +3578,8 @@ function App({ currentUser: initialUser }) {
           const topics = Array.isArray(chatTopicsByDialogId[String(dialog.id)])
               ? chatTopicsByDialogId[String(dialog.id)]
               : [];
+          const isExpanded = Boolean(expandedTopicGroups[String(dialog.id)]);
+          if (!isExpanded) continue;
           for (const topic of topics) {
               result.push({
                   key: `topic:${dialog.id}:${topic.id}`,
@@ -3580,7 +3591,7 @@ function App({ currentUser: initialUser }) {
           }
       }
       return result;
-  }, [filteredDialogs, chatTopicsByDialogId]);
+  }, [filteredDialogs, chatTopicsByDialogId, expandedTopicGroups]);
 
   useEffect(() => {
       const candidates = filteredDialogs.filter((dialog) => dialog.isGroup || dialog.isChannel);
@@ -3607,6 +3618,28 @@ function App({ currentUser: initialUser }) {
               });
       }
   }, [filteredDialogs, chatTopicsByDialogId, loadingTopicsByDialogId]);
+
+  useEffect(() => {
+      try {
+          localStorage.setItem('tgcrm-expanded-topic-groups', JSON.stringify(expandedTopicGroups));
+      } catch (_) {}
+  }, [expandedTopicGroups]);
+
+  useEffect(() => {
+      setExpandedTopicGroups((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const [dialogId, topics] of Object.entries(chatTopicsByDialogId || {})) {
+              if (!Array.isArray(topics) || topics.length === 0) continue;
+              const hasUnreadTopic = topics.some((topic) => Number(topic?.unreadCount || 0) > 0);
+              if (hasUnreadTopic && !next[dialogId]) {
+                  next[dialogId] = true;
+                  changed = true;
+              }
+          }
+          return changed ? next : prev;
+      });
+  }, [chatTopicsByDialogId]);
 
   useEffect(() => {
       localStorage.setItem('tgcrm-muted-notification-chat-ids', JSON.stringify(mutedNotificationChatIds));
@@ -4718,6 +4751,26 @@ function App({ currentUser: initialUser }) {
                       <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-center mb-1">
                               <h4 className="font-semibold text-slate-200 truncate pr-2">{type === 'topic' ? `↳ ${topic?.title || 'Гілка'}` : dialog.name}</h4>
+                              {type === 'dialog' && (
+                                  <button
+                                      type="button"
+                                      onClick={(event) => {
+                                          event.stopPropagation();
+                                          setExpandedTopicGroups((prev) => ({
+                                              ...prev,
+                                              [String(dialog.id)]: !prev[String(dialog.id)]
+                                          }));
+                                      }}
+                                      className="ml-2 text-slate-400 hover:text-slate-200 transition"
+                                      title="Розгорнути гілки"
+                                  >
+                                      {loadingTopicsByDialogId[String(dialog.id)]
+                                          ? '...'
+                                          : ((chatTopicsByDialogId[String(dialog.id)] || []).length > 0
+                                              ? (expandedTopicGroups[String(dialog.id)] ? '▾' : '▸')
+                                              : '')}
+                                  </button>
+                              )}
                           </div>
                           <div className="flex items-center gap-1 mb-1 overflow-x-hidden">
                               {assignments.filter(a => a.chat_id === String(dialog.id)).slice(0, 3).map(a => {
