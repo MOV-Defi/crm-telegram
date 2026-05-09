@@ -1033,6 +1033,8 @@ function App({ currentUser: initialUser }) {
           setShowScrollButton(false);
       }
 
+      if (anchoredMessageIdRef.current) return;
+
       if (scrollTop < 140 && !loadingMessages && !loadingOlderMessages && hasMoreMessages) {
           loadOlderMessages();
       }
@@ -8263,9 +8265,6 @@ function App({ currentUser: initialUser }) {
                   </div>
                   <button onClick={handleSaveSettings} className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition font-medium mb-3">
                       Зберегти
-                  </button>
-                  <button onClick={handleLogout} className="w-full py-2 bg-red-600/20 hover:bg-red-600 text-red-500 hover:text-white border border-red-500/20 rounded-lg transition font-medium">
-                      Вийти з Telegram
                   </button>
                   <button onClick={handleClearSession} className="w-full py-2 bg-red-700/10 hover:bg-red-700 text-red-400 hover:text-white border border-red-700/30 rounded-lg transition font-medium mt-3">
                       Очистити сесію і дані
