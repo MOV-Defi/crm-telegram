@@ -309,6 +309,56 @@ router.get('/dialogs', async (req, res) => {
   }
 });
 
+router.get('/:id/topics', async (req, res) => {
+  try {
+    const client = getClient();
+    if (!client || !client.connected) {
+      return res.status(401).json({ error: 'Telegram клієнт не підключений' });
+    }
+
+    const rawPeerId = String(req.params.id || '').trim();
+    if (!rawPeerId) return res.status(400).json({ error: 'Некоректний ID' });
+    const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 30));
+
+    let peerCandidate = rawPeerId;
+    if (/^-?\d+$/.test(rawPeerId)) {
+      peerCandidate = BigInt(rawPeerId);
+    }
+
+    const channel = await client.getInputEntity(peerCandidate);
+    const result = await client.invoke(new Api.channels.GetForumTopics({
+      channel,
+      offsetDate: 0,
+      offsetId: 0,
+      offsetTopic: 0,
+      limit,
+      q: ''
+    }));
+
+    const topics = Array.isArray(result?.topics) ? result.topics : [];
+    const mapped = topics
+      .filter((topic) => topic && typeof topic.id === 'number')
+      .map((topic) => ({
+        id: topic.id,
+        title: String(topic.title || '').trim() || `Topic ${topic.id}`,
+        topMessage: Number(topic.topMessage || 0),
+        unreadCount: Number(topic.unreadCount || 0),
+        unreadMentionsCount: Number(topic.unreadMentionsCount || 0),
+        closed: Boolean(topic.closed),
+        hidden: Boolean(topic.hidden)
+      }));
+
+    return res.json({ topics: mapped });
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (/TOPIC|FORUM|CHANNEL_INVALID|CHANNEL_PRIVATE|PEER_ID_INVALID|CHAT_ID_INVALID/i.test(message)) {
+      return res.json({ topics: [] });
+    }
+    console.error('topics GET error:', error);
+    return res.status(500).json({ error: 'Не вдалося завантажити гілки' });
+  }
+});
+
 // Керування ігноруванням
 router.post('/ignore', (req, res) => {
   const { chatId } = req.body;

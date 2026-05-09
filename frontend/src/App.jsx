@@ -103,6 +103,9 @@ function App({ currentUser: initialUser }) {
   };
   const [loading, setLoading] = useState(true);
   const [dialogs, setDialogs] = useState([]);
+  const [chatTopicsByDialogId, setChatTopicsByDialogId] = useState({});
+  const [loadingTopicsByDialogId, setLoadingTopicsByDialogId] = useState({});
+  const [selectedTopicKey, setSelectedTopicKey] = useState(null);
   const [loadingDialogs, setLoadingDialogs] = useState(false);
   const [activeTab, setActiveTab] = useState('messenger');
   const [currentUser, setCurrentUser] = useState(initialUser || localStorage.getItem('saas_username') || null);
@@ -3560,34 +3563,50 @@ function App({ currentUser: initialUser }) {
   }, [dialogs, folders, activeFolderId, searchQuery, localPins]);
 
   const groupedDialogs = React.useMemo(() => {
-      const byLowerName = new Map(filteredDialogs.map((dialog) => [String(dialog.name || '').trim().toLowerCase(), dialog]));
-      const childIds = new Set();
-      const childrenByParentId = new Map();
-
-      for (const dialog of filteredDialogs) {
-          const name = String(dialog.name || '').trim();
-          const parts = name.split(' / ').map((part) => part.trim()).filter(Boolean);
-          if (parts.length < 2) continue;
-          const parentName = parts[0].toLowerCase();
-          const parentDialog = byLowerName.get(parentName);
-          if (!parentDialog || String(parentDialog.id) === String(dialog.id)) continue;
-          childIds.add(String(dialog.id));
-          const list = childrenByParentId.get(String(parentDialog.id)) || [];
-          list.push(dialog);
-          childrenByParentId.set(String(parentDialog.id), list);
-      }
-
       const result = [];
       for (const dialog of filteredDialogs) {
-          if (childIds.has(String(dialog.id))) continue;
-          result.push({ dialog, level: 0 });
-          const children = childrenByParentId.get(String(dialog.id)) || [];
-          for (const child of children) {
-              result.push({ dialog: child, level: 1 });
+          result.push({ key: `dialog:${dialog.id}`, type: 'dialog', dialog, level: 0 });
+          const topics = Array.isArray(chatTopicsByDialogId[String(dialog.id)])
+              ? chatTopicsByDialogId[String(dialog.id)]
+              : [];
+          for (const topic of topics) {
+              result.push({
+                  key: `topic:${dialog.id}:${topic.id}`,
+                  type: 'topic',
+                  dialog,
+                  topic,
+                  level: 1
+              });
           }
       }
       return result;
-  }, [filteredDialogs]);
+  }, [filteredDialogs, chatTopicsByDialogId]);
+
+  useEffect(() => {
+      const candidates = filteredDialogs.filter((dialog) => dialog.isGroup || dialog.isChannel);
+      for (const dialog of candidates) {
+          const dialogId = String(dialog.id);
+          if (chatTopicsByDialogId[dialogId] !== undefined || loadingTopicsByDialogId[dialogId]) continue;
+          setLoadingTopicsByDialogId((prev) => ({ ...prev, [dialogId]: true }));
+          fetch(`${API_URL}/chat/${dialogId}/topics?limit=50`)
+              .then((res) => res.json())
+              .then((data) => {
+                  const topics = Array.isArray(data?.topics) ? data.topics : [];
+                  setChatTopicsByDialogId((prev) => ({ ...prev, [dialogId]: topics }));
+              })
+              .catch((error) => {
+                  console.error('load topics error:', error);
+                  setChatTopicsByDialogId((prev) => ({ ...prev, [dialogId]: [] }));
+              })
+              .finally(() => {
+                  setLoadingTopicsByDialogId((prev) => {
+                      const next = { ...prev };
+                      delete next[dialogId];
+                      return next;
+                  });
+              });
+      }
+  }, [filteredDialogs, chatTopicsByDialogId, loadingTopicsByDialogId]);
 
   useEffect(() => {
       localStorage.setItem('tgcrm-muted-notification-chat-ids', JSON.stringify(mutedNotificationChatIds));
@@ -3753,6 +3772,9 @@ function App({ currentUser: initialUser }) {
       const dialogId = String(dialog.id);
       const requestId = dialogLoadRequestRef.current + 1;
       const focusMessageId = Number.isFinite(Number(options.focusMessageId)) ? Number(options.focusMessageId) : null;
+      if (!focusMessageId) {
+          setSelectedTopicKey(null);
+      }
       dialogLoadRequestRef.current = requestId;
       activeDialogIdRef.current = dialogId;
       pendingScrollTargetRef.current = focusMessageId ? String(focusMessageId) : 'bottom';
@@ -4673,11 +4695,18 @@ function App({ currentUser: initialUser }) {
           </div>
           <div className="dialogs-list flex-1 overflow-y-auto overflow-x-hidden min-h-0">
               {loadingDialogs && <div className="p-4 text-center text-slate-500 text-sm">Завантаження чатів...</div>}
-              {groupedDialogs.map(({ dialog, level }) => (
+              {groupedDialogs.map(({ key, dialog, topic, type, level }) => (
                   <div 
-                      key={dialog.id} 
-                      onClick={() => handleDialogClick(dialog)}
-                      className={`p-3 border-b border-slate-800/50 cursor-pointer transition flex items-center gap-3 ${selectedDialog?.id === dialog.id ? 'bg-blue-600/20 shadow-inner' : 'hover:bg-slate-800/50'} ${level === 1 ? 'pl-7' : ''}`}
+                      key={key}
+                      onClick={() => {
+                          if (type === 'topic' && topic) {
+                              setSelectedTopicKey(`topic:${dialog.id}:${topic.id}`);
+                              handleDialogClick(dialog, { focusMessageId: topic.topMessage });
+                              return;
+                          }
+                          handleDialogClick(dialog);
+                      }}
+                      className={`p-3 border-b border-slate-800/50 cursor-pointer transition flex items-center gap-3 ${(type === 'topic' && selectedTopicKey === key) || (type === 'dialog' && selectedDialog?.id === dialog.id && !selectedTopicKey) ? 'bg-blue-600/20 shadow-inner' : 'hover:bg-slate-800/50'} ${level === 1 ? 'pl-7' : ''}`}
                   >
                       <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-500 flex-shrink-0 flex items-center justify-center font-bold text-white text-lg overflow-hidden">
                           {dialog.avatarPath ? (
@@ -4688,7 +4717,7 @@ function App({ currentUser: initialUser }) {
                       </div>
                       <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-center mb-1">
-                              <h4 className="font-semibold text-slate-200 truncate pr-2">{level === 1 ? `↳ ${dialog.name}` : dialog.name}</h4>
+                              <h4 className="font-semibold text-slate-200 truncate pr-2">{type === 'topic' ? `↳ ${topic?.title || 'Гілка'}` : dialog.name}</h4>
                           </div>
                           <div className="flex items-center gap-1 mb-1 overflow-x-hidden">
                               {assignments.filter(a => a.chat_id === String(dialog.id)).slice(0, 3).map(a => {
@@ -4706,15 +4735,15 @@ function App({ currentUser: initialUser }) {
                                   <span className="text-[8px] text-slate-500">+{assignments.filter(a => a.chat_id === String(dialog.id)).length - 3}</span>
                               )}
                           </div>
-                          <p className="text-sm text-slate-400 truncate">{dialog.lastMessage}</p>
+                          <p className="text-sm text-slate-400 truncate">{type === 'topic' ? `Повідомлень: ${Number(topic?.unreadCount || 0)}` : dialog.lastMessage}</p>
                       </div>
                       {isChatMutedForNotifications(dialog.id) && (
                           <div className="text-[10px] text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded-full px-1.5 py-0.5 shrink-0" data-tooltip="Чат приглушено в центрі сповіщень">
                               mute
                           </div>
                       )}
-                      {dialog.unreadCount > 0 && (
-                          <div className="bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full">{dialog.unreadCount}</div>
+                      {((type === 'topic' ? Number(topic?.unreadCount || 0) : Number(dialog.unreadCount || 0)) > 0) && (
+                          <div className="bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full">{type === 'topic' ? Number(topic?.unreadCount || 0) : Number(dialog.unreadCount || 0)}</div>
                       )}
                   </div>
               ))}
