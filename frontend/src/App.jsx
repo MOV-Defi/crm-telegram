@@ -168,6 +168,20 @@ function App({ currentUser: initialUser }) {
   
   const [contacts, setContacts] = useState([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
+  const [creditManagers, setCreditManagers] = useState([]);
+  const [loadingCreditManagers, setLoadingCreditManagers] = useState(false);
+  const [savingCreditManager, setSavingCreditManager] = useState(false);
+  const [creditManagerForm, setCreditManagerForm] = useState({
+      bankName: '',
+      managerName: '',
+      phone: '',
+      email: '',
+      telegramContact: '',
+      responsibility: '',
+      notes: '',
+      linkedChatIds: []
+  });
+  const [editingCreditManagerId, setEditingCreditManagerId] = useState(null);
   
   const [folders, setFolders] = useState([]);
   const [activeFolderId, setActiveFolderId] = useState(null);
@@ -2751,6 +2765,112 @@ function App({ currentUser: initialUser }) {
       }
   };
 
+  const resetCreditManagerForm = () => {
+      setEditingCreditManagerId(null);
+      setCreditManagerForm({
+          bankName: '',
+          managerName: '',
+          phone: '',
+          email: '',
+          telegramContact: '',
+          responsibility: '',
+          notes: '',
+          linkedChatIds: []
+      });
+  };
+
+  const loadCreditManagers = async () => {
+      setLoadingCreditManagers(true);
+      try {
+          const res = await fetch(`${API_URL}/credit-managers`);
+          const data = await parseApiJson(res, 'Не вдалося завантажити менеджерів кредитного відділу');
+          setCreditManagers(Array.isArray(data) ? data : []);
+      } catch (error) {
+          alert(error.message || 'Помилка завантаження кредитного відділу');
+      } finally {
+          setLoadingCreditManagers(false);
+      }
+  };
+
+  const handleSaveCreditManager = async () => {
+      const payload = {
+          bankName: String(creditManagerForm.bankName || '').trim(),
+          managerName: String(creditManagerForm.managerName || '').trim(),
+          phone: String(creditManagerForm.phone || '').trim(),
+          email: String(creditManagerForm.email || '').trim(),
+          telegramContact: String(creditManagerForm.telegramContact || '').trim(),
+          responsibility: String(creditManagerForm.responsibility || '').trim(),
+          notes: String(creditManagerForm.notes || '').trim(),
+          linkedChatIds: Array.isArray(creditManagerForm.linkedChatIds) ? creditManagerForm.linkedChatIds : []
+      };
+      if (!payload.bankName || !payload.managerName) {
+          alert('Заповніть обовʼязкові поля: Банк та Менеджер');
+          return;
+      }
+      setSavingCreditManager(true);
+      try {
+          const isEdit = Number.isFinite(Number(editingCreditManagerId));
+          const url = isEdit ? `${API_URL}/credit-managers/${editingCreditManagerId}` : `${API_URL}/credit-managers`;
+          const method = isEdit ? 'PUT' : 'POST';
+          const res = await fetch(url, {
+              method,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+          });
+          const saved = await parseApiJson(res, 'Не вдалося зберегти менеджера');
+          if (isEdit) {
+              setCreditManagers((prev) => prev.map((item) => (item.id === saved.id ? saved : item)));
+          } else {
+              setCreditManagers((prev) => [...prev, saved]);
+          }
+          resetCreditManagerForm();
+      } catch (error) {
+          alert(error.message || 'Помилка збереження');
+      } finally {
+          setSavingCreditManager(false);
+      }
+  };
+
+  const handleEditCreditManager = (item) => {
+      setEditingCreditManagerId(item.id);
+      setCreditManagerForm({
+          bankName: item.bankName || '',
+          managerName: item.managerName || '',
+          phone: item.phone || '',
+          email: item.email || '',
+          telegramContact: item.telegramContact || '',
+          responsibility: item.responsibility || '',
+          notes: item.notes || '',
+          linkedChatIds: Array.isArray(item.linkedChatIds) ? item.linkedChatIds.map((id) => String(id)) : []
+      });
+  };
+
+  const handleDeleteCreditManager = async (id) => {
+      if (!window.confirm('Видалити цього менеджера?')) return;
+      try {
+          const res = await fetch(`${API_URL}/credit-managers/${id}`, { method: 'DELETE' });
+          await parseApiJson(res, 'Не вдалося видалити менеджера');
+          setCreditManagers((prev) => prev.filter((item) => item.id !== id));
+          if (Number(editingCreditManagerId) === Number(id)) {
+              resetCreditManagerForm();
+          }
+      } catch (error) {
+          alert(error.message || 'Помилка видалення');
+      }
+  };
+
+  const handleToggleCreditManagerChat = (chatId) => {
+      const normalized = String(chatId);
+      setCreditManagerForm((prev) => {
+          const list = Array.isArray(prev.linkedChatIds) ? prev.linkedChatIds : [];
+          const exists = list.includes(normalized);
+          return {
+              ...prev,
+              linkedChatIds: exists ? list.filter((id) => id !== normalized) : [...list, normalized]
+          };
+      });
+  };
+
   const openAdminPermissionsModal = (userId) => {
       setSelectedAdminUserId(String(userId));
       setShowAdminPermissionsModal(true);
@@ -2759,6 +2879,7 @@ function App({ currentUser: initialUser }) {
   useEffect(() => { if (activeTab === 'adminUsers') loadAdminUsers(); }, [activeTab, isSystemAdmin]);
   useEffect(() => { if (activeTab === 'adminUsers' && selectedAdminUserId) loadAdminPermissions(selectedAdminUserId); }, [activeTab, selectedAdminUserId]);
   useEffect(() => { if (activeTab === 'warehouseOrders') loadWarehouseOrders(); }, [activeTab]);
+  useEffect(() => { if (activeTab === 'creditDepartment') loadCreditManagers(); }, [activeTab]);
 
 
   const handleSelectRequestTemplate = (template) => {
@@ -4221,6 +4342,12 @@ function App({ currentUser: initialUser }) {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7l9-4 9 4-9 4-9-4zm0 5l9 4 9-4m-18 5l9 4 9-4" />
                     </svg>
                     <span className={navLabelClass}>Замовлення (Склад)</span>
+                </button>
+                <button onClick={() => setActiveTab('creditDepartment')} data-tooltip="Кредитний відділ" className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 ${activeTab === 'creditDepartment' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-slate-800 text-slate-300'}`}>
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M6 6h12a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2zm0 8h4" />
+                    </svg>
+                    <span className={navLabelClass}>Кредитний відділ</span>
                 </button>
                 <button onClick={() => setActiveTab('documentTemplates')} data-tooltip="Шаблони документів" className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 ${activeTab === 'documentTemplates' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-slate-800 text-slate-300'}`}>
                     <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -6096,6 +6223,91 @@ function App({ currentUser: initialUser }) {
               </div>
               </>
               )}
+          </div>
+      </div>
+      )}
+
+      {activeTab === 'creditDepartment' && (
+      <div className="flex-1 bg-slate-950 p-4 md:p-6 overflow-y-auto">
+          <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-1 bg-slate-900 border border-slate-700/50 rounded-2xl p-4 space-y-3 h-fit">
+                  <div>
+                      <h2 className="text-2xl font-bold text-slate-100">Кредитний відділ</h2>
+                      <p className="text-sm text-slate-400 mt-1">Менеджери банків, контакти та закріплені чати.</p>
+                  </div>
+                  <input value={creditManagerForm.bankName} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, bankName: e.target.value }))} placeholder="Банк *" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <input value={creditManagerForm.managerName} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, managerName: e.target.value }))} placeholder="ПІБ менеджера *" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <input value={creditManagerForm.phone} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, phone: e.target.value }))} placeholder="Телефон" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <input value={creditManagerForm.email} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, email: e.target.value }))} placeholder="Email" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <input value={creditManagerForm.telegramContact} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, telegramContact: e.target.value }))} placeholder="Telegram (@username або номер)" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <textarea value={creditManagerForm.responsibility} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, responsibility: e.target.value }))} placeholder="За що відповідальний" rows={2} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500 resize-y" />
+                  <textarea value={creditManagerForm.notes} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Нотатки" rows={2} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500 resize-y" />
+                  <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-3">
+                      <div className="text-xs text-slate-400 mb-2">Привʼязані чати</div>
+                      <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+                          {dialogs.slice(0, 120).map((dialog) => {
+                              const chatId = String(dialog.id);
+                              const checked = creditManagerForm.linkedChatIds.includes(chatId);
+                              return (
+                                  <label key={`credit-chat-${chatId}`} className="flex items-center gap-2 text-sm text-slate-200">
+                                      <input type="checkbox" checked={checked} onChange={() => handleToggleCreditManagerChat(chatId)} />
+                                      <span className="truncate">{dialog.name}</span>
+                                  </label>
+                              );
+                          })}
+                      </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                      <button type="button" onClick={handleSaveCreditManager} disabled={savingCreditManager} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition disabled:opacity-50">
+                          {editingCreditManagerId ? 'Зберегти зміни' : 'Додати менеджера'}
+                      </button>
+                      {editingCreditManagerId && (
+                          <button type="button" onClick={resetCreditManagerForm} className="px-4 py-2 rounded-xl border border-slate-600 text-slate-200 hover:bg-slate-800 transition">
+                              Скасувати
+                          </button>
+                      )}
+                  </div>
+              </div>
+
+              <div className="xl:col-span-2 bg-slate-900 border border-slate-700/50 rounded-2xl p-4">
+                  <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-slate-100">Список менеджерів</h3>
+                      <button type="button" onClick={loadCreditManagers} className="px-3 py-1.5 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-800 text-xs">Оновити</button>
+                  </div>
+                  {loadingCreditManagers ? (
+                      <div className="text-slate-400 text-sm">Завантаження...</div>
+                  ) : creditManagers.length === 0 ? (
+                      <div className="text-slate-500 text-sm">Ще немає менеджерів. Додайте першого з форми ліворуч.</div>
+                  ) : (
+                      <div className="space-y-3">
+                          {creditManagers.map((item) => {
+                              const linkedNames = (Array.isArray(item.linkedChatIds) ? item.linkedChatIds : []).map((chatId) => dialogs.find((dialog) => String(dialog.id) === String(chatId))?.name || `ID ${chatId}`);
+                              return (
+                                  <div key={`credit-manager-${item.id}`} className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
+                                      <div className="flex items-start justify-between gap-3">
+                                          <div>
+                                              <div className="text-slate-100 font-semibold">{item.bankName}</div>
+                                              <div className="text-slate-300 text-sm">{item.managerName}</div>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                              <button onClick={() => handleEditCreditManager(item)} className="px-2 py-1 rounded-md border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 text-xs">Редагувати</button>
+                                              <button onClick={() => handleDeleteCreditManager(item.id)} className="px-2 py-1 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs">Видалити</button>
+                                          </div>
+                                      </div>
+                                      <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-300">
+                                          <div>Телефон: {item.phone || '—'}</div>
+                                          <div>Email: {item.email || '—'}</div>
+                                          <div>Telegram: {item.telegramContact || '—'}</div>
+                                          <div>Відповідальність: {item.responsibility || '—'}</div>
+                                      </div>
+                                      {item.notes && <div className="mt-2 text-sm text-slate-400">Нотатки: {item.notes}</div>}
+                                      <div className="mt-2 text-xs text-slate-400">Чати: {linkedNames.length ? linkedNames.join(', ') : 'не привʼязано'}</div>
+                                  </div>
+                              );
+                          })}
+                      </div>
+                  )}
+              </div>
           </div>
       </div>
       )}

@@ -434,6 +434,8 @@ const tasksRoutes = require('./routes/tasks');
 app.use('/api/tasks', tasksRoutes);
 const ordersRoutes = require('./routes/orders');
 app.use('/api/orders', ordersRoutes);
+const creditManagersRoutes = require('./routes/credit-managers');
+app.use('/api/credit-managers', creditManagersRoutes);
 
 const TELEGRAM_BOT_API = 'https://api.telegram.org';
 const sentRepeatCache = new Map();

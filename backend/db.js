@@ -352,6 +352,20 @@ const initDb = () => {
       FOREIGN KEY (group_id) REFERENCES local_chat_groups(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS credit_managers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bank_name TEXT NOT NULL,
+      manager_name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      telegram_contact TEXT,
+      responsibility TEXT,
+      notes TEXT,
+      linked_chat_ids_json TEXT NOT NULL DEFAULT '[]',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS campaigns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       status TEXT CHECK(status IN ('pending', 'running', 'paused', 'completed', 'failed')) DEFAULT 'pending',
