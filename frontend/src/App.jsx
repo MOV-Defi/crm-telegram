@@ -4731,6 +4731,10 @@ function App({ currentUser: initialUser }) {
           <div className="dialogs-list flex-1 overflow-y-auto overflow-x-hidden min-h-0">
               {loadingDialogs && <div className="p-4 text-center text-slate-500 text-sm">Завантаження чатів...</div>}
               {groupedDialogs.map(({ key, dialog, topic, type, level }) => (
+                  (() => {
+                      const dialogTopics = chatTopicsByDialogId[String(dialog.id)] || [];
+                      const hasTopicToggle = type === 'dialog' && (dialog.isGroup || dialog.isChannel) && Array.isArray(dialogTopics) && dialogTopics.length > 0;
+                      return (
                   <div 
                       key={key}
                       onClick={() => {
@@ -4753,7 +4757,7 @@ function App({ currentUser: initialUser }) {
                       <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-center mb-1">
                               <h4 className="font-semibold text-slate-200 truncate pr-2">{type === 'topic' ? `↳ ${topic?.title || 'Гілка'}` : dialog.name}</h4>
-                              {type === 'dialog' && (
+                              {hasTopicToggle && (
                                   <button
                                       type="button"
                                       onClick={(event) => {
@@ -4766,11 +4770,7 @@ function App({ currentUser: initialUser }) {
                                       className="ml-2 inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-500/60 bg-slate-700/70 text-slate-100 hover:bg-slate-600 hover:border-slate-300 transition"
                                       title="Розгорнути гілки"
                                   >
-                                      {loadingTopicsByDialogId[String(dialog.id)]
-                                          ? '...'
-                                          : ((chatTopicsByDialogId[String(dialog.id)] || []).length > 0
-                                              ? (expandedTopicGroups[String(dialog.id)] ? '▾' : '▸')
-                                              : '')}
+                                      {expandedTopicGroups[String(dialog.id)] ? '▾' : '▸'}
                                   </button>
                               )}
                           </div>
@@ -4801,6 +4801,8 @@ function App({ currentUser: initialUser }) {
                           <div className="bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full">{type === 'topic' ? Number(topic?.unreadCount || 0) : Number(dialog.unreadCount || 0)}</div>
                       )}
                   </div>
+                      );
+                  })()
               ))}
           </div>
       </div>
