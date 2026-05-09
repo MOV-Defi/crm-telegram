@@ -5,9 +5,10 @@ const router = express.Router();
 
 const getOwnerUsername = () => String(process.env.DOC_TEMPLATES_OWNER || '').trim().toLowerCase();
 const isOwner = (req) => {
+  if (req.userRole === 'admin') return true;
   const owner = getOwnerUsername();
   const current = String(req.username || '').trim().toLowerCase();
-  if (!owner) return req.userRole === 'admin';
+  if (!owner) return false;
   return current === owner;
 };
 
