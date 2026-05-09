@@ -2574,16 +2574,32 @@ function App({ currentUser: initialUser }) {
       const name = String(newDocumentCategory || '').trim();
       if (!name) return;
       try {
+          const maxSortOrder = documentCategories.reduce((max, item) => {
+              const value = Number.parseInt(item?.sort_order, 10);
+              return Number.isFinite(value) ? Math.max(max, value) : max;
+          }, -1);
           const res = await fetch(`${API_URL}/documents/categories`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name })
+              body: JSON.stringify({ name, sortOrder: maxSortOrder + 1 })
           });
           const data = await parseApiJson(res, 'Не вдалося створити категорію');
           setDocumentCategories((prev) => sortCategoriesByOrder([...prev, data]));
           setNewDocumentCategory('');
       } catch (error) {
           alert(error.message || 'Помилка створення категорії');
+      }
+  };
+
+  const handleDeleteDocumentCategory = async (categoryId) => {
+      if (!window.confirm('Видалити цю категорію?')) return;
+      try {
+          const res = await fetch(`${API_URL}/documents/categories/${categoryId}`, { method: 'DELETE' });
+          await parseApiJson(res, 'Не вдалося видалити категорію');
+          setDocumentCategories((prev) => prev.filter((item) => Number(item.id) !== Number(categoryId)));
+          setDocumentTemplates((prev) => prev.filter((item) => Number(item.category_id) !== Number(categoryId)));
+      } catch (error) {
+          alert(error.message || 'Помилка видалення категорії');
       }
   };
 
@@ -2674,34 +2690,20 @@ function App({ currentUser: initialUser }) {
       const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
       if (targetIndex < 0 || targetIndex >= ordered.length) return;
 
-      const current = ordered[currentIndex];
-      const target = ordered[targetIndex];
+      const nextOrder = [...ordered];
+      [nextOrder[currentIndex], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[currentIndex]];
 
       try {
-          const [firstRes, secondRes] = await Promise.all([
-              fetch(`${API_URL}/documents/categories/${current.id}`, {
+          const requests = nextOrder.map((category, index) => (
+              fetch(`${API_URL}/documents/categories/${category.id}`, {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ sortOrder: target.sort_order })
-              }),
-              fetch(`${API_URL}/documents/categories/${target.id}`, {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ sortOrder: current.sort_order })
+                  body: JSON.stringify({ sortOrder: index })
               })
-          ]);
-
-          const firstData = await parseApiJson(firstRes, 'Не вдалося змінити порядок категорій');
-          const secondData = await parseApiJson(secondRes, 'Не вдалося змінити порядок категорій');
-
-          setDocumentCategories((prev) => {
-              const next = prev.map((category) => {
-                  if (category.id === firstData.id) return firstData;
-                  if (category.id === secondData.id) return secondData;
-                  return category;
-              });
-              return sortCategoriesByOrder(next);
-          });
+          ));
+          const responses = await Promise.all(requests);
+          const updatedRows = await Promise.all(responses.map((res) => parseApiJson(res, 'Не вдалося змінити порядок категорій')));
+          setDocumentCategories(sortCategoriesByOrder(updatedRows));
       } catch (error) {
           alert(error.message || 'Помилка зміни порядку категорій');
       }
