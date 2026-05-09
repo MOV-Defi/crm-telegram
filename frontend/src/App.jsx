@@ -171,6 +171,7 @@ function App({ currentUser: initialUser }) {
   const [creditManagers, setCreditManagers] = useState([]);
   const [loadingCreditManagers, setLoadingCreditManagers] = useState(false);
   const [savingCreditManager, setSavingCreditManager] = useState(false);
+  const [creditChatSearch, setCreditChatSearch] = useState('');
   const [creditManagerForm, setCreditManagerForm] = useState({
       bankName: '',
       managerName: '',
@@ -2811,7 +2812,7 @@ function App({ currentUser: initialUser }) {
       }
       setSavingCreditManager(true);
       try {
-          const isEdit = Number.isFinite(Number(editingCreditManagerId));
+          const isEdit = editingCreditManagerId !== null && Number.isFinite(Number(editingCreditManagerId));
           const url = isEdit ? `${API_URL}/credit-managers/${editingCreditManagerId}` : `${API_URL}/credit-managers`;
           const method = isEdit ? 'PUT' : 'POST';
           const res = await fetch(url, {
@@ -6231,6 +6232,17 @@ function App({ currentUser: initialUser }) {
 
       {activeTab === 'creditDepartment' && (
       <div className="flex-1 bg-slate-950 p-4 md:p-6 overflow-y-auto">
+          {(() => {
+              const query = String(creditChatSearch || '').trim().toLowerCase();
+              const filtered = dialogs.filter((dialog) => {
+                  if (!query) return true;
+                  const name = String(dialog?.name || '').toLowerCase();
+                  return name.includes(query);
+              });
+              const groups = filtered.filter((dialog) => dialog?.isGroup || dialog?.isChannel);
+              const direct = filtered.filter((dialog) => !dialog?.isGroup && !dialog?.isChannel);
+
+              return (
           <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="xl:col-span-1 bg-slate-900 border border-slate-700/50 rounded-2xl p-4 space-y-3 h-fit">
                   <div>
@@ -6253,8 +6265,26 @@ function App({ currentUser: initialUser }) {
                   <textarea value={creditManagerForm.notes} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Нотатки" rows={2} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500 resize-y" />
                   <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-3">
                       <div className="text-xs text-slate-400 mb-2">Привʼязані чати</div>
+                      <input
+                          value={creditChatSearch}
+                          onChange={(e) => setCreditChatSearch(e.target.value)}
+                          placeholder="Пошук чату..."
+                          className="w-full mb-2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100 text-sm outline-none focus:border-blue-500"
+                      />
                       <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
-                          {dialogs.slice(0, 120).map((dialog) => {
+                          {groups.length > 0 && <div className="text-[11px] uppercase tracking-wide text-slate-500 pt-1">Групи та канали</div>}
+                          {groups.slice(0, 120).map((dialog) => {
+                              const chatId = String(dialog.id);
+                              const checked = creditManagerForm.linkedChatIds.includes(chatId);
+                              return (
+                                  <label key={`credit-chat-${chatId}`} className="flex items-center gap-2 text-sm text-slate-200">
+                                      <input type="checkbox" checked={checked} onChange={() => handleToggleCreditManagerChat(chatId)} />
+                                      <span className="truncate">{dialog.name}</span>
+                                  </label>
+                              );
+                          })}
+                          {direct.length > 0 && <div className="text-[11px] uppercase tracking-wide text-slate-500 pt-2">Приватні чати</div>}
+                          {direct.slice(0, 120).map((dialog) => {
                               const chatId = String(dialog.id);
                               const checked = creditManagerForm.linkedChatIds.includes(chatId);
                               return (
@@ -6320,6 +6350,8 @@ function App({ currentUser: initialUser }) {
                   )}
               </div>
           </div>
+              );
+          })()}
       </div>
       )}
 
