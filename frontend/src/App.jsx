@@ -6322,7 +6322,14 @@ function App({ currentUser: initialUser }) {
                   ) : (
                       <div className="space-y-3">
                           {creditManagers.map((item) => {
-                              const linkedNames = (Array.isArray(item.linkedChatIds) ? item.linkedChatIds : []).map((chatId) => dialogs.find((dialog) => String(dialog.id) === String(chatId))?.name || `ID ${chatId}`);
+                              const linkedChats = (Array.isArray(item.linkedChatIds) ? item.linkedChatIds : []).map((chatId) => {
+                                  const normalizedId = String(chatId);
+                                  const matched = dialogs.find((dialog) => String(dialog.id) === normalizedId);
+                                  return {
+                                      id: normalizedId,
+                                      name: matched?.name || `ID ${normalizedId}`
+                                  };
+                              });
                               return (
                                   <div key={`credit-manager-${item.id}`} className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
                                       <div className="flex items-start justify-between gap-3">
@@ -6342,7 +6349,29 @@ function App({ currentUser: initialUser }) {
                                           <div>Відповідальність: {item.responsibility || '—'}</div>
                                       </div>
                                       {item.notes && <div className="mt-2 text-sm text-slate-400">Нотатки: {item.notes}</div>}
-                                      <div className="mt-2 text-xs text-slate-400">Чати: {linkedNames.length ? linkedNames.join(', ') : 'не привʼязано'}</div>
+                                      <div className="mt-2 text-xs text-slate-400">
+                                          Чати:{' '}
+                                          {linkedChats.length ? (
+                                              <span className="inline-flex flex-wrap gap-1.5 align-middle">
+                                                  {linkedChats.map((chat) => (
+                                                      <button
+                                                          key={`credit-linked-chat-${item.id}-${chat.id}`}
+                                                          type="button"
+                                                          onClick={async () => {
+                                                              setActiveTab('messenger');
+                                                              await openChatById(chat.id);
+                                                          }}
+                                                          className="px-2 py-0.5 rounded-md border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 transition"
+                                                          title="Відкрити чат"
+                                                      >
+                                                          {chat.name}
+                                                      </button>
+                                                  ))}
+                                              </span>
+                                          ) : (
+                                              'не привʼязано'
+                                          )}
+                                      </div>
                                   </div>
                               );
                           })}
