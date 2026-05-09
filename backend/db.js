@@ -91,6 +91,19 @@ centralDb.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS request_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id INTEGER,
+    template_code TEXT,
+    template_title TEXT,
+    chat_id TEXT,
+    chat_name TEXT,
+    message_id INTEGER,
+    message_text TEXT,
+    created_by_user_id INTEGER,
+    created_by_username TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 const ensureUsersRoleColumn = () => {

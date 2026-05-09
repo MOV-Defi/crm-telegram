@@ -216,6 +216,8 @@ function App({ currentUser: initialUser }) {
   const [requestConfigSaving, setRequestConfigSaving] = useState(false);
   const [requestSending, setRequestSending] = useState(false);
   const [requestFeedback, setRequestFeedback] = useState(null);
+  const [requestHistory, setRequestHistory] = useState([]);
+  const [loadingRequestHistory, setLoadingRequestHistory] = useState(false);
   const [requestChatSearch, setRequestChatSearch] = useState('');
   const [requestTargetParticipants, setRequestTargetParticipants] = useState([]);
   const [loadingRequestParticipants, setLoadingRequestParticipants] = useState(false);
@@ -1405,6 +1407,7 @@ function App({ currentUser: initialUser }) {
       }
       if (activeTab === 'requests') {
           loadRequestTemplates();
+          loadRequestHistory();
       }
       if (activeTab === 'documentTemplates') {
           loadDocumentTemplates();
@@ -2475,6 +2478,20 @@ function App({ currentUser: initialUser }) {
       }
   };
 
+  const loadRequestHistory = async () => {
+      setLoadingRequestHistory(true);
+      try {
+          const res = await fetch(`${API_URL}/requests/history?limit=120&v=${Date.now()}`, { cache: 'no-store' });
+          const data = await res.json();
+          setRequestHistory(Array.isArray(data) ? data : []);
+      } catch (error) {
+          console.error(error);
+          setRequestHistory([]);
+      } finally {
+          setLoadingRequestHistory(false);
+      }
+  };
+
   const loadDocumentTemplates = async () => {
       setLoadingDocumentTemplates(true);
       setDocumentError('');
@@ -3514,6 +3531,7 @@ function App({ currentUser: initialUser }) {
           }
 
           clearRequestAttachment();
+          loadRequestHistory();
           setRequestFeedback({ type: 'success', text: 'Заяву успішно відправлено в чат.' });
       } catch (error) {
           console.error(error);
@@ -5436,6 +5454,39 @@ function App({ currentUser: initialUser }) {
                           </div>
                       </button>
                   ))}
+                  <div className="mt-4 pt-4 border-t border-slate-700/60">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="text-xs uppercase tracking-wider text-slate-500">Історія заяв</div>
+                          <button
+                              onClick={loadRequestHistory}
+                              disabled={loadingRequestHistory}
+                              className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs disabled:opacity-50"
+                          >
+                              Оновити
+                          </button>
+                      </div>
+                      {loadingRequestHistory && <div className="text-xs text-slate-500 py-2">Завантаження історії...</div>}
+                      {!loadingRequestHistory && requestHistory.length === 0 && (
+                          <div className="text-xs text-slate-500 py-2">Історія поки порожня.</div>
+                      )}
+                      {!loadingRequestHistory && requestHistory.slice(0, 20).map((item) => (
+                          <div key={`request-history-${item.id}`} className="mb-2 rounded-xl border border-slate-700 bg-slate-800/50 p-3">
+                              <div className="text-sm text-slate-100 font-medium truncate">{item.template_title || item.template_code || 'Заява'}</div>
+                              <div className="text-xs text-slate-400 mt-1 truncate">{item.chat_name || item.chat_id}</div>
+                              <div className="text-xs text-slate-500 mt-1">{item.created_at ? new Date(item.created_at).toLocaleString('uk-UA') : '—'}</div>
+                              <button
+                                  className="mt-2 px-2 py-1 rounded-md border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 text-xs transition"
+                                  onClick={async () => {
+                                      if (!item?.chat_id) return;
+                                      setActiveTab('messenger');
+                                      await openChatById(item.chat_id, item.message_id ? { focusMessageId: item.message_id } : {});
+                                  }}
+                              >
+                                  Перейти до повідомлення
+                              </button>
+                          </div>
+                      ))}
+                  </div>
               </div>
           </div>
 

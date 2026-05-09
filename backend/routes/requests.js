@@ -551,6 +551,36 @@ const validateTemplate = (template, values = {}) => {
   return null;
 };
 
+const normalizeSentMessage = (sentResult) => {
+  if (Array.isArray(sentResult)) return sentResult[0] || null;
+  return sentResult || null;
+};
+
+const saveRequestHistory = ({
+  template,
+  messageId,
+  messageText,
+  req
+}) => {
+  db.central.prepare(`
+    INSERT INTO request_history (
+      template_id, template_code, template_title,
+      chat_id, chat_name, message_id, message_text,
+      created_by_user_id, created_by_username
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    Number(template?.id) || null,
+    String(template?.code || '').trim() || null,
+    String(template?.title || '').trim() || null,
+    String(template?.target_chat_id || '').trim() || null,
+    String(template?.target_chat_name || '').trim() || null,
+    Number.isFinite(Number(messageId)) ? Number(messageId) : null,
+    String(messageText || '').slice(0, 4000),
+    req.userId || null,
+    req.username || null
+  );
+};
+
 const escapeXml = (value) => String(value || '')
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -1213,9 +1243,16 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       tempDocxRoot = generated.tempRoot;
       const caption = trimTelegramCaption(buildLogisticsStandardCaption(chatIntro));
 
-      await client.sendFile(template.target_chat_id, {
+      const sent = await client.sendFile(template.target_chat_id, {
         file: generated.docxPath,
         caption
+      });
+      const sentMessage = normalizeSentMessage(sent);
+      saveRequestHistory({
+        template,
+        messageId: sentMessage?.id,
+        messageText: caption || message,
+        req
       });
       return res.json({ success: true, message });
     }
@@ -1232,9 +1269,16 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       tempDocxRoot = generated.tempRoot;
       const caption = trimTelegramCaption(buildPurchaseStandardCaption(chatIntro));
 
-      await client.sendFile(template.target_chat_id, {
+      const sent = await client.sendFile(template.target_chat_id, {
         file: generated.docxPath,
         caption
+      });
+      const sentMessage = normalizeSentMessage(sent);
+      saveRequestHistory({
+        template,
+        messageId: sentMessage?.id,
+        messageText: caption || message,
+        req
       });
       return res.json({ success: true, message });
     }
@@ -1284,8 +1328,14 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         file: uploadedFilePath,
         caption: outgoingMessage
       });
+      const sentMessage = normalizeSentMessage(sent);
+      saveRequestHistory({
+        template,
+        messageId: sentMessage?.id,
+        messageText: outgoingMessage,
+        req
+      });
       if (isWarehouseIssue) {
-        const sentMessage = Array.isArray(sent) ? sent[0] : sent;
         createWarehouseOrder({
           sentMessageId: Number(sentMessage?.id),
           mediaPath: uploadedMediaPublicPath,
@@ -1294,6 +1344,12 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       }
     } else {
       const sent = await client.sendMessage(template.target_chat_id, { message: outgoingMessage });
+      saveRequestHistory({
+        template,
+        messageId: sent?.id,
+        messageText: outgoingMessage,
+        req
+      });
       if (isWarehouseIssue) {
         createWarehouseOrder({
           sentMessageId: Number(sent?.id),
@@ -1310,6 +1366,34 @@ router.post('/send', upload.single('file'), (req, res, next) => {
     if (tempDocxRoot) {
       fs.rmSync(tempDocxRoot, { recursive: true, force: true });
     }
+  }
+});
+
+router.get('/history', (req, res) => {
+  try {
+    const limitRaw = Number.parseInt(String(req.query.limit || '100'), 10);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 100;
+    const rows = db.central.prepare(`
+      SELECT
+        id,
+        template_id,
+        template_code,
+        template_title,
+        chat_id,
+        chat_name,
+        message_id,
+        message_text,
+        created_by_user_id,
+        created_by_username,
+        created_at
+      FROM request_history
+      ORDER BY datetime(created_at) DESC, id DESC
+      LIMIT ?
+    `).all(limit);
+    return res.json(rows);
+  } catch (error) {
+    console.error('requests/history GET error:', error);
+    return res.status(500).json({ error: 'Не вдалося завантажити історію заяв' });
   }
 });
 
