@@ -61,30 +61,11 @@ const RootComponent = () => {
         };
     }, []);
 
-    const handleLogout = () => {
-        localStorage.removeItem('saas_token');
-        localStorage.removeItem('saas_username');
-        setIsAuthenticated(false);
-        setCurrentUser(null);
-    };
-
     if (!isAuthenticated) {
         return <SystemAuth onLogin={() => setIsAuthenticated(true)} />;
     }
 
-    return (
-        <>
-            <button 
-                onClick={handleLogout}
-                title="Вийти з акаунту (SaaS)"
-                className="fixed bottom-4 right-4 z-[9999] bg-slate-800 text-slate-300 border border-slate-600 px-4 py-2 rounded-lg shadow-lg text-sm font-medium hover:bg-slate-700 hover:text-white transition-all flex items-center gap-2"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-                Вийти
-            </button>
-            <App currentUser={currentUser} />
-        </>
-    );
+    return <App currentUser={currentUser} />;
 };
 
 ReactDOM.createRoot(document.getElementById('root')).render(
