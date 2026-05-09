@@ -4475,6 +4475,16 @@ function App({ currentUser: initialUser }) {
                     </svg>
                     <span className={`${navLabelClass} text-sm`}>Оновити (F5)</span>
                 </button>
+                <button
+                    onClick={handleLogout}
+                    className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-red-600/20 text-red-400 hover:text-red-300`}
+                    data-tooltip="Вийти з Telegram"
+                >
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 16l4-4m0 0l-4-4m4 4H9m4 4v1a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h5a2 2 0 012 2v1" />
+                    </svg>
+                    <span className={`${navLabelClass} text-sm`}>Вийти з Telegram</span>
+                </button>
             </div>
         </div>
       </div>
