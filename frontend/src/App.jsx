@@ -3626,22 +3626,6 @@ function App({ currentUser: initialUser }) {
   }, [expandedTopicGroups]);
 
   useEffect(() => {
-      setExpandedTopicGroups((prev) => {
-          let changed = false;
-          const next = { ...prev };
-          for (const [dialogId, topics] of Object.entries(chatTopicsByDialogId || {})) {
-              if (!Array.isArray(topics) || topics.length === 0) continue;
-              const hasUnreadTopic = topics.some((topic) => Number(topic?.unreadCount || 0) > 0);
-              if (hasUnreadTopic && !next[dialogId]) {
-                  next[dialogId] = true;
-                  changed = true;
-              }
-          }
-          return changed ? next : prev;
-      });
-  }, [chatTopicsByDialogId]);
-
-  useEffect(() => {
       localStorage.setItem('tgcrm-muted-notification-chat-ids', JSON.stringify(mutedNotificationChatIds));
   }, [mutedNotificationChatIds]);
 
@@ -4761,7 +4745,7 @@ function App({ currentUser: initialUser }) {
                                               [String(dialog.id)]: !prev[String(dialog.id)]
                                           }));
                                       }}
-                                      className="ml-2 text-slate-400 hover:text-slate-200 transition"
+                                      className="ml-2 inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-500/60 bg-slate-700/70 text-slate-100 hover:bg-slate-600 hover:border-slate-300 transition"
                                       title="Розгорнути гілки"
                                   >
                                       {loadingTopicsByDialogId[String(dialog.id)]
