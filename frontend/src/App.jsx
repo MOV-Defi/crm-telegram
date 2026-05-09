@@ -162,6 +162,7 @@ function App({ currentUser: initialUser }) {
   });
   const messageElementRefs = useRef(new Map());
   const pendingScrollTargetRef = useRef(null);
+  const anchoredMessageIdRef = useRef(null);
   const scrollAttemptTimeoutsRef = useRef([]);
   const highlightTimeoutRef = useRef(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState(null);
@@ -1078,6 +1079,7 @@ function App({ currentUser: initialUser }) {
   const jumpToMessageInCurrentDialog = async (messageId) => {
       const normalized = String(messageId);
       pendingScrollTargetRef.current = normalized;
+      anchoredMessageIdRef.current = normalized;
 
       if (scrollToMessageById(normalized, 'smooth')) {
           highlightMessageById(normalized);
@@ -1122,8 +1124,13 @@ function App({ currentUser: initialUser }) {
               if (messagesEndRef.current) {
                   messagesEndRef.current.scrollIntoView({ behavior: index === 0 ? 'auto' : 'smooth' });
               }
+              anchoredMessageIdRef.current = null;
           } else {
-              scrollToMessageById(currentTarget, index === 0 ? 'auto' : 'smooth');
+              const moved = scrollToMessageById(currentTarget, index === 0 ? 'auto' : 'smooth');
+              if (moved) {
+                  anchoredMessageIdRef.current = String(currentTarget);
+                  highlightMessageById(currentTarget);
+              }
           }
 
           if (index === delays.length - 1) {
@@ -1199,6 +1206,12 @@ function App({ currentUser: initialUser }) {
   // Auto-scroll to bottom of messages
   useEffect(() => {
       if (!messagesContainerRef.current || !messagesEndRef.current || messages.length === 0) return;
+
+      if (anchoredMessageIdRef.current) {
+          schedulePendingMessageScroll();
+          initialScrollDone.current = true;
+          return;
+      }
 
       if (pendingScrollTargetRef.current != null) {
           schedulePendingMessageScroll();
@@ -3683,6 +3696,7 @@ function App({ currentUser: initialUser }) {
       dialogLoadRequestRef.current = requestId;
       activeDialogIdRef.current = dialogId;
       pendingScrollTargetRef.current = focusMessageId ? String(focusMessageId) : 'bottom';
+      anchoredMessageIdRef.current = focusMessageId ? String(focusMessageId) : null;
 
       abortPendingDialogFetches();
       setSelectedDialog({ ...dialog, unreadCount: 0, unreadMentionsCount: 0 });
