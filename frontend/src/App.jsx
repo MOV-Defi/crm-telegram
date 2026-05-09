@@ -1784,6 +1784,34 @@ function App({ currentUser: initialUser }) {
       }
   };
 
+  const openChatByTelegramContact = async (telegramContact) => {
+      const raw = String(telegramContact || '').trim();
+      if (!raw) return;
+
+      const withoutUrl = raw
+          .replace(/^https?:\/\/t\.me\//i, '')
+          .replace(/^t\.me\//i, '')
+          .trim();
+      const normalizedUsername = withoutUrl.startsWith('@') ? withoutUrl.slice(1) : withoutUrl;
+      if (!normalizedUsername) return;
+
+      const usernameLower = normalizedUsername.toLowerCase();
+      const byUsername = (item) => String(item?.username || '').trim().toLowerCase() === usernameLower;
+      const matchedDialog = dialogs.find(byUsername);
+      if (matchedDialog?.id != null) {
+          await openChatById(matchedDialog.id);
+          return;
+      }
+
+      const matchedContact = contacts.find(byUsername);
+      if (matchedContact?.id != null) {
+          await openChatById(matchedContact.id);
+          return;
+      }
+
+      alert('Чат за цим Telegram-ніком не знайдено у ваших діалогах.');
+  };
+
   const handleStartReply = (message) => {
       setEditingMessage(null);
       setReplyingToMessage(message);
@@ -4360,6 +4388,16 @@ function App({ currentUser: initialUser }) {
                     </svg>
                     <span className={navLabelClass}>Замовлення (Склад)</span>
                 </button>
+                <button
+                    onClick={() => window.open('https://luxury-babka-f2df54.netlify.app/', '_blank', 'noopener,noreferrer')}
+                    data-tooltip="Калькулятор СЕС"
+                    className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-slate-800 text-slate-300`}
+                >
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m-6 4h6m-7 9h8a2 2 0 002-2V6a2 2 0 00-2-2H8a2 2 0 00-2 2v12a2 2 0 002 2zM7 15h.01M7 11h.01M7 7h.01" />
+                    </svg>
+                    <span className={navLabelClass}>Калькулятор СЕС</span>
+                </button>
                 <button onClick={() => setActiveTab('creditDepartment')} data-tooltip="Кредитний відділ" className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 ${activeTab === 'creditDepartment' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-slate-800 text-slate-300'}`}>
                     <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M6 6h12a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2zm0 8h4" />
@@ -4434,16 +4472,6 @@ function App({ currentUser: initialUser }) {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 4v6h6M20 20v-6h-6M20 9a8 8 0 00-14.2-3M4 15a8 8 0 0014.2 3" />
                     </svg>
                     <span className={`${navLabelClass} text-sm`}>Оновити (F5)</span>
-                </button>
-                <button
-                    onClick={handleLogout}
-                    className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-red-600/20 text-red-400 hover:text-red-300`}
-                    data-tooltip="Вийти з Telegram"
-                >
-                    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 16l4-4m0 0l-4-4m4 4H9m4 4v1a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h5a2 2 0 012 2v1" />
-                    </svg>
-                    <span className={`${navLabelClass} text-sm`}>Вийти з Telegram</span>
                 </button>
             </div>
         </div>
@@ -6359,7 +6387,19 @@ function App({ currentUser: initialUser }) {
                                       <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-300">
                                           <div>Телефон: {item.phone || '—'}</div>
                                           <div>Email: {item.email || '—'}</div>
-                                          <div>Telegram: {item.telegramContact || '—'}</div>
+                                          <div>
+                                              Telegram:{' '}
+                                              {String(item.telegramContact || '').trim() ? (
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => openChatByTelegramContact(item.telegramContact)}
+                                                      className="px-2 py-0.5 rounded-md border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 transition"
+                                                      title="Відкрити чат за Telegram-ніком"
+                                                  >
+                                                      {item.telegramContact}
+                                                  </button>
+                                              ) : '—'}
+                                          </div>
                                           <div>Відповідальність: {item.responsibility || '—'}</div>
                                       </div>
                                       {item.notes && <div className="mt-2 text-sm text-slate-400">Нотатки: {item.notes}</div>}
