@@ -6235,6 +6235,13 @@ function App({ currentUser: initialUser }) {
                       <h2 className="text-2xl font-bold text-slate-100">Кредитний відділ</h2>
                       <p className="text-sm text-slate-400 mt-1">Менеджери банків, контакти та закріплені чати.</p>
                   </div>
+                  {!isSystemAdmin && (
+                      <div className="bg-blue-500/10 border border-blue-500/40 rounded-xl px-3 py-2 text-xs text-blue-200">
+                          Режим перегляду: лише адміністратор може додавати, змінювати та видаляти записи.
+                      </div>
+                  )}
+                  {isSystemAdmin && (
+                  <>
                   <input value={creditManagerForm.bankName} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, bankName: e.target.value }))} placeholder="Банк *" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
                   <input value={creditManagerForm.managerName} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, managerName: e.target.value }))} placeholder="ПІБ менеджера *" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
                   <input value={creditManagerForm.phone} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, phone: e.target.value }))} placeholder="Телефон" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
@@ -6267,6 +6274,8 @@ function App({ currentUser: initialUser }) {
                           </button>
                       )}
                   </div>
+                  </>
+                  )}
               </div>
 
               <div className="xl:col-span-2 bg-slate-900 border border-slate-700/50 rounded-2xl p-4">
@@ -6290,8 +6299,8 @@ function App({ currentUser: initialUser }) {
                                               <div className="text-slate-300 text-sm">{item.managerName}</div>
                                           </div>
                                           <div className="flex items-center gap-2">
-                                              <button onClick={() => handleEditCreditManager(item)} className="px-2 py-1 rounded-md border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 text-xs">Редагувати</button>
-                                              <button onClick={() => handleDeleteCreditManager(item.id)} className="px-2 py-1 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs">Видалити</button>
+                                              {isSystemAdmin && <button onClick={() => handleEditCreditManager(item)} className="px-2 py-1 rounded-md border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 text-xs">Редагувати</button>}
+                                              {isSystemAdmin && <button onClick={() => handleDeleteCreditManager(item.id)} className="px-2 py-1 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs">Видалити</button>}
                                           </div>
                                       </div>
                                       <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-300">

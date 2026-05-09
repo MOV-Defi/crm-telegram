@@ -2,6 +2,12 @@ const express = require('express');
 const db = require('../db');
 
 const router = express.Router();
+const requireAdminWrite = (req, res, next) => {
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({ error: 'Лише адміністратор може змінювати дані кредитного відділу' });
+  }
+  return next();
+};
 
 const parseLinkedChats = (value) => {
   try {
@@ -43,7 +49,7 @@ router.get('/', (req, res) => {
   }
 });
 
-router.post('/', (req, res) => {
+router.post('/', requireAdminWrite, (req, res) => {
   try {
     const bankName = String(req.body?.bankName || '').trim();
     const managerName = String(req.body?.managerName || '').trim();
@@ -84,7 +90,7 @@ router.post('/', (req, res) => {
   }
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', requireAdminWrite, (req, res) => {
   try {
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Некоректний ID' });
@@ -140,7 +146,7 @@ router.put('/:id', (req, res) => {
   }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireAdminWrite, (req, res) => {
   try {
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Некоректний ID' });
