@@ -1373,6 +1373,8 @@ router.get('/history', (req, res) => {
   try {
     const limitRaw = Number.parseInt(String(req.query.limit || '100'), 10);
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 100;
+    const offsetRaw = Number.parseInt(String(req.query.offset || '0'), 10);
+    const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
     const rows = db.central.prepare(`
       SELECT
         id,
@@ -1388,9 +1390,18 @@ router.get('/history', (req, res) => {
         created_at
       FROM request_history
       ORDER BY datetime(created_at) DESC, id DESC
-      LIMIT ?
-    `).all(limit);
-    return res.json(rows);
+      LIMIT ? OFFSET ?
+    `).all(limit, offset);
+
+    const totalRow = db.central.prepare(`SELECT COUNT(*) AS total FROM request_history`).get();
+    const total = Number(totalRow?.total || 0);
+    return res.json({
+      items: rows,
+      total,
+      limit,
+      offset,
+      hasMore: (offset + rows.length) < total
+    });
   } catch (error) {
     console.error('requests/history GET error:', error);
     return res.status(500).json({ error: 'Не вдалося завантажити історію заяв' });

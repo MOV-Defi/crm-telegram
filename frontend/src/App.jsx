@@ -219,6 +219,8 @@ function App({ currentUser: initialUser }) {
   const [requestFeedback, setRequestFeedback] = useState(null);
   const [requestHistory, setRequestHistory] = useState([]);
   const [loadingRequestHistory, setLoadingRequestHistory] = useState(false);
+  const [requestHistoryHasMore, setRequestHistoryHasMore] = useState(false);
+  const [requestHistoryOffset, setRequestHistoryOffset] = useState(0);
   const [requestChatSearch, setRequestChatSearch] = useState('');
   const [requestTargetParticipants, setRequestTargetParticipants] = useState([]);
   const [loadingRequestParticipants, setLoadingRequestParticipants] = useState(false);
@@ -1412,7 +1414,7 @@ function App({ currentUser: initialUser }) {
       }
       if (activeTab === 'requests') {
           loadRequestTemplates();
-          loadRequestHistory();
+          loadRequestHistory({ append: false });
       }
       if (activeTab === 'documentTemplates') {
           loadDocumentTemplates();
@@ -2483,15 +2485,22 @@ function App({ currentUser: initialUser }) {
       }
   };
 
-  const loadRequestHistory = async () => {
+  const REQUEST_HISTORY_PAGE_SIZE = 20;
+
+  const loadRequestHistory = async ({ append = false } = {}) => {
       setLoadingRequestHistory(true);
       try {
-          const res = await fetch(`${API_URL}/requests/history?limit=120&v=${Date.now()}`, { cache: 'no-store' });
+          const nextOffset = append ? requestHistoryOffset : 0;
+          const res = await fetch(`${API_URL}/requests/history?limit=${REQUEST_HISTORY_PAGE_SIZE}&offset=${nextOffset}&v=${Date.now()}`, { cache: 'no-store' });
           const data = await res.json();
-          setRequestHistory(Array.isArray(data) ? data : []);
+          const items = Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : []);
+          setRequestHistory((prev) => append ? [...prev, ...items] : items);
+          setRequestHistoryOffset(nextOffset + items.length);
+          setRequestHistoryHasMore(Boolean(data?.hasMore));
       } catch (error) {
           console.error(error);
-          setRequestHistory([]);
+          if (!append) setRequestHistory([]);
+          setRequestHistoryHasMore(false);
       } finally {
           setLoadingRequestHistory(false);
       }
@@ -3536,7 +3545,7 @@ function App({ currentUser: initialUser }) {
           }
 
           clearRequestAttachment();
-          loadRequestHistory();
+          loadRequestHistory({ append: false });
           setRequestFeedback({ type: 'success', text: 'Заяву успішно відправлено в чат.' });
       } catch (error) {
           console.error(error);
@@ -5470,7 +5479,7 @@ function App({ currentUser: initialUser }) {
                       <div className="flex items-center justify-between gap-2 mb-2">
                           <div className="text-xs uppercase tracking-wider text-slate-500">Історія заяв</div>
                           <button
-                              onClick={loadRequestHistory}
+                              onClick={() => loadRequestHistory({ append: false })}
                               disabled={loadingRequestHistory}
                               className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs disabled:opacity-50"
                           >
@@ -5481,7 +5490,7 @@ function App({ currentUser: initialUser }) {
                       {!loadingRequestHistory && requestHistory.length === 0 && (
                           <div className="text-xs text-slate-500 py-2">Історія поки порожня.</div>
                       )}
-                      {!loadingRequestHistory && requestHistory.slice(0, 20).map((item) => (
+                      {!loadingRequestHistory && requestHistory.map((item) => (
                           <div key={`request-history-${item.id}`} className="mb-2 rounded-xl border border-slate-700 bg-slate-800/50 p-3">
                               <div className="text-sm text-slate-100 font-medium truncate">{item.template_title || item.template_code || 'Заява'}</div>
                               <div className="text-xs text-slate-400 mt-1 truncate">{item.chat_name || item.chat_id}</div>
@@ -5498,6 +5507,15 @@ function App({ currentUser: initialUser }) {
                               </button>
                           </div>
                       ))}
+                      {requestHistoryHasMore && (
+                          <button
+                              onClick={() => loadRequestHistory({ append: true })}
+                              disabled={loadingRequestHistory}
+                              className="w-full mt-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 text-xs transition disabled:opacity-50"
+                          >
+                              {loadingRequestHistory ? 'Завантаження...' : 'Показати ще'}
+                          </button>
+                      )}
                   </div>
               </div>
           </div>
