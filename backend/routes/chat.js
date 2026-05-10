@@ -577,6 +577,7 @@ router.get('/messages/:id', async (req, res) => {
     } catch(e) { console.error("Помилка markAsRead", e.message); }
 
     const focusMessageId = Number.parseInt(req.query.focusMessageId, 10);
+    const topicTopMessageId = Number.parseInt(req.query.topicTopMessageId, 10);
     const requestedLimit = Number.parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
       ? Math.min(500, Math.max(1, requestedLimit))
@@ -746,7 +747,19 @@ router.get('/messages/:id', async (req, res) => {
         console.error("Error fetching outbox read status:", e.message);
     }
 
-    const formattedMessages = messages.map(m => ({
+    const topicFilteredMessages = Number.isFinite(topicTopMessageId) && topicTopMessageId > 0
+      ? messages.filter((m) => {
+          const replyTopId = Number(
+            m?.replyTo?.replyToTopId ||
+            m?.replyTo?.replyToMsgId ||
+            m?.replyToMsgId ||
+            0
+          );
+          return Number(m?.id || 0) === topicTopMessageId || replyTopId === topicTopMessageId;
+        })
+      : messages;
+
+    const formattedMessages = topicFilteredMessages.map(m => ({
         id: m.id,
         senderId: m.senderId ? m.senderId.toString() : null,
         senderName: m.senderId ? (entityCache[m.senderId.toString()] || 'Відправник') : null,

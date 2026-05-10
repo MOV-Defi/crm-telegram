@@ -106,6 +106,7 @@ function App({ currentUser: initialUser }) {
   const [chatTopicsByDialogId, setChatTopicsByDialogId] = useState({});
   const [loadingTopicsByDialogId, setLoadingTopicsByDialogId] = useState({});
   const [selectedTopicKey, setSelectedTopicKey] = useState(null);
+  const [selectedTopicTopMessageId, setSelectedTopicTopMessageId] = useState(null);
   const [expandedTopicGroups, setExpandedTopicGroups] = useState(() => {
       try {
           const raw = localStorage.getItem('tgcrm-expanded-topic-groups');
@@ -927,7 +928,11 @@ function App({ currentUser: initialUser }) {
 
   const buildMessagesUrl = (dialogId, query = {}, dialogMeta = null) => {
       const url = new URL(`${API_URL}/chat/messages/${dialogId}`, window.location.origin);
-      Object.entries(query).forEach(([key, value]) => {
+      const nextQuery = { ...(query || {}) };
+      if (selectedTopicTopMessageId && !nextQuery.topicTopMessageId) {
+          nextQuery.topicTopMessageId = selectedTopicTopMessageId;
+      }
+      Object.entries(nextQuery).forEach(([key, value]) => {
           if (value != null && value !== '') {
               url.searchParams.set(key, String(value));
           }
@@ -3807,9 +3812,12 @@ function App({ currentUser: initialUser }) {
       const dialogId = String(dialog.id);
       const requestId = dialogLoadRequestRef.current + 1;
       const focusMessageId = Number.isFinite(Number(options.focusMessageId)) ? Number(options.focusMessageId) : null;
+      const topicTopMessageId = Number.isFinite(Number(options.topicTopMessageId)) ? Number(options.topicTopMessageId) : null;
       if (!focusMessageId) {
           setSelectedTopicKey(null);
+          setSelectedTopicTopMessageId(null);
       }
+      if (topicTopMessageId) setSelectedTopicTopMessageId(topicTopMessageId);
       dialogLoadRequestRef.current = requestId;
       activeDialogIdRef.current = dialogId;
       pendingScrollTargetRef.current = focusMessageId ? String(focusMessageId) : 'bottom';
@@ -3835,6 +3843,7 @@ function App({ currentUser: initialUser }) {
       dialogFetchControllersRef.current.messages = messagesController;
       dialogFetchControllersRef.current.note = noteController;
       const messagesQuery = focusMessageId ? { focusMessageId } : { limit: 120 };
+      if (topicTopMessageId) messagesQuery.topicTopMessageId = topicTopMessageId;
       fetch(buildMessagesUrl(dialog.id, messagesQuery, dialog), { signal: messagesController.signal })
         .then(async (res) => {
             const data = await res.json();
@@ -4740,7 +4749,8 @@ function App({ currentUser: initialUser }) {
                       onClick={() => {
                           if (type === 'topic' && topic) {
                               setSelectedTopicKey(`topic:${dialog.id}:${topic.id}`);
-                              handleDialogClick(dialog, { focusMessageId: topic.topMessage });
+                              setSelectedTopicTopMessageId(Number(topic.topMessage || 0) || null);
+                              handleDialogClick(dialog, { focusMessageId: topic.topMessage, topicTopMessageId: topic.topMessage });
                               return;
                           }
                           handleDialogClick(dialog);
@@ -4790,7 +4800,7 @@ function App({ currentUser: initialUser }) {
                                   <span className="text-[8px] text-slate-500">+{assignments.filter(a => a.chat_id === String(dialog.id)).length - 3}</span>
                               )}
                           </div>
-                          <p className="text-sm text-slate-400 truncate">{type === 'topic' ? `Повідомлень: ${Number(topic?.unreadCount || 0)}` : dialog.lastMessage}</p>
+                          <p className="text-sm text-slate-400 truncate">{type === 'topic' ? 'Вкладка теми' : dialog.lastMessage}</p>
                       </div>
                       {isChatMutedForNotifications(dialog.id) && (
                           <div className="text-[10px] text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded-full px-1.5 py-0.5 shrink-0" data-tooltip="Чат приглушено в центрі сповіщень">
