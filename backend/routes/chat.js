@@ -68,12 +68,18 @@ const sanitizeDownloadName = (name, fallback = 'file.bin') => {
 
 const sendDownloadFile = (res, media, downloadName) => {
   const safeName = sanitizeDownloadName(downloadName, 'file.bin');
-  const encodedName = encodeURIComponent(safeName).replace(/['()]/g, escape).replace(/\*/g, '%2A');
-  res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
-  return res.sendFile(media.diskPath);
+  const encodedName = encodeURIComponent(safeName).replace(/[!'()*]/g, (ch) => (
+    `%${ch.charCodeAt(0).toString(16).toUpperCase()}`
+  ));
+  try {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
+    return res.sendFile(media.diskPath);
+  } catch (_) {
+    return res.download(media.diskPath, safeName);
+  }
 };
 
 const decodeMultipartFileName = (name) => {
