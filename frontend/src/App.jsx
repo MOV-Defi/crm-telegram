@@ -91,12 +91,30 @@ const getMediaLabel = (msg) => {
   return repairMojibakeFileName(base) || 'Завантажити файл';
 };
 
+const triggerBrowserDownload = (blob, fileName) => {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = String(fileName || 'download.bin');
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+};
+
 function App({ currentUser: initialUser }) {
   const PURCHASE_UNIT_OPTIONS = ['шт', 'м', 'м.п', 'км'];
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const buildUploadUrl = (uploadPath) => {
       const token = String(localStorage.getItem('saas_token') || '').trim();
       const base = `${UPLOADS_BASE_URL}${String(uploadPath || '')}`;
+      if (!token) return base;
+      const sep = base.includes('?') ? '&' : '?';
+      return `${base}${sep}token=${encodeURIComponent(token)}`;
+  };
+  const buildApiUrlWithToken = (apiPath) => {
+      const token = String(localStorage.getItem('saas_token') || '').trim();
+      const base = `${API_URL}${String(apiPath || '')}`;
       if (!token) return base;
       const sep = base.includes('?') ? '&' : '?';
       return `${base}${sep}token=${encodeURIComponent(token)}`;
@@ -221,6 +239,7 @@ function App({ currentUser: initialUser }) {
   const [loadingRequestHistory, setLoadingRequestHistory] = useState(false);
   const [requestHistoryHasMore, setRequestHistoryHasMore] = useState(false);
   const [requestHistoryOffset, setRequestHistoryOffset] = useState(0);
+  const [requestHistoryQuery, setRequestHistoryQuery] = useState('');
   const [requestChatSearch, setRequestChatSearch] = useState('');
   const [requestTargetParticipants, setRequestTargetParticipants] = useState([]);
   const [loadingRequestParticipants, setLoadingRequestParticipants] = useState(false);
@@ -1489,6 +1508,36 @@ function App({ currentUser: initialUser }) {
       }
   };
 
+  const handleDownloadMessageFile = async (chatId, msg) => {
+      const messageId = Number(msg?.id);
+      if (!chatId || !Number.isFinite(messageId)) return;
+      try {
+          const response = await fetch(`${API_URL}/chat/messages/${chatId}/${messageId}/file`);
+          if (!response.ok) {
+              let serverMessage = `HTTP ${response.status}`;
+              const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+              if (contentType.includes('application/json')) {
+                  try {
+                      const data = await response.json();
+                      serverMessage = data?.error || serverMessage;
+                  } catch (_) {}
+              } else {
+                  try {
+                      const text = await response.text();
+                      if (text) serverMessage = text;
+                  } catch (_) {}
+              }
+              throw new Error(serverMessage);
+          }
+          const blob = await response.blob();
+          const fallbackName = getMediaLabel(msg) || `file_${chatId}_${messageId}.bin`;
+          triggerBrowserDownload(blob, fallbackName);
+      } catch (error) {
+          console.error(error);
+          alert(`Не вдалося скачати файл: ${error.message || 'Невідома помилка'}`);
+      }
+  };
+
   const handleRetryFailedMessage = async (failedMsg) => {
       if (!failedMsg || !selectedDialog) return;
       const targetId = String(selectedDialog.id);
@@ -2505,6 +2554,17 @@ function App({ currentUser: initialUser }) {
           setLoadingRequestHistory(false);
       }
   };
+
+  const filteredRequestHistory = React.useMemo(() => {
+      const query = String(requestHistoryQuery || '').trim().toLowerCase();
+      if (!query) return requestHistory;
+      return requestHistory.filter((item) => {
+          const title = String(item?.template_title || item?.template_code || '').toLowerCase();
+          const chat = String(item?.chat_name || item?.chat_id || '').toLowerCase();
+          const text = String(item?.message_text || '').toLowerCase();
+          return title.includes(query) || chat.includes(query) || text.includes(query);
+      });
+  }, [requestHistory, requestHistoryQuery]);
 
   const loadDocumentTemplates = async () => {
       setLoadingDocumentTemplates(true);
@@ -5195,14 +5255,14 @@ function App({ currentUser: initialUser }) {
                                         <audio onLoadedMetadata={handleMessageMediaLoad} src={buildUploadUrl(msg.mediaPath)} controls className="w-full mb-2"></audio>
                                     ) : (
                                         <div className="mb-2 flex flex-wrap items-center gap-2">
-                                            <a
-                                                href={`${API_URL}/chat/messages/${selectedDialog.id}/${msg.id}/file`}
-                                                download={getMediaLabel(msg)}
-                                                className="flex items-center gap-2 text-blue-300 hover:text-blue-200 underline break-all bg-slate-900/40 p-2 rounded-lg"
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDownloadMessageFile(selectedDialog.id, msg)}
+                                                className="flex items-center gap-2 text-blue-300 hover:text-blue-200 underline break-all bg-slate-900/40 p-2 rounded-lg text-left"
                                             >
                                                 <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                                                 {getMediaLabel(msg)}
-                                            </a>
+                                            </button>
                                             <button
                                                 type="button"
                                                 onClick={() => handleOpenMediaFolder(msg.mediaPath)}
@@ -5486,27 +5546,51 @@ function App({ currentUser: initialUser }) {
                               Оновити
                           </button>
                       </div>
+                      <input
+                          type="text"
+                          value={requestHistoryQuery}
+                          onChange={(e) => setRequestHistoryQuery(e.target.value)}
+                          placeholder="Пошук в історії..."
+                          className="w-full mb-2 bg-slate-900/80 text-slate-200 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition"
+                      />
                       {loadingRequestHistory && <div className="text-xs text-slate-500 py-2">Завантаження історії...</div>}
-                      {!loadingRequestHistory && requestHistory.length === 0 && (
+                      {!loadingRequestHistory && filteredRequestHistory.length === 0 && (
                           <div className="text-xs text-slate-500 py-2">Історія поки порожня.</div>
                       )}
-                      {!loadingRequestHistory && requestHistory.map((item) => (
-                          <div key={`request-history-${item.id}`} className="mb-2 rounded-xl border border-slate-700 bg-slate-800/50 p-3">
-                              <div className="text-sm text-slate-100 font-medium truncate">{item.template_title || item.template_code || 'Заява'}</div>
-                              <div className="text-xs text-slate-400 mt-1 truncate">{item.chat_name || item.chat_id}</div>
-                              <div className="text-xs text-slate-500 mt-1">{item.created_at ? new Date(item.created_at).toLocaleString('uk-UA') : '—'}</div>
-                              <button
-                                  className="mt-2 px-2 py-1 rounded-md border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 text-xs transition"
-                                  onClick={async () => {
-                                      if (!item?.chat_id) return;
-                                      setActiveTab('messenger');
-                                      await openChatById(item.chat_id, item.message_id ? { focusMessageId: item.message_id } : {});
-                                  }}
-                              >
-                                  Перейти до повідомлення
-                              </button>
+                      {!loadingRequestHistory && filteredRequestHistory.length > 0 && (
+                          <div className="rounded-xl border border-slate-700 overflow-hidden">
+                              <div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-3 py-2 bg-slate-800/70 text-[11px] uppercase tracking-wide text-slate-400">
+                                  <div>Заява</div>
+                                  <div>Чат / Дата</div>
+                                  <div>Дія</div>
+                              </div>
+                              <div className="max-h-80 overflow-y-auto bg-slate-900/40">
+                                  {filteredRequestHistory.map((item) => (
+                                      <div key={`request-history-${item.id}`} className="grid grid-cols-[1fr_1fr_auto] gap-2 px-3 py-2 border-t border-slate-800 text-xs">
+                                          <div className="min-w-0">
+                                              <div className="text-slate-100 truncate">{item.template_title || item.template_code || 'Заява'}</div>
+                                          </div>
+                                          <div className="min-w-0">
+                                              <div className="text-slate-300 truncate">{item.chat_name || item.chat_id}</div>
+                                              <div className="text-slate-500">{item.created_at ? new Date(item.created_at).toLocaleString('uk-UA') : '—'}</div>
+                                          </div>
+                                          <div>
+                                              <button
+                                                  className="px-2 py-1 rounded-md border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 text-xs transition"
+                                                  onClick={async () => {
+                                                      if (!item?.chat_id) return;
+                                                      setActiveTab('messenger');
+                                                      await openChatById(item.chat_id, item.message_id ? { focusMessageId: item.message_id } : {});
+                                                  }}
+                                              >
+                                                  Перейти
+                                              </button>
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
                           </div>
-                      ))}
+                      )}
                       {requestHistoryHasMore && (
                           <button
                               onClick={() => loadRequestHistory({ append: true })}

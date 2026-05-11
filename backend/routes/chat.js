@@ -66,6 +66,16 @@ const sanitizeDownloadName = (name, fallback = 'file.bin') => {
   return normalized.slice(0, 180);
 };
 
+const sendDownloadFile = (res, media, downloadName) => {
+  const safeName = sanitizeDownloadName(downloadName, 'file.bin');
+  const encodedName = encodeURIComponent(safeName).replace(/['()]/g, escape).replace(/\*/g, '%2A');
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
+  return res.sendFile(media.diskPath);
+};
+
 const decodeMultipartFileName = (name) => {
   const raw = String(name || '').trim();
   if (!raw) return '';
@@ -189,6 +199,19 @@ const ensureMessageMediaCached = async ({ client, chatId, messageId }) => {
     repairFileNameMojibake(mediaMeta.originalName) || null
   );
   return { mediaPath: relPath, mediaName: repairFileNameMojibake(mediaMeta.originalName) || null, diskPath: fullPath };
+};
+
+const getCachedMessageMedia = ({ chatId, messageId }) => {
+  const existing = db.prepare('SELECT media_path, media_name FROM message_media WHERE message_id = ? AND peer_id = ?').get(messageId, chatId);
+  const mediaPath = String(existing?.media_path || '').trim();
+  if (!mediaPath) return null;
+  const diskPath = path.join(runtimePaths.uploadsDir, mediaPath.replace('/uploads/', ''));
+  if (!fs.existsSync(diskPath)) return null;
+  return {
+    mediaPath,
+    mediaName: repairFileNameMojibake(existing?.media_name) || null,
+    diskPath
+  };
 };
 
 const buildInputDialogPeer = async (client, peerCandidate) => {
@@ -887,18 +910,20 @@ router.get('/messages/:id', async (req, res) => {
 
 router.post('/messages/:chatId/:messageId/download-media', async (req, res) => {
   try {
-    const client = getClient();
-    if (!client || !client.connected) {
-      return res.status(401).json({ error: 'Telegram клієнт не підключений' });
-    }
-
     const chatId = String(req.params.chatId);
     const messageId = Number.parseInt(req.params.messageId, 10);
     if (!Number.isFinite(messageId) || messageId <= 0) {
       return res.status(400).json({ error: 'Невірний messageId' });
     }
 
-    const media = await ensureMessageMediaCached({ client, chatId, messageId });
+    let media = getCachedMessageMedia({ chatId, messageId });
+    if (!media) {
+      const client = getClient();
+      if (!client || !client.connected) {
+        return res.status(401).json({ error: 'Telegram клієнт не підключений' });
+      }
+      media = await ensureMessageMediaCached({ client, chatId, messageId });
+    }
     if (!media) {
       return res.status(404).json({ error: 'Медіа не знайдено у повідомленні' });
     }
@@ -911,18 +936,20 @@ router.post('/messages/:chatId/:messageId/download-media', async (req, res) => {
 
 router.get('/messages/:chatId/:messageId/file', async (req, res) => {
   try {
-    const client = getClient();
-    if (!client || !client.connected) {
-      return res.status(401).json({ error: 'Telegram клієнт не підключений' });
-    }
-
     const chatId = String(req.params.chatId);
     const messageId = Number.parseInt(req.params.messageId, 10);
     if (!Number.isFinite(messageId) || messageId <= 0) {
       return res.status(400).json({ error: 'Невірний messageId' });
     }
 
-    const media = await ensureMessageMediaCached({ client, chatId, messageId });
+    let media = getCachedMessageMedia({ chatId, messageId });
+    if (!media) {
+      const client = getClient();
+      if (!client || !client.connected) {
+        return res.status(401).json({ error: 'Telegram клієнт не підключений' });
+      }
+      media = await ensureMessageMediaCached({ client, chatId, messageId });
+    }
     if (!media || !media.diskPath || !fs.existsSync(media.diskPath)) {
       return res.status(404).json({ error: 'Файл не знайдено' });
     }
@@ -930,7 +957,7 @@ router.get('/messages/:chatId/:messageId/file', async (req, res) => {
     const ext = path.extname(media.diskPath) || '.bin';
     const fallbackName = `file_${chatId}_${messageId}${ext}`;
     const downloadName = sanitizeDownloadName(media.mediaName || fallbackName, fallbackName);
-    res.download(media.diskPath, downloadName);
+    return sendDownloadFile(res, media, downloadName);
   } catch (error) {
     console.error('Помилка скачування медіа-файлу:', error);
     res.status(500).json({ error: 'Internal server error' });
