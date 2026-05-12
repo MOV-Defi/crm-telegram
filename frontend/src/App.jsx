@@ -10,6 +10,7 @@ const resolveApiUrl = () => {
 const API_URL = resolveApiUrl();
 const URL_IN_TEXT_RE = /((?:https?:\/\/|www\.)[^\s]+)/gi;
 const UPLOADS_BASE_URL = API_URL.replace('/api', '');
+const REQUEST_HISTORY_VIEW_ID = '__request_history__';
 
 const parseApiJson = async (response, fallbackMessage) => {
   const rawText = await response.text();
@@ -3070,6 +3071,13 @@ function App({ currentUser: initialUser }) {
       });
   };
 
+  const handleSelectRequestHistoryView = () => {
+      setSelectedRequestTemplateId(REQUEST_HISTORY_VIEW_ID);
+      setRequestFeedback(null);
+      setRequestChatSearch('');
+      loadRequestHistory({ append: false });
+  };
+
   const handleRequestFieldChange = (key, value) => {
       setRequestFeedback(null);
       setRequestFormValues(prev => ({ ...prev, [key]: value }));
@@ -5551,6 +5559,23 @@ function App({ currentUser: initialUser }) {
                           </div>
                       </button>
                   ))}
+                  <button
+                      onClick={handleSelectRequestHistoryView}
+                      className={`w-full text-left rounded-2xl border p-4 transition ${selectedRequestTemplateId === REQUEST_HISTORY_VIEW_ID ? 'border-blue-500/50 bg-blue-500/10 shadow-lg shadow-blue-900/10' : 'border-slate-700 bg-slate-800/60 hover:border-slate-600 hover:bg-slate-800'}`}
+                  >
+                      <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                              <div className="text-lg font-semibold text-slate-100">Історія заяв</div>
+                              <div className="text-sm text-slate-400 mt-1 break-words">Перегляд усіх відправлених заяв з фільтрами та переходом у чат.</div>
+                          </div>
+                          <div className="w-11 h-11 rounded-2xl bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0">
+                              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6a2 2 0 012-2h6m-8 8h8m-8 0a2 2 0 01-2-2V7a2 2 0 012-2h6" />
+                              </svg>
+                          </div>
+                      </div>
+                  </button>
+                  {/* Compact history in sidebar */}
                   <div className="mt-4 pt-4 border-t border-slate-700/60">
                       <div className="flex items-center justify-between gap-2 mb-2">
                           <div className="text-xs uppercase tracking-wider text-slate-500">Історія заяв</div>
@@ -5644,7 +5669,64 @@ function App({ currentUser: initialUser }) {
           </div>
 
           <div className="requests-workspace flex-1 min-w-0 overflow-y-auto p-4 md:p-6 xl:p-8">
-              {!selectedRequestTemplate ? (
+              {selectedRequestTemplateId === REQUEST_HISTORY_VIEW_ID ? (
+                  <div className="bg-slate-900 border border-slate-700/50 rounded-3xl shadow-2xl p-6 md:p-8">
+                      <div className="flex items-center justify-between gap-3 mb-4">
+                          <h3 className="text-2xl font-bold text-slate-100">Історія заяв</h3>
+                          <button
+                              onClick={() => loadRequestHistory({ append: false })}
+                              disabled={loadingRequestHistory}
+                              className="px-4 py-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition disabled:opacity-50"
+                          >
+                              Оновити
+                          </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 mb-3">
+                          <input
+                              type="text"
+                              value={requestHistoryQuery}
+                              onChange={(e) => setRequestHistoryQuery(e.target.value)}
+                              placeholder="Пошук в історії..."
+                              className="w-full bg-slate-900/80 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition"
+                          />
+                          <select
+                              value={requestHistoryCategoryFilter}
+                              onChange={(e) => setRequestHistoryCategoryFilter(e.target.value)}
+                              className="bg-slate-900/80 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition"
+                          >
+                              <option value="all">Всі категорії</option>
+                              {requestHistoryByCategory.map((group) => (
+                                  <option key={`history-opt-${group.category}`} value={group.category}>{group.category} ({group.items.length})</option>
+                              ))}
+                          </select>
+                      </div>
+                      <div className="rounded-2xl border border-slate-700 overflow-hidden">
+                          <div className="grid grid-cols-[1.2fr_1fr_1fr_auto] gap-3 px-4 py-3 bg-slate-800/70 text-xs uppercase tracking-wide text-slate-400">
+                              <div>Категорія</div><div>Чат</div><div>Дата</div><div>Дія</div>
+                          </div>
+                          <div className="max-h-[62vh] overflow-y-auto bg-slate-900/40 divide-y divide-slate-800">
+                              {filteredRequestHistory.map((item) => (
+                                  <div key={`history-main-${item.id}`} className="grid grid-cols-[1.2fr_1fr_1fr_auto] gap-3 px-4 py-3 text-sm">
+                                      <div className="text-slate-200 truncate">{item.template_title || item.template_code || 'Заява'}</div>
+                                      <div className="text-slate-300 truncate">{item.chat_name || item.chat_id}</div>
+                                      <div className="text-slate-400">{item.created_at ? new Date(item.created_at).toLocaleString('uk-UA') : '—'}</div>
+                                      <button
+                                          className="px-3 py-1 rounded-md border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 text-xs transition"
+                                          onClick={async () => {
+                                              if (!item?.chat_id) return;
+                                              setActiveTab('messenger');
+                                              await openChatById(item.chat_id, item.message_id ? { focusMessageId: item.message_id } : {});
+                                          }}
+                                      >Перейти</button>
+                                  </div>
+                              ))}
+                              {!loadingRequestHistory && filteredRequestHistory.length === 0 && (
+                                  <div className="px-4 py-6 text-slate-500 text-sm">Історія поки порожня.</div>
+                              )}
+                          </div>
+                      </div>
+                  </div>
+              ) : !selectedRequestTemplate ? (
                   <div className="h-full flex items-center justify-center text-slate-500">
                       Оберіть заяву зліва.
                   </div>
