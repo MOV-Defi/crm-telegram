@@ -240,7 +240,7 @@ function App({ currentUser: initialUser }) {
   const [requestHistoryHasMore, setRequestHistoryHasMore] = useState(false);
   const [requestHistoryOffset, setRequestHistoryOffset] = useState(0);
   const [requestHistoryQuery, setRequestHistoryQuery] = useState('');
-  const [showRequestHistoryModal, setShowRequestHistoryModal] = useState(false);
+  const [requestHistoryCategoryFilter, setRequestHistoryCategoryFilter] = useState('all');
   const [requestChatSearch, setRequestChatSearch] = useState('');
   const [requestTargetParticipants, setRequestTargetParticipants] = useState([]);
   const [loadingRequestParticipants, setLoadingRequestParticipants] = useState(false);
@@ -2558,18 +2558,21 @@ function App({ currentUser: initialUser }) {
 
   const filteredRequestHistory = React.useMemo(() => {
       const query = String(requestHistoryQuery || '').trim().toLowerCase();
-      if (!query) return requestHistory;
       return requestHistory.filter((item) => {
+          const category = String(item?.template_title || item?.template_code || 'Інше').trim() || 'Інше';
+          const categoryMatch = requestHistoryCategoryFilter === 'all' || category === requestHistoryCategoryFilter;
+          if (!categoryMatch) return false;
+          if (!query) return true;
           const title = String(item?.template_title || item?.template_code || '').toLowerCase();
           const chat = String(item?.chat_name || item?.chat_id || '').toLowerCase();
           const text = String(item?.message_text || '').toLowerCase();
           return title.includes(query) || chat.includes(query) || text.includes(query);
       });
-  }, [requestHistory, requestHistoryQuery]);
+  }, [requestHistory, requestHistoryQuery, requestHistoryCategoryFilter]);
 
   const requestHistoryByCategory = React.useMemo(() => {
       const grouped = new Map();
-      for (const item of filteredRequestHistory) {
+      for (const item of requestHistory) {
           const category = String(item?.template_title || item?.template_code || 'Інше').trim() || 'Інше';
           if (!grouped.has(category)) grouped.set(category, []);
           grouped.get(category).push(item);
@@ -2577,7 +2580,7 @@ function App({ currentUser: initialUser }) {
       return Array.from(grouped.entries())
           .map(([category, items]) => ({ category, items }))
           .sort((a, b) => a.category.localeCompare(b.category, 'uk'));
-  }, [filteredRequestHistory]);
+  }, [requestHistory]);
 
   const loadDocumentTemplates = async () => {
       setLoadingDocumentTemplates(true);
@@ -5559,12 +5562,6 @@ function App({ currentUser: initialUser }) {
                               >
                                   Оновити
                               </button>
-                              <button
-                                  onClick={() => setShowRequestHistoryModal(true)}
-                                  className="px-2 py-1 rounded-lg border border-blue-500/40 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 text-xs"
-                              >
-                                  Відкрити
-                              </button>
                           </div>
                       </div>
                       <input
@@ -5574,6 +5571,27 @@ function App({ currentUser: initialUser }) {
                           placeholder="Пошук в історії..."
                           className="w-full mb-2 bg-slate-900/80 text-slate-200 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition"
                       />
+                      <div className="mb-2 overflow-x-auto">
+                          <div className="flex items-center gap-2 min-w-max">
+                              <button
+                                  type="button"
+                                  onClick={() => setRequestHistoryCategoryFilter('all')}
+                                  className={`px-2 py-1 rounded-md border text-[11px] transition ${requestHistoryCategoryFilter === 'all' ? 'border-blue-500/50 bg-blue-500/20 text-blue-200' : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                              >
+                                  Всі
+                              </button>
+                              {requestHistoryByCategory.map((group) => (
+                                  <button
+                                      key={`request-history-filter-${group.category}`}
+                                      type="button"
+                                      onClick={() => setRequestHistoryCategoryFilter(group.category)}
+                                      className={`px-2 py-1 rounded-md border text-[11px] whitespace-nowrap transition ${requestHistoryCategoryFilter === group.category ? 'border-blue-500/50 bg-blue-500/20 text-blue-200' : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                                  >
+                                      {group.category} ({group.items.length})
+                                  </button>
+                              ))}
+                          </div>
+                      </div>
                       {loadingRequestHistory && <div className="text-xs text-slate-500 py-2">Завантаження історії...</div>}
                       {!loadingRequestHistory && filteredRequestHistory.length === 0 && (
                           <div className="text-xs text-slate-500 py-2">Історія поки порожня.</div>
@@ -6394,68 +6412,6 @@ function App({ currentUser: initialUser }) {
       </div>
       )}
 
-      {showRequestHistoryModal && (
-          <div className="fixed inset-0 z-[1200] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="w-full max-w-5xl max-h-[85vh] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-                  <div className="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
-                      <h3 className="text-lg font-semibold text-slate-100">Історія заяв по категоріях</h3>
-                      <button
-                          onClick={() => setShowRequestHistoryModal(false)}
-                          className="text-slate-400 hover:text-slate-100 text-xl leading-none"
-                      >
-                          ×
-                      </button>
-                  </div>
-
-                  <div className="px-5 py-3 border-b border-slate-800">
-                      <input
-                          type="text"
-                          value={requestHistoryQuery}
-                          onChange={(e) => setRequestHistoryQuery(e.target.value)}
-                          placeholder="Пошук по історії заяв..."
-                          className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                      />
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                      {loadingRequestHistory && <div className="text-sm text-slate-400">Завантаження історії...</div>}
-                      {!loadingRequestHistory && requestHistoryByCategory.length === 0 && (
-                          <div className="text-sm text-slate-500">Історія поки порожня.</div>
-                      )}
-
-                      {requestHistoryByCategory.map((group) => (
-                          <div key={`request-history-group-${group.category}`} className="rounded-xl border border-slate-700 overflow-hidden">
-                              <div className="px-3 py-2 bg-slate-800/70 text-slate-200 font-medium text-sm">
-                                  {group.category} <span className="text-slate-400">({group.items.length})</span>
-                              </div>
-                              <div className="divide-y divide-slate-800">
-                                  {group.items.map((item) => (
-                                      <div key={`request-history-modal-${item.id}`} className="grid grid-cols-[1fr_1fr_auto] gap-3 px-3 py-2 text-xs">
-                                          <div className="text-slate-200 truncate">{item.template_title || item.template_code || 'Заява'}</div>
-                                          <div className="min-w-0">
-                                              <div className="text-slate-300 truncate">{item.chat_name || item.chat_id}</div>
-                                              <div className="text-slate-500">{item.created_at ? new Date(item.created_at).toLocaleString('uk-UA') : '—'}</div>
-                                          </div>
-                                          <button
-                                              className="px-2 py-1 rounded-md border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 text-xs"
-                                              onClick={async () => {
-                                                  if (!item?.chat_id) return;
-                                                  setShowRequestHistoryModal(false);
-                                                  setActiveTab('messenger');
-                                                  await openChatById(item.chat_id, item.message_id ? { focusMessageId: item.message_id } : {});
-                                              }}
-                                          >
-                                              Перейти
-                                          </button>
-                                      </div>
-                                  ))}
-                              </div>
-                          </div>
-                      ))}
-                  </div>
-              </div>
-          </div>
-      )}
 
       {activeTab === 'warehouseOrders' && (
       <div className="flex-1 bg-slate-950 p-4 md:p-6 overflow-y-auto">
