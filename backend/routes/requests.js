@@ -1361,7 +1361,19 @@ router.post('/send', upload.single('file'), (req, res, next) => {
 
     res.json({ success: true, message, warehouseOrder: createdWarehouseOrder });
   } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('requests/send error:', {
+      templateId,
+      templateCode: String(req.body?.templateCode || ''),
+      userId: req.userId || null,
+      username: req.username || null,
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
+    const rawMessage = String(error?.message || '').trim();
+    const safeMessage = rawMessage && !/^internal server error$/i.test(rawMessage)
+      ? rawMessage
+      : 'Помилка відправки заяви. Перевірте підключення Telegram і шаблон.';
+    res.status(500).json({ error: safeMessage });
   } finally {
     if (tempDocxRoot) {
       fs.rmSync(tempDocxRoot, { recursive: true, force: true });
