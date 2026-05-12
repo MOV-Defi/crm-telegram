@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const AdmZip = require('adm-zip');
 
 const router = express.Router();
+let requestHistoryHasProjectColumn = null;
 
 
 const upload = multer({ dest: runtimePaths.mediaDir });
@@ -564,18 +565,43 @@ const saveRequestHistory = ({
   values,
   req
 }) => {
+  if (requestHistoryHasProjectColumn === null) {
+    const columns = db.central.prepare(`PRAGMA table_info(request_history)`).all();
+    requestHistoryHasProjectColumn = columns.some((column) => column.name === 'project_name');
+  }
   const projectName = String(
     getFieldValue(values, 'project_name')
       || getFieldValue(values, 'object_name')
       || getFieldValue(values, 'project')
       || ''
   ).trim() || null;
+  if (requestHistoryHasProjectColumn) {
+    db.central.prepare(`
+      INSERT INTO request_history (
+        template_id, template_code, template_title,
+        chat_id, chat_name, message_id, message_text, project_name,
+        created_by_user_id, created_by_username
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      Number(template?.id) || null,
+      String(template?.code || '').trim() || null,
+      String(template?.title || '').trim() || null,
+      String(template?.target_chat_id || '').trim() || null,
+      String(template?.target_chat_name || '').trim() || null,
+      Number.isFinite(Number(messageId)) ? Number(messageId) : null,
+      String(messageText || '').slice(0, 4000),
+      projectName,
+      req.userId || null,
+      req.username || null
+    );
+    return;
+  }
   db.central.prepare(`
     INSERT INTO request_history (
       template_id, template_code, template_title,
-      chat_id, chat_name, message_id, message_text, project_name,
+      chat_id, chat_name, message_id, message_text,
       created_by_user_id, created_by_username
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     Number(template?.id) || null,
     String(template?.code || '').trim() || null,
@@ -584,10 +610,24 @@ const saveRequestHistory = ({
     String(template?.target_chat_name || '').trim() || null,
     Number.isFinite(Number(messageId)) ? Number(messageId) : null,
     String(messageText || '').slice(0, 4000),
-    projectName,
     req.userId || null,
     req.username || null
   );
+};
+
+const extractProjectNameFromMessageText = (text = '') => {
+  const raw = String(text || '');
+  const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
+  const markers = ['проєкт:', 'проект:', 'об\'єкт:', "об’єкт:"];
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    const marker = markers.find((m) => lower.includes(m));
+    if (!marker) continue;
+    const idx = lower.indexOf(marker);
+    const value = line.slice(idx + marker.length).trim();
+    if (value) return value;
+  }
+  return null;
 };
 
 const escapeXml = (value) => String(value || '')
@@ -1397,28 +1437,55 @@ router.post('/send', upload.single('file'), (req, res, next) => {
 
 router.get('/history', (req, res) => {
   try {
+    if (requestHistoryHasProjectColumn === null) {
+      const columns = db.central.prepare(`PRAGMA table_info(request_history)`).all();
+      requestHistoryHasProjectColumn = columns.some((column) => column.name === 'project_name');
+    }
     const limitRaw = Number.parseInt(String(req.query.limit || '100'), 10);
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 100;
     const offsetRaw = Number.parseInt(String(req.query.offset || '0'), 10);
     const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
-    const rows = db.central.prepare(`
-      SELECT
-        id,
-        template_id,
-        template_code,
-        template_title,
-        chat_id,
-        chat_name,
-        message_id,
-        message_text,
-        project_name,
-        created_by_user_id,
-        created_by_username,
-        created_at
-      FROM request_history
-      ORDER BY datetime(created_at) DESC, id DESC
-      LIMIT ? OFFSET ?
-    `).all(limit, offset);
+    const rows = db.central.prepare(
+      requestHistoryHasProjectColumn
+        ? `
+          SELECT
+            id,
+            template_id,
+            template_code,
+            template_title,
+            chat_id,
+            chat_name,
+            message_id,
+            message_text,
+            project_name,
+            created_by_user_id,
+            created_by_username,
+            created_at
+          FROM request_history
+          ORDER BY datetime(created_at) DESC, id DESC
+          LIMIT ? OFFSET ?
+        `
+        : `
+          SELECT
+            id,
+            template_id,
+            template_code,
+            template_title,
+            chat_id,
+            chat_name,
+            message_id,
+            message_text,
+            created_by_user_id,
+            created_by_username,
+            created_at
+          FROM request_history
+          ORDER BY datetime(created_at) DESC, id DESC
+          LIMIT ? OFFSET ?
+        `
+    ).all(limit, offset).map((row) => ({
+      ...row,
+      project_name: row.project_name || extractProjectNameFromMessageText(row.message_text)
+    }));
 
     const totalRow = db.central.prepare(`SELECT COUNT(*) AS total FROM request_history`).get();
     const total = Number(totalRow?.total || 0);
