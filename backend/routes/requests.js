@@ -561,14 +561,21 @@ const saveRequestHistory = ({
   template,
   messageId,
   messageText,
+  values,
   req
 }) => {
+  const projectName = String(
+    getFieldValue(values, 'project_name')
+      || getFieldValue(values, 'object_name')
+      || getFieldValue(values, 'project')
+      || ''
+  ).trim() || null;
   db.central.prepare(`
     INSERT INTO request_history (
       template_id, template_code, template_title,
-      chat_id, chat_name, message_id, message_text,
+      chat_id, chat_name, message_id, message_text, project_name,
       created_by_user_id, created_by_username
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     Number(template?.id) || null,
     String(template?.code || '').trim() || null,
@@ -577,6 +584,7 @@ const saveRequestHistory = ({
     String(template?.target_chat_name || '').trim() || null,
     Number.isFinite(Number(messageId)) ? Number(messageId) : null,
     String(messageText || '').slice(0, 4000),
+    projectName,
     req.userId || null,
     req.username || null
   );
@@ -1254,6 +1262,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         template,
         messageId: sentMessage?.id,
         messageText: caption || message,
+        values,
         req
       });
       return res.json({ success: true, message });
@@ -1280,6 +1289,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         template,
         messageId: sentMessage?.id,
         messageText: caption || message,
+        values,
         req
       });
       return res.json({ success: true, message });
@@ -1335,6 +1345,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         template,
         messageId: sentMessage?.id,
         messageText: outgoingMessage,
+        values,
         req
       });
       if (isWarehouseIssue) {
@@ -1350,6 +1361,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         template,
         messageId: sent?.id,
         messageText: outgoingMessage,
+        values,
         req
       });
       if (isWarehouseIssue) {
@@ -1399,6 +1411,7 @@ router.get('/history', (req, res) => {
         chat_name,
         message_id,
         message_text,
+        project_name,
         created_by_user_id,
         created_by_username,
         created_at

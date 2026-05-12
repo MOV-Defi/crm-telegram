@@ -130,6 +130,7 @@ ensureCentralColumn('warehouse_orders', 'project_name', 'TEXT');
 ensureCentralColumn('warehouse_orders', 'requester_name', 'TEXT');
 ensureCentralColumn('warehouse_orders', 'media_name', 'TEXT');
 ensureCentralColumn('warehouse_orders', 'request_type', "TEXT NOT NULL DEFAULT 'issuance'");
+ensureCentralColumn('request_history', 'project_name', 'TEXT');
 safeDbWrite(centralDb, "migrate warehouse_orders reserved->new with request_type", () => {
   centralDb.exec(`
     UPDATE warehouse_orders

@@ -5575,96 +5575,7 @@ function App({ currentUser: initialUser }) {
                           </div>
                       </div>
                   </button>
-                  {/* Compact history in sidebar */}
-                  <div className="mt-4 pt-4 border-t border-slate-700/60">
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                          <div className="text-xs uppercase tracking-wider text-slate-500">Історія заяв</div>
-                          <div className="flex items-center gap-2">
-                              <button
-                                  onClick={() => loadRequestHistory({ append: false })}
-                                  disabled={loadingRequestHistory}
-                                  className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs disabled:opacity-50"
-                              >
-                                  Оновити
-                              </button>
-                          </div>
-                      </div>
-                      <input
-                          type="text"
-                          value={requestHistoryQuery}
-                          onChange={(e) => setRequestHistoryQuery(e.target.value)}
-                          placeholder="Пошук в історії..."
-                          className="w-full mb-2 bg-slate-900/80 text-slate-200 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition"
-                      />
-                      <div className="mb-2 overflow-x-auto">
-                          <div className="flex items-center gap-2 min-w-max">
-                              <button
-                                  type="button"
-                                  onClick={() => setRequestHistoryCategoryFilter('all')}
-                                  className={`px-2 py-1 rounded-md border text-[11px] transition ${requestHistoryCategoryFilter === 'all' ? 'border-blue-500/50 bg-blue-500/20 text-blue-200' : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-                              >
-                                  Всі
-                              </button>
-                              {requestHistoryByCategory.map((group) => (
-                                  <button
-                                      key={`request-history-filter-${group.category}`}
-                                      type="button"
-                                      onClick={() => setRequestHistoryCategoryFilter(group.category)}
-                                      className={`px-2 py-1 rounded-md border text-[11px] whitespace-nowrap transition ${requestHistoryCategoryFilter === group.category ? 'border-blue-500/50 bg-blue-500/20 text-blue-200' : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-                                  >
-                                      {group.category} ({group.items.length})
-                                  </button>
-                              ))}
-                          </div>
-                      </div>
-                      {loadingRequestHistory && <div className="text-xs text-slate-500 py-2">Завантаження історії...</div>}
-                      {!loadingRequestHistory && filteredRequestHistory.length === 0 && (
-                          <div className="text-xs text-slate-500 py-2">Історія поки порожня.</div>
-                      )}
-                      {!loadingRequestHistory && filteredRequestHistory.length > 0 && (
-                          <div className="rounded-xl border border-slate-700 overflow-hidden">
-                              <div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-3 py-2 bg-slate-800/70 text-[11px] uppercase tracking-wide text-slate-400">
-                                  <div>Заява</div>
-                                  <div>Чат / Дата</div>
-                                  <div>Дія</div>
-                              </div>
-                              <div className="max-h-80 overflow-y-auto bg-slate-900/40">
-                                  {filteredRequestHistory.map((item) => (
-                                      <div key={`request-history-${item.id}`} className="grid grid-cols-[1fr_1fr_auto] gap-2 px-3 py-2 border-t border-slate-800 text-xs">
-                                          <div className="min-w-0">
-                                              <div className="text-slate-100 truncate">{item.template_title || item.template_code || 'Заява'}</div>
-                                          </div>
-                                          <div className="min-w-0">
-                                              <div className="text-slate-300 truncate">{item.chat_name || item.chat_id}</div>
-                                              <div className="text-slate-500">{item.created_at ? new Date(item.created_at).toLocaleString('uk-UA') : '—'}</div>
-                                          </div>
-                                          <div>
-                                              <button
-                                                  className="px-2 py-1 rounded-md border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 text-xs transition"
-                                                  onClick={async () => {
-                                                      if (!item?.chat_id) return;
-                                                      setActiveTab('messenger');
-                                                      await openChatById(item.chat_id, item.message_id ? { focusMessageId: item.message_id } : {});
-                                                  }}
-                                              >
-                                                  Перейти
-                                              </button>
-                                          </div>
-                                      </div>
-                                  ))}
-                              </div>
-                          </div>
-                      )}
-                      {requestHistoryHasMore && (
-                          <button
-                              onClick={() => loadRequestHistory({ append: true })}
-                              disabled={loadingRequestHistory}
-                              className="w-full mt-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 text-xs transition disabled:opacity-50"
-                          >
-                              {loadingRequestHistory ? 'Завантаження...' : 'Показати ще'}
-                          </button>
-                      )}
-                  </div>
+                  
               </div>
           </div>
 
@@ -5701,13 +5612,14 @@ function App({ currentUser: initialUser }) {
                           </select>
                       </div>
                       <div className="rounded-2xl border border-slate-700 overflow-hidden">
-                          <div className="grid grid-cols-[1.2fr_1fr_1fr_auto] gap-3 px-4 py-3 bg-slate-800/70 text-xs uppercase tracking-wide text-slate-400">
-                              <div>Категорія</div><div>Чат</div><div>Дата</div><div>Дія</div>
+                          <div className="grid grid-cols-[1.1fr_1.1fr_1fr_1fr_auto] gap-3 px-4 py-3 bg-slate-800/70 text-xs uppercase tracking-wide text-slate-400">
+                              <div>Категорія</div><div>Проєкт</div><div>Чат</div><div>Дата</div><div>Дія</div>
                           </div>
                           <div className="max-h-[62vh] overflow-y-auto bg-slate-900/40 divide-y divide-slate-800">
                               {filteredRequestHistory.map((item) => (
-                                  <div key={`history-main-${item.id}`} className="grid grid-cols-[1.2fr_1fr_1fr_auto] gap-3 px-4 py-3 text-sm">
+                                  <div key={`history-main-${item.id}`} className="grid grid-cols-[1.1fr_1.1fr_1fr_1fr_auto] gap-3 px-4 py-3 text-sm">
                                       <div className="text-slate-200 truncate">{item.template_title || item.template_code || 'Заява'}</div>
+                                      <div className="text-slate-300 truncate">{item.project_name || '—'}</div>
                                       <div className="text-slate-300 truncate">{item.chat_name || item.chat_id}</div>
                                       <div className="text-slate-400">{item.created_at ? new Date(item.created_at).toLocaleString('uk-UA') : '—'}</div>
                                       <button
