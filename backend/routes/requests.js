@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const crypto = require('crypto');
+const AdmZip = require('adm-zip');
 
 const router = express.Router();
 
@@ -685,8 +686,9 @@ const packDocxFromContentDir = (contentDir, docxPath) => {
     );
     return;
   }
-
-  execFileSync('zip', ['-qr', docxPath, '.'], { cwd: contentDir, stdio: 'ignore' });
+  const zip = new AdmZip();
+  zip.addLocalFolder(contentDir);
+  zip.writeZip(docxPath);
 };
 
 const writeDocxFromTemplate = (templateText, values, fileNameBase = 'logistics-request') => {
