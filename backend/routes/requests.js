@@ -581,7 +581,7 @@ const saveRequestHistory = ({
         template_id, template_code, template_title,
         chat_id, chat_name, message_id, message_text, project_name,
         created_by_user_id, created_by_username
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       Number(template?.id) || null,
       String(template?.code || '').trim() || null,
