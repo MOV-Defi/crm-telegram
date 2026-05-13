@@ -2027,6 +2027,19 @@ function App({ currentUser: initialUser }) {
       return '';
   };
 
+  const buildFreshRequestValues = (template) => {
+      const nextValues = {};
+      (template?.fields || []).forEach(field => {
+          nextValues[field.key] = getRequestFieldDefaultValue(field);
+      });
+      if (template?.code === 'logistics_request') {
+          const placeCount = Math.min(10, Math.max(1, Number.parseInt(String(nextValues.place_count || '1'), 10) || 1));
+          nextValues.place_count = String(placeCount);
+          nextValues.place_dimensions = Array.from({ length: placeCount }, () => '');
+      }
+      return nextValues;
+  };
+
   const getTodayDateValue = () => new Date().toISOString().slice(0, 10);
   const getTomorrowDateValue = () => {
       const date = new Date();
@@ -3069,6 +3082,19 @@ function App({ currentUser: initialUser }) {
           }
           return nextValues;
       });
+  };
+
+  const handleStartNewRequest = () => {
+      if (!selectedRequestTemplate) return;
+      setRequestFeedback(null);
+      setRequestChatSearch('');
+      setPurchaseImportText('');
+      setPurchaseImportRows([]);
+      setPurchaseImportError('');
+      setPurchaseManualItem({ itemName: '', equipmentCode: '', plant: '', unit: '', qty: '', notes: '' });
+      setRequestAttachment(null);
+      if (requestFileInputRef.current) requestFileInputRef.current.value = '';
+      setRequestFormValues(buildFreshRequestValues(selectedRequestTemplate));
   };
 
   const handleSelectRequestHistoryView = () => {
@@ -5611,32 +5637,36 @@ function App({ currentUser: initialUser }) {
                               ))}
                           </select>
                       </div>
-                      <div className="rounded-2xl border border-slate-700 overflow-hidden">
-                          <div className="grid grid-cols-[1.1fr_1.1fr_1fr_1fr_auto] gap-3 px-4 py-3 bg-slate-800/70 text-xs uppercase tracking-wide text-slate-400">
-                              <div>Категорія</div><div>Проєкт</div><div>Чат</div><div>Дата</div><div>Дія</div>
-                          </div>
-                          <div className="max-h-[62vh] overflow-y-auto bg-slate-900/40 divide-y divide-slate-800">
+                      <div className="max-h-[62vh] overflow-y-auto space-y-3 pr-1">
                               {filteredRequestHistory.map((item) => (
-                                  <div key={`history-main-${item.id}`} className="grid grid-cols-[1.1fr_1.1fr_1fr_1fr_auto] gap-3 px-4 py-3 text-sm">
-                                      <div className="text-slate-200 truncate">{item.template_title || item.template_code || 'Заява'}</div>
-                                      <div className="text-slate-300 truncate">{item.project_name || '—'}</div>
-                                      <div className="text-slate-300 truncate">{item.chat_name || item.chat_id}</div>
-                                      <div className="text-slate-400">{item.created_at ? new Date(item.created_at).toLocaleString('uk-UA') : '—'}</div>
-                                      <button
-                                          className="px-3 py-1 rounded-md border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 text-xs transition"
-                                          onClick={async () => {
-                                              if (!item?.chat_id) return;
-                                              setActiveTab('messenger');
-                                              await openChatById(item.chat_id, item.message_id ? { focusMessageId: item.message_id } : {});
-                                          }}
-                                      >Перейти</button>
+                                  <div key={`history-main-${item.id}`} className="rounded-2xl border border-slate-700 bg-slate-800/50 p-4">
+                                      <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                              <div className="text-slate-100 font-semibold truncate">{item.template_title || item.template_code || 'Заява'}</div>
+                                              <div className="text-xs text-slate-400 mt-1">{item.created_at ? new Date(item.created_at).toLocaleString('uk-UA') : '—'}</div>
+                                          </div>
+                                          <button
+                                              className="px-3 py-1 rounded-md border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 text-xs transition shrink-0"
+                                              onClick={async () => {
+                                                  if (!item?.chat_id) return;
+                                                  setActiveTab('messenger');
+                                                  await openChatById(item.chat_id, item.message_id ? { focusMessageId: item.message_id } : {});
+                                              }}
+                                          >Перейти</button>
+                                      </div>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3 text-sm">
+                                          <div className="text-slate-300"><span className="text-slate-500">Проєкт:</span> {item.project_name || '—'}</div>
+                                          <div className="text-slate-300"><span className="text-slate-500">Чат:</span> {item.chat_name || item.chat_id || '—'}</div>
+                                      </div>
+                                      <div className="mt-3 rounded-xl border border-slate-700/70 bg-slate-900/60 p-3 text-sm text-slate-300 whitespace-pre-wrap">
+                                          {item.message_text || 'Без тексту заяви'}
+                                      </div>
                                   </div>
                               ))}
                               {!loadingRequestHistory && filteredRequestHistory.length === 0 && (
                                   <div className="px-4 py-6 text-slate-500 text-sm">Історія поки порожня.</div>
                               )}
                           </div>
-                      </div>
                   </div>
               ) : !selectedRequestTemplate ? (
                   <div className="h-full flex items-center justify-center text-slate-500">
@@ -5650,9 +5680,18 @@ function App({ currentUser: initialUser }) {
                                   <h3 className="text-2xl font-bold text-slate-100">{selectedRequestTemplate.title}</h3>
                                   <p className="text-sm text-slate-400 mt-2 max-w-2xl">{selectedRequestTemplate.description}</p>
                               </div>
-                              <div className="px-4 py-3 rounded-2xl bg-slate-800 border border-slate-700 text-sm text-slate-300">
-                                  Чат призначення:
-                                  <div className="text-slate-100 font-semibold mt-1">{selectedRequestTemplate.target_chat_name || 'ще не вибрано'}</div>
+                              <div className="flex flex-col sm:flex-row gap-2 sm:items-start">
+                                  <button
+                                      onClick={handleStartNewRequest}
+                                      disabled={requestSending}
+                                      className="px-4 py-3 rounded-2xl border border-blue-500/40 bg-blue-500/10 text-blue-200 text-sm font-semibold hover:bg-blue-500/20 transition disabled:opacity-50"
+                                  >
+                                      Нова заявка
+                                  </button>
+                                  <div className="px-4 py-3 rounded-2xl bg-slate-800 border border-slate-700 text-sm text-slate-300">
+                                      Чат призначення:
+                                      <div className="text-slate-100 font-semibold mt-1">{selectedRequestTemplate.target_chat_name || 'ще не вибрано'}</div>
+                                  </div>
                               </div>
                           </div>
 
