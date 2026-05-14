@@ -37,7 +37,7 @@ const toRow = (row) => ({
 
 router.get('/', (req, res) => {
   try {
-    const rows = db.prepare(`
+    const rows = db.central.prepare(`
       SELECT *
       FROM credit_managers
       ORDER BY bank_name COLLATE NOCASE ASC, manager_name COLLATE NOCASE ASC
@@ -66,7 +66,7 @@ router.post('/', requireAdminWrite, (req, res) => {
       return res.status(400).json({ error: 'Поля "Банк" і "Менеджер" обовʼязкові' });
     }
 
-    const info = db.prepare(`
+    const info = db.central.prepare(`
       INSERT INTO credit_managers (
         bank_name, manager_name, phone, email, telegram_contact, responsibility, notes, linked_chat_ids_json
       )
@@ -82,7 +82,7 @@ router.post('/', requireAdminWrite, (req, res) => {
       JSON.stringify(linkedChatIds)
     );
 
-    const created = db.prepare('SELECT * FROM credit_managers WHERE id = ?').get(Number(info.lastInsertRowid));
+    const created = db.central.prepare('SELECT * FROM credit_managers WHERE id = ?').get(Number(info.lastInsertRowid));
     return res.status(201).json(toRow(created));
   } catch (error) {
     console.error('credit managers create error:', error);
@@ -95,7 +95,7 @@ router.put('/:id', requireAdminWrite, (req, res) => {
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Некоректний ID' });
 
-    const existing = db.prepare('SELECT * FROM credit_managers WHERE id = ?').get(id);
+    const existing = db.central.prepare('SELECT * FROM credit_managers WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({ error: 'Запис не знайдено' });
 
     const bankName = String(req.body?.bankName || '').trim();
@@ -113,7 +113,7 @@ router.put('/:id', requireAdminWrite, (req, res) => {
       return res.status(400).json({ error: 'Поля "Банк" і "Менеджер" обовʼязкові' });
     }
 
-    db.prepare(`
+    db.central.prepare(`
       UPDATE credit_managers
       SET
         bank_name = ?,
@@ -138,7 +138,7 @@ router.put('/:id', requireAdminWrite, (req, res) => {
       id
     );
 
-    const updated = db.prepare('SELECT * FROM credit_managers WHERE id = ?').get(id);
+    const updated = db.central.prepare('SELECT * FROM credit_managers WHERE id = ?').get(id);
     return res.json(toRow(updated));
   } catch (error) {
     console.error('credit managers update error:', error);
@@ -151,7 +151,7 @@ router.delete('/:id', requireAdminWrite, (req, res) => {
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Некоректний ID' });
 
-    db.prepare('DELETE FROM credit_managers WHERE id = ?').run(id);
+    db.central.prepare('DELETE FROM credit_managers WHERE id = ?').run(id);
     return res.json({ success: true });
   } catch (error) {
     console.error('credit managers delete error:', error);

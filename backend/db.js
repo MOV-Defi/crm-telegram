@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const Database = require('better-sqlite3');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
@@ -104,6 +106,19 @@ centralDb.exec(`
     created_by_username TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS credit_managers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bank_name TEXT NOT NULL,
+    manager_name TEXT NOT NULL,
+    phone TEXT,
+    email TEXT,
+    telegram_contact TEXT,
+    responsibility TEXT,
+    notes TEXT,
+    linked_chat_ids_json TEXT NOT NULL DEFAULT '[]',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 const ensureUsersRoleColumn = () => {
@@ -131,6 +146,72 @@ ensureCentralColumn('warehouse_orders', 'requester_name', 'TEXT');
 ensureCentralColumn('warehouse_orders', 'media_name', 'TEXT');
 ensureCentralColumn('warehouse_orders', 'request_type', "TEXT NOT NULL DEFAULT 'issuance'");
 ensureCentralColumn('request_history', 'project_name', 'TEXT');
+
+const migrateTenantCreditManagersToCentral = () => {
+  safeDbWrite(centralDb, 'migrate tenant credit_managers to central', () => {
+    let tenantDirs = [];
+    try {
+      tenantDirs = fs.readdirSync(runtimePaths.dataRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && /^tenant_\d+$/.test(entry.name))
+        .map((entry) => path.join(runtimePaths.dataRoot, entry.name));
+    } catch (error) {
+      console.warn('[db] Skip credit managers migration:', error.message);
+      return;
+    }
+
+    const insert = centralDb.prepare(`
+      INSERT INTO credit_managers (
+        bank_name, manager_name, phone, email, telegram_contact, responsibility, notes, linked_chat_ids_json, created_at, updated_at
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM credit_managers
+        WHERE bank_name = ? AND manager_name = ?
+          AND COALESCE(phone, '') = COALESCE(?, '')
+          AND COALESCE(telegram_contact, '') = COALESCE(?, '')
+      )
+    `);
+
+    for (const tenantDir of tenantDirs) {
+      const tenantDbPath = path.join(tenantDir, 'crm.db');
+      if (!fs.existsSync(tenantDbPath)) continue;
+      let tenantDb = null;
+      try {
+        tenantDb = new Database(tenantDbPath, { readonly: true });
+        const hasTable = tenantDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='credit_managers'").get();
+        if (!hasTable) continue;
+        const rows = tenantDb.prepare('SELECT * FROM credit_managers').all();
+        for (const row of rows) {
+          const bankName = String(row.bank_name || '').trim();
+          const managerName = String(row.manager_name || '').trim();
+          if (!bankName || !managerName) continue;
+          insert.run(
+            bankName,
+            managerName,
+            row.phone || null,
+            row.email || null,
+            row.telegram_contact || null,
+            row.responsibility || null,
+            row.notes || null,
+            row.linked_chat_ids_json || '[]',
+            row.created_at || null,
+            row.updated_at || null,
+            bankName,
+            managerName,
+            row.phone || null,
+            row.telegram_contact || null
+          );
+        }
+      } catch (error) {
+        console.warn(`[db] Skip tenant credit managers migration for ${tenantDbPath}:`, error.message);
+      } finally {
+        if (tenantDb) tenantDb.close();
+      }
+    }
+  });
+};
+
+migrateTenantCreditManagersToCentral();
 safeDbWrite(centralDb, "migrate warehouse_orders reserved->new with request_type", () => {
   centralDb.exec(`
     UPDATE warehouse_orders
