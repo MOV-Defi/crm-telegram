@@ -26,13 +26,25 @@ window.fetch = async (...args) => {
     
     try {
         const response = await originalFetch(...args);
-        // Auto-logout if token is invalid or expired
+        // Auto-logout only when the SaaS JWT is really invalid.
+        // Some feature routes also use 401 for Telegram disconnects, and that must not kick users out.
         if (response.status === 401 && resourceUrl && !isPublicSystemAuth) {
-            console.warn('SaaS session expired or invalid. Redirecting to login...');
-            localStorage.removeItem('saas_token');
-            window.dispatchEvent(new Event('auth-expired'));
-            // Use setTimeout to avoid interrupting the current promise chain immediately
-            setTimeout(() => window.location.reload(), 100);
+            const clonedResponse = response.clone();
+            let errorMessage = '';
+            try {
+                const data = await clonedResponse.json();
+                errorMessage = String(data?.error || data?.message || '');
+            } catch (_) {
+                errorMessage = '';
+            }
+            const isAuthTokenError = /unauthorized|invalid or expired token|invalid token payload|user not found/i.test(errorMessage);
+            if (isAuthTokenError) {
+                console.warn('SaaS session expired or invalid. Redirecting to login...');
+                localStorage.removeItem('saas_token');
+                window.dispatchEvent(new Event('auth-expired'));
+                // Use setTimeout to avoid interrupting the current promise chain immediately
+                setTimeout(() => window.location.reload(), 100);
+            }
         }
         return response;
     } catch (error) {
