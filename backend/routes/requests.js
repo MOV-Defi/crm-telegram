@@ -17,6 +17,68 @@ let requestHistoryHasProjectColumn = null;
 
 const upload = multer({ dest: runtimePaths.mediaDir });
 const MAX_FILE_BASENAME = 80;
+const EMERGENCY_PRUNE_TARGET_BYTES = 350 * 1024 * 1024;
+const EMERGENCY_PRUNE_MAX_FILES = 800;
+
+const isDiskFullError = (error) => (
+  String(error?.code || '').toUpperCase() === 'SQLITE_FULL' ||
+  /database or disk is full|no space left on device|enospc/i.test(String(error?.message || ''))
+);
+
+const pruneOldestFiles = (dirPath, targetBytes = EMERGENCY_PRUNE_TARGET_BYTES, maxFiles = EMERGENCY_PRUNE_MAX_FILES) => {
+  if (!fs.existsSync(dirPath)) return { removed: 0, freedBytes: 0 };
+  const files = [];
+  const stack = [dirPath];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (_) {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name === '.gitkeep') continue;
+      const fullPath = path.join(current, entry.name);
+      try {
+        if (entry.isDirectory()) {
+          stack.push(fullPath);
+        } else if (entry.isFile()) {
+          const stat = fs.statSync(fullPath);
+          files.push({ fullPath, size: stat.size, mtimeMs: stat.mtimeMs });
+        }
+      } catch (_) {}
+    }
+  }
+
+  files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  let removed = 0;
+  let freedBytes = 0;
+  for (const file of files) {
+    if (freedBytes >= targetBytes || removed >= maxFiles) break;
+    try {
+      fs.rmSync(file.fullPath, { force: true });
+      removed += 1;
+      freedBytes += Number(file.size || 0);
+    } catch (_) {}
+  }
+  return { removed, freedBytes };
+};
+
+const reclaimStorageForSqliteWrite = () => {
+  const result = {
+    media: pruneOldestFiles(runtimePaths.mediaDir),
+    avatars: pruneOldestFiles(runtimePaths.avatarsDir, 80 * 1024 * 1024, 500),
+    checkpointed: false
+  };
+  try {
+    db.central.pragma('wal_checkpoint(TRUNCATE)');
+    result.checkpointed = true;
+  } catch (error) {
+    result.checkpointError = error?.message || String(error);
+  }
+  return result;
+};
 
 const sanitizeFileBaseName = (name) => String(name || '')
   .normalize('NFKC')
@@ -1187,7 +1249,7 @@ router.put('/templates/:id', (req, res) => {
       return res.status(400).json({ error: 'Некоректний ID шаблону заявки' });
     }
 
-    db.central.prepare(`
+    const updateTargetChat = () => db.central.prepare(`
       UPDATE request_templates
       SET target_chat_id = ?, target_chat_name = ?
       WHERE id = ?
@@ -1196,6 +1258,15 @@ router.put('/templates/:id', (req, res) => {
       targetChatName ? String(targetChatName) : null,
       templateId
     );
+
+    try {
+      updateTargetChat();
+    } catch (error) {
+      if (!isDiskFullError(error)) throw error;
+      const reclaimed = reclaimStorageForSqliteWrite();
+      console.warn('Disk was full while updating request target chat. Reclaimed storage and retrying.', reclaimed);
+      updateTargetChat();
+    }
 
     const row = db.central.prepare(`
       SELECT id, code, title, description, target_chat_id, target_chat_name, body_template, fields_json, is_active
@@ -1218,6 +1289,11 @@ router.put('/templates/:id', (req, res) => {
       message: error?.message || String(error),
       stack: error?.stack || null
     });
+    if (isDiskFullError(error)) {
+      return res.status(507).json({
+        error: 'На сервері закінчилось місце. Очистіть кеш медіа в Налаштування API або збільшіть Railway volume.'
+      });
+    }
     res.status(500).json({ error: error?.message || 'Не вдалося змінити групу для заявки' });
   }
 });
