@@ -3596,10 +3596,7 @@ function App({ currentUser: initialUser }) {
                   targetChatName: matchedDialog?.name || ''
               })
           });
-          const data = await res.json();
-          if (data.error) {
-              throw new Error(data.error);
-          }
+          const data = await parseApiJson(res, 'Не вдалося зберегти групу для заявки');
 
           setRequestTemplates(prev => prev.map(item => item.id === data.id ? data : item));
           setRequestFeedback({ type: 'success', text: 'Чат для цієї заяви збережено.' });
@@ -3638,10 +3635,7 @@ function App({ currentUser: initialUser }) {
               method: 'POST',
               body: formData
           });
-          const data = await res.json();
-          if (data.error) {
-              throw new Error(data.error);
-          }
+          const data = await parseApiJson(res, 'Не вдалося відправити заяву');
 
           if (selectedRequestTemplate.code === 'warehouse_issue_request') {
               if (data.warehouseOrder && typeof data.warehouseOrder === 'object') {

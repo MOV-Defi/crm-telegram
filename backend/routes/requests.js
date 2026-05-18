@@ -1182,6 +1182,11 @@ router.put('/templates/:id', (req, res) => {
   const { targetChatId, targetChatName } = req.body;
 
   try {
+    const templateId = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(templateId)) {
+      return res.status(400).json({ error: 'Некоректний ID шаблону заявки' });
+    }
+
     db.central.prepare(`
       UPDATE request_templates
       SET target_chat_id = ?, target_chat_name = ?
@@ -1189,14 +1194,14 @@ router.put('/templates/:id', (req, res) => {
     `).run(
       targetChatId ? String(targetChatId) : null,
       targetChatName ? String(targetChatName) : null,
-      req.params.id
+      templateId
     );
 
     const row = db.central.prepare(`
       SELECT id, code, title, description, target_chat_id, target_chat_name, body_template, fields_json, is_active
       FROM request_templates
       WHERE id = ?
-    `).get(req.params.id);
+    `).get(templateId);
 
     const parsed = parseTemplate(row);
     if (!parsed) {
@@ -1204,7 +1209,16 @@ router.put('/templates/:id', (req, res) => {
     }
     res.json(hydrateTemplateFields(parsed));
   } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('requests/templates target chat update error:', {
+      templateId: req.params.id,
+      targetChatId,
+      targetChatName,
+      userId: req.userId || null,
+      username: req.username || null,
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
+    res.status(500).json({ error: error?.message || 'Не вдалося змінити групу для заявки' });
   }
 });
 
