@@ -10,9 +10,43 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const crypto = require('crypto');
 const AdmZip = require('adm-zip');
+const { parseWarehouseItemsFromFile } = require('../warehouse-file-items');
 
 const router = express.Router();
 let requestHistoryHasProjectColumn = null;
+const TEXT_QTY_UNIT_PATTERN = 'шт\\.?|штук|м\\.?\\s*п\\.?|мп|м²|м2|пог\\.?\\s*м\\.?|м|кг|компл\\.?|упак\\.?|pcs';
+
+const normalizeTextUnit = (unit) => String(unit || '').replace(/\s+/g, '').trim();
+
+const parseWarehouseTextItemLine = (line) => {
+  const cleaned = String(line || '')
+    .replace(/^\d+[\).\s-]+/, '')
+    .replace(/^[-•]\s*/, '')
+    .replace(/^["'“”„«»]+/, '')
+    .replace(/["'“”„«»]+$/, '')
+    .trim();
+
+  const parts = cleaned.split(/\s*[|;\t]\s*/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 3) {
+    return {
+      name: parts[0],
+      code: parts[1],
+      requestedQty: parts[2],
+      unit: normalizeTextUnit(parts[3] || '')
+    };
+  }
+
+  const dashQtyMatch = cleaned.match(new RegExp(`^(.+?)\\s*[-–—]\\s*(\\d+(?:[,.]\\d+)?)\\s*(${TEXT_QTY_UNIT_PATTERN})?(?:\\b|\\s|$)(?:.*)?$`, 'i'));
+  const endQtyMatch = cleaned.match(new RegExp(`^(.+?)\\s+(\\d+(?:[,.]\\d+)?)\\s*(${TEXT_QTY_UNIT_PATTERN})\\s*$`, 'i'));
+  const qtyMatch = dashQtyMatch || endQtyMatch;
+  const name = qtyMatch?.[1]?.trim() || cleaned;
+
+  return {
+    name: name.replace(/\s*[-–—]\s*$/, '').trim(),
+    requestedQty: qtyMatch?.[2] || '',
+    unit: normalizeTextUnit(qtyMatch?.[3] || '')
+  };
+};
 
 
 const upload = multer({ dest: runtimePaths.mediaDir });
@@ -401,8 +435,13 @@ const renderWarehouseIssueRequest = (template, values = {}) => {
   let modeBlock = '';
 
   if (mode === 'reservation') {
-    const projectName = String(getFieldValue(values, 'project_name') || '').trim();
-    modeBlock = `Прошу забронювати.${projectName ? `\nПроєкт: "${projectName}"` : ''}`;
+    const objectName = String(getFieldValue(values, 'object_name') || getFieldValue(values, 'project_name') || '').trim();
+    const managerName = String(getFieldValue(values, 'manager_name') || '').trim();
+    modeBlock = [
+      'Прошу забронювати.',
+      objectName ? `Обʼєкт: "${objectName}"` : '',
+      managerName ? `Менеджер: "${managerName}"` : ''
+    ].filter(Boolean).join('\n');
   } else {
     const recipientType = String(getFieldValue(values, 'issue_recipient_type') || '');
     const recipientLabel = recipientType === 'contractor' ? 'Підрядник' : 'Кінцевий споживач';
@@ -575,8 +614,8 @@ const validateTemplate = (template, values = {}) => {
 
   if (template.code === 'warehouse_issue_request') {
     const mode = String(getFieldValue(values, 'request_mode') || '');
-    if (mode === 'reservation' && !String(getFieldValue(values, 'project_name') || '').trim()) {
-      return 'Поле "Проєкт" обовʼязкове для режиму "Бронь"';
+    if (mode === 'reservation' && !String(getFieldValue(values, 'object_name') || getFieldValue(values, 'project_name') || '').trim()) {
+      return 'Поле "Обʼєкт" обовʼязкове для режиму "Бронь"';
     }
     if (mode === 'issuance' && !String(getFieldValue(values, 'issue_recipient_type') || '').trim()) {
       return 'Поле "Видача на" обовʼязкове для режиму "Видача"';
@@ -974,6 +1013,43 @@ const writePurchaseDocx = (values, fileNameBase = 'purchase-request') => {
   packDocxFromContentDir(contentDir, docxPath);
 
   return { docxPath, tempRoot };
+};
+
+const normalizeWarehouseItems = (items = []) => (
+  (Array.isArray(items) ? items : [])
+    .map((item, index) => {
+      const source = typeof item === 'string' ? { name: item } : (item || {});
+      const rawName = String(source.name || source.text || '').trim();
+      const parsedName = parseWarehouseTextItemLine(rawName);
+      const requestedQty = String(source.requestedQty || source.qty || parsedName.requestedQty || '').trim();
+      const unit = String(source.unit || parsedName.unit || '').trim();
+      const name = requestedQty && parsedName.requestedQty ? parsedName.name : rawName;
+      if (!name) return null;
+      return {
+      id: `item-${index + 1}`,
+      name: name.replace(/^\d+[\).\s-]+/, '').replace(/^[-•]\s*/, '').trim(),
+      code: String(source.code || source.sku || source.article || '').trim(),
+      requestedQty,
+      unit,
+      status: 'available',
+      comment: ''
+      };
+    })
+    .filter(Boolean)
+);
+
+const parseWarehouseItemsFromValues = (values = {}, filePath = '', originalName = '') => {
+  const fileItems = parseWarehouseItemsFromFile(filePath, originalName);
+  const textItems = String(getFieldValue(values, 'items_list') || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/специфікац|спецификация|додан[аоі]\s+файлом|добавлен[ао]?\s+файлом/i.test(line))
+    .map((line) => {
+      return parseWarehouseTextItemLine(line);
+    });
+
+  return normalizeWarehouseItems(fileItems.length > 0 ? fileItems : textItems);
 };
 
 router.get('/logistics/options', (req, res) => {
@@ -1442,10 +1518,10 @@ router.post('/send', upload.single('file'), (req, res, next) => {
     }) => {
       const info = db.central.prepare(`
         INSERT INTO warehouse_orders (
-          chat_id, chat_name, message_id, message_text, media_path, media_name, project_name, requester_name, request_type, status,
+          chat_id, chat_name, message_id, message_text, media_path, media_name, project_name, object_name, manager_name, requester_name, request_type, status,
           created_by_user_id, created_by_username,
-          status_updated_at, status_updated_by_user_id, status_updated_by_username
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+          status_updated_at, status_updated_by_user_id, status_updated_by_username, items_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
       `).run(
         String(template.target_chat_id || ''),
         String(template.target_chat_name || ''),
@@ -1453,16 +1529,22 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         String(outgoingMessage || '').slice(0, 4000),
         mediaPath || null,
         mediaName || null,
-        String(getFieldValue(values, 'project_name') || '').trim() || null,
-        String(getFieldValue(values, 'manager_name') || req.username || '').trim() || null,
+        String(getFieldValue(values, 'object_name') || getFieldValue(values, 'project_name') || '').trim() || null,
+        String(getFieldValue(values, 'object_name') || getFieldValue(values, 'project_name') || '').trim() || null,
+        String(getFieldValue(values, 'manager_name') || '').trim() || null,
+        req.username || null,
         initialRequestType,
         initialOrderStatus,
         req.userId || null,
         req.username || null,
         req.userId || null,
-        req.username || null
+        req.username || null,
+        JSON.stringify(parseWarehouseItemsFromValues(values, uploadedFilePath, uploadedOriginalName))
       );
       createdWarehouseOrder = db.central.prepare(`SELECT * FROM warehouse_orders WHERE id = ?`).get(Number(info.lastInsertRowid)) || null;
+      if (createdWarehouseOrder) {
+        createdWarehouseOrder.items = parseWarehouseItemsFromValues(values, uploadedFilePath, uploadedOriginalName);
+      }
     };
 
     if (uploadedFilePath) {

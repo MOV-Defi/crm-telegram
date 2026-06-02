@@ -1,6 +1,24 @@
-node_modules
+node_modules/
 .env
-data
 .DS_Store
 *.log
 
+# Runtime data must stay local/server-side.
+data/
+.local-data/
+uploads/
+telegram_sessions/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Local process/runtime files.
+*.pid
+.backend.port
+.local-dev.pid
+*.app/
+
+# Local archives/backups.
+*.zip

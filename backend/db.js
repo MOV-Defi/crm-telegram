@@ -3,9 +3,15 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
+const debugDbInit = String(process.env.LOCAL_START_DEBUG || '') === '1';
+const dbInitLog = (msg) => {
+  if (debugDbInit) console.log(`[db:init] ${msg}`);
+};
 
+dbInitLog('opening central database');
 const centralDb = new Database(runtimePaths.centralDbPath);
 centralDb.pragma('journal_mode = WAL');
+dbInitLog('central database opened');
 
 const isReadonlyDbError = (error) => (
   String(error?.code || '').toUpperCase() === 'SQLITE_READONLY' ||
@@ -24,6 +30,7 @@ const safeDbWrite = (dbInstance, operationName, fn) => {
   }
 };
 
+dbInitLog('running central schema init');
 centralDb.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,6 +89,7 @@ centralDb.exec(`
     message_id INTEGER,
     message_text TEXT,
     media_path TEXT,
+    items_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'new',
     created_by_user_id INTEGER,
     created_by_username TEXT,
@@ -119,7 +127,55 @@ centralDb.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    number TEXT NOT NULL,
+    title TEXT NOT NULL,
+    client_name TEXT,
+    project_type TEXT NOT NULL DEFAULT 'private',
+    power_kw TEXT,
+    owner_name TEXT,
+    status TEXT NOT NULL DEFAULT 'planning',
+    plan_start TEXT,
+    plan_end TEXT,
+    fact_start TEXT,
+    fact_end TEXT,
+    delay_reason TEXT,
+    budget_plan TEXT,
+    paid_amount TEXT,
+    expenses_fact TEXT,
+    created_by_user_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS project_members (
+    project_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    added_by_user_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (project_id, user_id),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS project_stages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    order_index INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    plan_start TEXT,
+    plan_end TEXT,
+    fact_start TEXT,
+    fact_end TEXT,
+    stage_tasks_json TEXT NOT NULL DEFAULT '[]',
+    plan_notes TEXT,
+    fact_notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
 `);
+dbInitLog('central schema init done');
 
 const ensureUsersRoleColumn = () => {
   const columns = centralDb.prepare(`PRAGMA table_info(users)`).all();
@@ -130,6 +186,7 @@ const ensureUsersRoleColumn = () => {
 };
 
 ensureUsersRoleColumn();
+dbInitLog('ensureUsersRoleColumn done');
 
 const ensureCentralColumn = (tableName, columnName, definition) => {
   const columns = centralDb.prepare(`PRAGMA table_info(${tableName})`).all();
@@ -142,10 +199,19 @@ const ensureCentralColumn = (tableName, columnName, definition) => {
 };
 
 ensureCentralColumn('warehouse_orders', 'project_name', 'TEXT');
+ensureCentralColumn('warehouse_orders', 'object_name', 'TEXT');
+ensureCentralColumn('warehouse_orders', 'manager_name', 'TEXT');
 ensureCentralColumn('warehouse_orders', 'requester_name', 'TEXT');
 ensureCentralColumn('warehouse_orders', 'media_name', 'TEXT');
 ensureCentralColumn('warehouse_orders', 'request_type', "TEXT NOT NULL DEFAULT 'issuance'");
+ensureCentralColumn('warehouse_orders', 'items_json', "TEXT NOT NULL DEFAULT '[]'");
 ensureCentralColumn('request_history', 'project_name', 'TEXT');
+ensureCentralColumn('project_stages', 'plan_start', 'TEXT');
+ensureCentralColumn('project_stages', 'plan_end', 'TEXT');
+ensureCentralColumn('project_stages', 'fact_start', 'TEXT');
+ensureCentralColumn('project_stages', 'fact_end', 'TEXT');
+ensureCentralColumn('project_stages', 'stage_tasks_json', "TEXT NOT NULL DEFAULT '[]'");
+dbInitLog('ensureCentralColumn migrations done');
 
 const migrateTenantCreditManagersToCentral = () => {
   safeDbWrite(centralDb, 'migrate tenant credit_managers to central', () => {
@@ -211,7 +277,9 @@ const migrateTenantCreditManagersToCentral = () => {
   });
 };
 
+dbInitLog('migrateTenantCreditManagersToCentral start');
 migrateTenantCreditManagersToCentral();
+dbInitLog('migrateTenantCreditManagersToCentral done');
 safeDbWrite(centralDb, "migrate warehouse_orders reserved->new with request_type", () => {
   centralDb.exec(`
     UPDATE warehouse_orders
@@ -225,6 +293,15 @@ safeDbWrite(centralDb, "migrate warehouse_orders reserved->new with request_type
     WHERE request_type IS NULL OR TRIM(request_type) = '';
   `);
 });
+dbInitLog('warehouse_orders migration done');
+safeDbWrite(centralDb, 'project indexes', () => {
+  centralDb.exec(`
+    CREATE INDEX IF NOT EXISTS idx_project_members_user_id ON project_members(user_id);
+    CREATE INDEX IF NOT EXISTS idx_project_members_project_id ON project_members(project_id);
+    CREATE INDEX IF NOT EXISTS idx_project_stages_project_id ON project_stages(project_id);
+  `);
+});
+dbInitLog('project indexes ensured');
 
 const setupCentralDb = () => {
   const ensureRequestTemplate = ({ code, title, description, bodyTemplate, fieldsJson }) => {
@@ -247,7 +324,9 @@ const setupCentralDb = () => {
   // Default templates moved here...
 };
 
+dbInitLog('setupCentralDb start');
 setupCentralDb();
+dbInitLog('setupCentralDb done');
 
 const tenantDatabases = new Map();
 
@@ -796,12 +875,19 @@ ensureRequestTemplate({
       ]
     },
     {
-      key: 'project_name',
-      label: 'Проєкт',
+      key: 'object_name',
+      label: "Обʼєкт",
       type: 'text',
       required: false,
-      placeholder: 'Назва проєкту',
+      placeholder: "Назва обʼєкта",
       visibleWhen: { field: 'request_mode', equals: 'reservation' }
+    },
+    {
+      key: 'manager_name',
+      label: 'Менеджер',
+      type: 'text',
+      required: false,
+      placeholder: 'ПІБ менеджера'
     },
     {
       key: 'issue_recipient_type',

@@ -7,7 +7,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 
 const db = require('./db');
@@ -46,6 +46,33 @@ app.use(express.json());
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX_ATTEMPTS = 20;
 const authAttemptMap = new Map();
+
+const base64UrlEncode = (value) => Buffer.from(value).toString('base64url');
+const base64UrlDecodeJson = (value) => JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+const signJwtLikeToken = (payload, secret, expiresInSec = 7 * 24 * 60 * 60) => {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const exp = Math.floor(Date.now() / 1000) + Number(expiresInSec);
+  const fullPayload = { ...payload, exp };
+  const h = base64UrlEncode(JSON.stringify(header));
+  const p = base64UrlEncode(JSON.stringify(fullPayload));
+  const data = `${h}.${p}`;
+  const s = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+  return `${data}.${s}`;
+};
+const verifyJwtLikeToken = (token, secret) => {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3) throw new Error('Malformed token');
+  const [h, p, s] = parts;
+  const data = `${h}.${p}`;
+  const expected = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+  if (s !== expected) throw new Error('Invalid signature');
+  const payload = base64UrlDecodeJson(p);
+  const now = Math.floor(Date.now() / 1000);
+  if (!payload || !Number.isFinite(payload.exp) || payload.exp < now) {
+    throw new Error('Token expired');
+  }
+  return payload;
+};
 
 const getClientIp = (req) =>
   String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown')
@@ -117,7 +144,7 @@ const verifyAuthToken = (req, res, next) => {
   const token = headerToken || queryToken;
   if (!token) return res.status(401).json({ error: 'Unauthorized. Please login.' });
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = verifyJwtLikeToken(token, JWT_SECRET);
     const userId = Number.parseInt(String(decoded.userId), 10);
     if (!Number.isFinite(userId)) {
       return res.status(401).json({ error: 'Invalid token payload' });
@@ -188,7 +215,7 @@ app.post('/api/system/login', authLimiter, async (req, res) => {
     if (!valid) return res.status(400).json({ error: 'Invalid credentials' });
 
     const role = String(user.role || 'user');
-    const token = jwt.sign({ userId: user.id, username: user.username, role }, JWT_SECRET, { expiresIn: '7d' });
+    const token = signJwtLikeToken({ userId: user.id, username: user.username, role }, JWT_SECRET);
     res.json({ success: true, token, username: user.username, role });
   } catch (error) {
     console.error('login error:', error);
@@ -436,6 +463,8 @@ const ordersRoutes = require('./routes/orders');
 app.use('/api/orders', ordersRoutes);
 const creditManagersRoutes = require('./routes/credit-managers');
 app.use('/api/credit-managers', creditManagersRoutes);
+const projectsRoutes = require('./routes/projects');
+app.use('/api/projects', projectsRoutes);
 
 const TELEGRAM_BOT_API = 'https://api.telegram.org';
 const sentRepeatCache = new Map();

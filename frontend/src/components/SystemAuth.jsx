@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { Mail, Lock, User, LogIn, UserPlus } from 'lucide-react';
+import Lock from 'lucide-react/dist/esm/icons/lock.js';
+import LogIn from 'lucide-react/dist/esm/icons/log-in.js';
+import User from 'lucide-react/dist/esm/icons/user.js';
+import UserPlus from 'lucide-react/dist/esm/icons/user-plus.js';
 
 const SystemAuth = ({ onLogin }) => {
   const [isLogin, setIsLogin] = useState(true);

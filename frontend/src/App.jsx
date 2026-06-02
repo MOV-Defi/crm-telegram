@@ -11,6 +11,18 @@ const API_URL = resolveApiUrl();
 const URL_IN_TEXT_RE = /((?:https?:\/\/|www\.)[^\s]+)/gi;
 const UPLOADS_BASE_URL = API_URL.replace('/api', '');
 const REQUEST_HISTORY_VIEW_ID = '__request_history__';
+const DEFAULT_PROJECT_STAGES = [
+  'Договір',
+  'Авансування',
+  'Обстеження',
+  'Проєктування специфікація',
+  'Закупки, постачання',
+  'Логістика, спецтехніка',
+  'Монтаж',
+  'Підключення, навчання',
+  'Виконавчі документи, Паспорт',
+  'Перевиставлення рахунків'
+];
 
 const parseApiJson = async (response, fallbackMessage) => {
   const rawText = await response.text();
@@ -264,6 +276,30 @@ function App({ currentUser: initialUser }) {
           return [];
       }
   });
+  const [projects, setProjects] = useState([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [projectsError, setProjectsError] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [showProjectCreateForm, setShowProjectCreateForm] = useState(false);
+  const [projectSearchQuery, setProjectSearchQuery] = useState('');
+  const [projectStatusFilter, setProjectStatusFilter] = useState('all');
+  const [projectUsers, setProjectUsers] = useState([]);
+  const [loadingProjectUsers, setLoadingProjectUsers] = useState(false);
+  const [projectMemberSearch, setProjectMemberSearch] = useState('');
+  const [projectMemberUserIdToAdd, setProjectMemberUserIdToAdd] = useState('');
+  const [savingProjectAction, setSavingProjectAction] = useState(false);
+  const [expandedProjectStageIds, setExpandedProjectStageIds] = useState({});
+  const [stageTaskDrafts, setStageTaskDrafts] = useState({});
+  const [projectDraft, setProjectDraft] = useState({
+      number: '',
+      title: '',
+      clientName: '',
+      type: 'private',
+      powerKw: '',
+      owner: '',
+      planStart: '',
+      planEnd: ''
+  });
   const [taskDraft, setTaskDraft] = useState(() => ({
       title: '',
       description: '',
@@ -411,11 +447,13 @@ function App({ currentUser: initialUser }) {
   const [warehouseOrdersFilter, setWarehouseOrdersFilter] = useState('all');
   const [manualWarehouseOrder, setManualWarehouseOrder] = useState({
       messageText: '',
-      projectName: '',
+      objectName: '',
+      managerName: '',
       requesterName: '',
       requestType: 'issuance'
   });
   const [manualWarehouseOrderFile, setManualWarehouseOrderFile] = useState(null);
+  const [expandedWarehouseOrderItems, setExpandedWarehouseOrderItems] = useState({});
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [editingWarehouseOrder, setEditingWarehouseOrder] = useState(null);
   const [editingWarehouseOrderFile, setEditingWarehouseOrderFile] = useState(null);
@@ -464,6 +502,16 @@ function App({ currentUser: initialUser }) {
           localStorage.setItem('tgcrm-requests-show-preview', showRequestPreview ? '1' : '0');
       } catch (_) {}
   }, [showRequestPreview]);
+
+  useEffect(() => {
+      if (!projects.length) {
+          setSelectedProjectId(null);
+          return;
+      }
+      if (!selectedProjectId || !projects.some((project) => project.id === selectedProjectId)) {
+          setSelectedProjectId(projects[0].id);
+      }
+  }, [projects, selectedProjectId]);
 
   useEffect(() => {
       if (!isAuthenticated || !backendTaskSyncLoadedRef.current) return;
@@ -1440,7 +1488,19 @@ function App({ currentUser: initialUser }) {
       if (activeTab === 'documentTemplates') {
           loadDocumentTemplates();
       }
+      if (activeTab === 'projects') {
+          loadProjects();
+          loadProjectUsers(projectMemberSearch);
+      }
   }, [activeTab]);
+
+  useEffect(() => {
+      if (activeTab !== 'projects') return undefined;
+      const timer = setTimeout(() => {
+          loadProjectUsers(projectMemberSearch);
+      }, 250);
+      return () => clearTimeout(timer);
+  }, [activeTab, projectMemberSearch]);
 
   const addFilesToComposer = (filesLike) => {
       const incoming = Array.from(filesLike || []).filter(Boolean);
@@ -2053,6 +2113,169 @@ function App({ currentUser: initialUser }) {
       return `${hh}:${mm}`;
   };
 
+  const loadProjects = async () => {
+      setLoadingProjects(true);
+      setProjectsError('');
+      try {
+          const res = await fetch(`${API_URL}/projects`);
+          const data = await parseApiJson(res, 'Не вдалося завантажити проєкти');
+          setProjects(Array.isArray(data?.projects) ? data.projects : []);
+      } catch (error) {
+          setProjectsError(String(error?.message || 'Не вдалося завантажити проєкти'));
+      } finally {
+          setLoadingProjects(false);
+      }
+  };
+
+  const loadProjectUsers = async (query = '') => {
+      setLoadingProjectUsers(true);
+      try {
+          const q = String(query || '').trim();
+          const suffix = q ? `?q=${encodeURIComponent(q)}` : '';
+          const res = await fetch(`${API_URL}/projects/users${suffix}`);
+          const data = await parseApiJson(res, 'Не вдалося завантажити користувачів');
+          setProjectUsers(Array.isArray(data?.users) ? data.users : []);
+      } catch (_) {
+          setProjectUsers([]);
+      } finally {
+          setLoadingProjectUsers(false);
+      }
+  };
+
+  const handleCreateProject = async () => {
+      const title = String(projectDraft.title || '').trim();
+      if (!title) return;
+      setSavingProjectAction(true);
+      try {
+          const res = await fetch(`${API_URL}/projects`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  ...projectDraft,
+                  stages: DEFAULT_PROJECT_STAGES.map((name, index) => ({ name, orderIndex: index, status: 'pending' }))
+              })
+          });
+          const data = await parseApiJson(res, 'Не вдалося створити проєкт');
+          const created = data?.project || null;
+          if (created) {
+              setProjects((prev) => [created, ...prev]);
+              setSelectedProjectId(created.id);
+          } else {
+              await loadProjects();
+          }
+          setShowProjectCreateForm(false);
+          setProjectDraft({
+              number: '',
+              title: '',
+              clientName: '',
+              type: 'private',
+              powerKw: '',
+              owner: '',
+              planStart: '',
+              planEnd: ''
+          });
+      } catch (error) {
+          alert(error?.message || 'Не вдалося створити проєкт');
+      } finally {
+          setSavingProjectAction(false);
+      }
+  };
+
+  const handleProjectFieldUpdate = async (projectId, patch) => {
+      setProjects((prev) => prev.map((project) => (project.id === projectId ? { ...project, ...patch } : project)));
+      try {
+          const res = await fetch(`${API_URL}/projects/${projectId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(patch)
+          });
+          const data = await parseApiJson(res, 'Не вдалося оновити проєкт');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === projectId ? data.project : project)));
+          }
+      } catch (error) {
+          await loadProjects();
+          console.error('update project field error:', error);
+      }
+  };
+
+  const handleProjectStageUpdate = async (projectId, stageId, patch) => {
+      setProjects((prev) => prev.map((project) => {
+          if (project.id !== projectId) return project;
+          const stages = Array.isArray(project.stages) ? project.stages.map((stage) => (
+              stage.id === stageId ? { ...stage, ...patch } : stage
+          )) : [];
+          return { ...project, stages };
+      }));
+      try {
+          const res = await fetch(`${API_URL}/projects/${projectId}/stages/${stageId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(patch)
+          });
+          const data = await parseApiJson(res, 'Не вдалося оновити етап');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === projectId ? data.project : project)));
+          }
+      } catch (error) {
+          await loadProjects();
+          console.error('update project stage error:', error);
+      }
+  };
+
+  const handleAddProjectMember = async (projectId, userId) => {
+      if (!userId) return;
+      setSavingProjectAction(true);
+      try {
+          const res = await fetch(`${API_URL}/projects/${projectId}/members`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId: Number(userId) })
+          });
+          const data = await parseApiJson(res, 'Не вдалося додати учасника');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === projectId ? data.project : project)));
+          }
+          setProjectMemberUserIdToAdd('');
+      } catch (error) {
+          alert(error?.message || 'Не вдалося додати учасника');
+      } finally {
+          setSavingProjectAction(false);
+      }
+  };
+
+  const handleRemoveProjectMember = async (projectId, userId) => {
+      setSavingProjectAction(true);
+      try {
+          const res = await fetch(`${API_URL}/projects/${projectId}/members/${userId}`, { method: 'DELETE' });
+          const data = await parseApiJson(res, 'Не вдалося видалити учасника');
+          if (!data?.project) {
+              setProjects((prev) => prev.filter((project) => project.id !== projectId));
+              setSelectedProjectId((prev) => (String(prev) === String(projectId) ? null : prev));
+              return;
+          }
+          setProjects((prev) => prev.map((project) => (project.id === projectId ? data.project : project)));
+      } catch (error) {
+          alert(error?.message || 'Не вдалося видалити учасника');
+      } finally {
+          setSavingProjectAction(false);
+      }
+  };
+
+  const handleDeleteProject = async (projectId) => {
+      setSavingProjectAction(true);
+      try {
+          const res = await fetch(`${API_URL}/projects/${projectId}`, { method: 'DELETE' });
+          await parseApiJson(res, 'Не вдалося видалити проєкт');
+          setProjects((prev) => prev.filter((project) => project.id !== projectId));
+          setSelectedProjectId((prev) => (String(prev) === String(projectId) ? null : prev));
+      } catch (error) {
+          alert(error?.message || 'Не вдалося видалити проєкт');
+      } finally {
+          setSavingProjectAction(false);
+      }
+  };
+
   const sendTelegramReminderMessage = async (messageText) => {
       const response = await fetch(`${API_URL}/settings/bot/send`, {
           method: 'POST',
@@ -2386,9 +2609,11 @@ function App({ currentUser: initialUser }) {
               .join(' ');
 
           const mode = String(values?.request_mode || 'reservation');
+          const objectName = String(values?.object_name || values?.project_name || '').trim();
+          const managerName = String(values?.manager_name || '').trim();
           const modeBlock = mode === 'issuance'
               ? `Тип: "Видача"\nВидача на: "${values?.issue_recipient_type === 'contractor' ? 'Підрядник' : 'Кінцевий споживач'}"${values?.issue_recipient_name ? `\nХто саме: "${values.issue_recipient_name}"` : ''}`
-              : `Прошу забронювати.${values?.project_name ? `\nПроєкт: "${values.project_name}"` : ''}`;
+              : [`Прошу забронювати.`, objectName ? `Обʼєкт: "${objectName}"` : '', managerName ? `Менеджер: "${managerName}"` : ''].filter(Boolean).join('\n');
 
           const commentBlock = String(values?.additional_comment || '').trim()
               ? `\nДодатковий коментар:\n"${String(values.additional_comment).trim()}"\n`
@@ -2679,11 +2904,71 @@ function App({ currentUser: initialUser }) {
       }
   };
 
+  const updateWarehouseOrderItems = async (orderId, items) => {
+      try {
+          const res = await fetch(`${API_URL}/orders/${orderId}/items`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ items })
+          });
+          const updated = await parseApiJson(res, 'Не вдалося зберегти позиції');
+          setWarehouseOrders((prev) => prev.map((order) => (Number(order.id) === Number(orderId) ? updated : order)));
+          setExpandedOrder((prev) => (prev && Number(prev.id) === Number(orderId) ? updated : prev));
+          return updated;
+      } catch (error) {
+          alert(error.message || 'Помилка збереження позицій');
+          return null;
+      }
+  };
+
+  const updateWarehouseOrderItem = (order, itemId, patch) => {
+      const nextItems = getWarehouseOrderItems(order).map((item) => (
+          String(item.id) === String(itemId) ? { ...item, ...patch } : item
+      ));
+      updateWarehouseOrderItems(order.id, nextItems);
+  };
+
+  const getDownloadFileNameFromHeaders = (res, fallback) => {
+      const header = res.headers.get('content-disposition') || '';
+      const utfMatch = header.match(/filename\*=UTF-8''([^;]+)/i);
+      if (utfMatch?.[1]) {
+          try {
+              return decodeURIComponent(utfMatch[1].replace(/^"|"$/g, ''));
+          } catch (_) {
+              return utfMatch[1].replace(/^"|"$/g, '');
+          }
+      }
+      const plainMatch = header.match(/filename="?([^";]+)"?/i);
+      return plainMatch?.[1] || fallback;
+  };
+
+  const downloadWarehouseOrderXlsx = async (orderId) => {
+      try {
+          const res = await fetch(`${API_URL}/orders/${orderId}/export.xlsx`);
+          if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              throw new Error(data?.error || `HTTP ${res.status}`);
+          }
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = getDownloadFileNameFromHeaders(res, `Замовлення на склад ${orderId}.xlsx`);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+      } catch (error) {
+          alert(error.message || 'Не вдалося скачати Excel');
+      }
+  };
+
   const openWarehouseOrderEditor = (order) => {
       setEditingWarehouseOrder({
           id: order.id,
           messageText: String(order.message_text || ''),
-          projectName: String(order.project_name || ''),
+          objectName: String(order.object_name || order.project_name || ''),
+          managerName: String(order.manager_name || ''),
           requesterName: String(order.requester_name || order.created_by_username || ''),
           requestType: String(order.request_type || 'issuance') === 'reservation' ? 'reservation' : 'issuance'
       });
@@ -2696,7 +2981,8 @@ function App({ currentUser: initialUser }) {
       try {
           const form = new FormData();
           form.append('messageText', String(editingWarehouseOrder.messageText || ''));
-          form.append('projectName', String(editingWarehouseOrder.projectName || ''));
+          form.append('objectName', String(editingWarehouseOrder.objectName || ''));
+          form.append('managerName', String(editingWarehouseOrder.managerName || ''));
           form.append('requesterName', String(editingWarehouseOrder.requesterName || ''));
           form.append('requestType', String(editingWarehouseOrder.requestType || 'issuance'));
           if (editingWarehouseOrderFile) form.append('file', editingWarehouseOrderFile);
@@ -2717,7 +3003,8 @@ function App({ currentUser: initialUser }) {
 
   const createManualWarehouseOrder = async () => {
       const messageText = String(manualWarehouseOrder.messageText || '').trim();
-      const projectName = String(manualWarehouseOrder.projectName || '').trim();
+      const objectName = String(manualWarehouseOrder.objectName || '').trim();
+      const managerName = String(manualWarehouseOrder.managerName || '').trim();
       const requesterName = String(manualWarehouseOrder.requesterName || '').trim();
       const requestType = String(manualWarehouseOrder.requestType || 'issuance') === 'reservation' ? 'reservation' : 'issuance';
       if (!messageText && !manualWarehouseOrderFile) {
@@ -2729,7 +3016,8 @@ function App({ currentUser: initialUser }) {
           form.append('chatId', '');
           form.append('chatName', '');
           form.append('messageText', messageText);
-          form.append('projectName', projectName);
+          form.append('objectName', objectName);
+          form.append('managerName', managerName);
           form.append('requesterName', requesterName);
           form.append('requestType', requestType);
           if (manualWarehouseOrderFile) form.append('file', manualWarehouseOrderFile);
@@ -2739,7 +3027,7 @@ function App({ currentUser: initialUser }) {
           });
           const created = await parseApiJson(res, 'Не вдалося створити замовлення');
           setWarehouseOrders((prev) => [created, ...prev]);
-          setManualWarehouseOrder({ messageText: '', projectName: '', requesterName: '', requestType: 'issuance' });
+          setManualWarehouseOrder({ messageText: '', objectName: '', managerName: '', requesterName: '', requestType: 'issuance' });
           setManualWarehouseOrderFile(null);
           alert('Замовлення додано вручну');
       } catch (error) {
@@ -4238,7 +4526,9 @@ function App({ currentUser: initialUser }) {
       setContacts([]);
       setParticipants([]);
       setTasks([]);
+      setProjects([]);
       setSelectedTaskId(null);
+      setSelectedProjectId(null);
       setQuickTaskTitle('');
       setBulkTaskText('');
       setTaskDailyNotesByDate({});
@@ -4403,6 +4693,47 @@ function App({ currentUser: initialUser }) {
       in_progress: { label: 'В роботі', badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30', dot: 'bg-blue-400' },
       done: { label: 'Готово', badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30', dot: 'bg-emerald-400' }
   };
+  const projectStatusMeta = {
+      planning: { label: 'Планування', className: 'bg-slate-700/70 text-slate-200 border-slate-600' },
+      active: { label: 'Активний', className: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+      done: { label: 'Завершений', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
+      cancelled: { label: 'Скасований', className: 'bg-red-500/20 text-red-300 border-red-500/30' }
+  };
+  const stageStatusMeta = {
+      pending: { label: 'Очікується', className: 'bg-slate-700/70 text-slate-200 border-slate-600' },
+      in_progress: { label: 'В процесі', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
+      done: { label: 'Завершено', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
+      skipped: { label: 'Пропущено', className: 'bg-slate-800 text-slate-400 border-slate-700' }
+  };
+  const normalizedProjectSearch = projectSearchQuery.trim().toLowerCase();
+  const filteredProjects = projects.filter((project) => {
+      const haystack = `${project.number || ''} ${project.title || ''} ${project.clientName || ''} ${project.owner || ''}`.toLowerCase();
+      const matchesSearch = !normalizedProjectSearch || haystack.includes(normalizedProjectSearch);
+      if (!matchesSearch) return false;
+      if (projectStatusFilter === 'all') return true;
+      return String(project.status || '') === projectStatusFilter;
+  });
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
+  const isLightTheme = appTheme === 'light';
+  const parseMoneyValue = (value) => {
+      const normalized = String(value || '').replace(/\s+/g, '').replace(',', '.');
+      const amount = Number.parseFloat(normalized);
+      return Number.isFinite(amount) ? amount : 0;
+  };
+  const selectedProjectStages = Array.isArray(selectedProject?.stages) ? selectedProject.stages : [];
+  const selectedProjectMembers = Array.isArray(selectedProject?.members) ? selectedProject.members : [];
+  const selectedProjectDoneStages = selectedProjectStages.filter((stage) => stage.status === 'done').length;
+  const selectedProjectProgress = selectedProjectStages.length > 0 ? Math.round((selectedProjectDoneStages / selectedProjectStages.length) * 100) : 0;
+  const selectedProjectProfit = parseMoneyValue(selectedProject?.paidAmount) - parseMoneyValue(selectedProject?.expensesFact);
+  const availableProjectUsers = projectUsers.filter((user) => !selectedProjectMembers.some((member) => Number(member.userId) === Number(user.id)));
+  const currentUsernameLower = String(currentUser || '').trim().toLowerCase();
+  const formatStageDateBadge = (value) => {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!match) return raw;
+      return `${match[3]}.${match[2]}`;
+  };
   const orderStatusMeta = {
       new: { label: 'Нова', className: 'bg-slate-700/60 text-slate-200 border-slate-600' },
       in_progress: { label: 'В роботі', className: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
@@ -4414,6 +4745,49 @@ function App({ currentUser: initialUser }) {
       reservation: { label: 'Бронь', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
       issuance: { label: 'Видача', className: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' }
   };
+  const warehouseItemStatusMeta = {
+      pending: { label: 'Не перевірено', className: 'bg-slate-700/60 text-slate-200 border-slate-600' },
+      available: { label: 'Є', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
+      missing: { label: 'Немає', className: 'bg-red-500/20 text-red-300 border-red-500/30' },
+      partial: { label: 'Частково', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
+      replacement: { label: 'Заміна', className: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' }
+  };
+  const getWarehouseItemRowClass = (status) => {
+      const key = String(status || 'available');
+      if (key === 'missing') return 'border-t border-red-500/30 bg-red-950/35';
+      if (key === 'replacement') return 'border-t border-yellow-500/30 bg-yellow-950/35';
+      return 'border-t border-slate-800';
+  };
+  const getWarehouseOrderItems = (order) => Array.isArray(order?.items) ? order.items : [];
+  const warehouseTextQtyUnitPattern = 'шт\\.?|штук|м\\.?\\s*п\\.?|мп|м²|м2|пог\\.?\\s*м\\.?|м|кг|компл\\.?|упак\\.?|pcs';
+  const normalizeWarehouseTextUnit = (unit) => String(unit || '').replace(/\s+/g, '').trim();
+  const parseWarehouseTextItemLine = (line) => {
+      const cleaned = String(line || '')
+          .replace(/^\d+[\).\s-]+/, '')
+          .replace(/^[-•]\s*/, '')
+          .replace(/^["'“”„«»]+/, '')
+          .replace(/["'“”„«»]+$/, '')
+          .trim();
+      const parts = cleaned.split(/\s*[|;\t]\s*/).map((part) => part.trim()).filter(Boolean);
+      if (parts.length >= 3) return { name: parts[0], code: parts[1], requestedQty: parts[2], unit: normalizeWarehouseTextUnit(parts[3] || '') };
+      const dashQtyMatch = cleaned.match(new RegExp(`^(.+?)\\s*[-–—]\\s*(\\d+(?:[,.]\\d+)?)\\s*(${warehouseTextQtyUnitPattern})?(?:\\b|\\s|$)(?:.*)?$`, 'i'));
+      const endQtyMatch = cleaned.match(new RegExp(`^(.+?)\\s+(\\d+(?:[,.]\\d+)?)\\s*(${warehouseTextQtyUnitPattern})\\s*$`, 'i'));
+      const qtyMatch = dashQtyMatch || endQtyMatch;
+      const name = qtyMatch?.[1]?.trim() || cleaned;
+      return {
+          name: name.replace(/\s*[-–—]\s*$/, '').trim(),
+          code: '',
+          requestedQty: qtyMatch?.[2] || '',
+          unit: normalizeWarehouseTextUnit(qtyMatch?.[3] || '')
+      };
+  };
+  const manualWarehouseOrderLines = String(manualWarehouseOrder.messageText || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  const manualWarehouseOrderPreviewItems = manualWarehouseOrderLines.map((line) => {
+      return parseWarehouseTextItemLine(line);
+  });
   const filteredWarehouseOrders = warehouseOrders.filter((order) => {
       if (warehouseOrdersFilter === 'all') return true;
       return String(order.status || '') === warehouseOrdersFilter;
@@ -4580,6 +4954,12 @@ function App({ currentUser: initialUser }) {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
                     </svg>
                     <span className={navLabelClass}>База CRM</span>
+                </button>
+                <button onClick={() => setActiveTab('projects')} data-tooltip="Проєкти СЕС" className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 ${activeTab === 'projects' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-slate-800 text-slate-300'}`}>
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h10" />
+                    </svg>
+                    <span className={navLabelClass}>Проєкти СЕС</span>
                 </button>
                 <button onClick={() => setActiveTab('bulk')} data-tooltip="Розсилки" className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 ${activeTab === 'bulk' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-slate-800 text-slate-300'}`}>
                     <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -6477,23 +6857,33 @@ function App({ currentUser: initialUser }) {
               <>
 
               {canManageWarehouseOrders && (
-                  <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4 space-y-3">
-                      <div className="text-sm font-semibold text-slate-200">Додати вручну (для складу)</div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                          <div className="md:col-span-2 text-xs text-slate-500 flex items-center px-2">Ручне замовлення без привʼязки до чату</div>
+                  <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4 md:p-5 space-y-4">
+                      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                          <div>
+                              <div className="text-lg font-semibold text-slate-100">Нова заявка на склад</div>
+                              <p className="text-sm text-slate-400 mt-1">
+                                  Впишіть товари списком. Кожен новий рядок стане окремою товарною позицією в таблиці та Excel-файлі.
+                              </p>
+                          </div>
                           <button
                               type="button"
                               onClick={createManualWarehouseOrder}
-                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition"
+                              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition shadow-lg shadow-emerald-950/30"
                           >
-                              Додати замовлення
+                              Створити заявку на склад
                           </button>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                           <input
-                              value={manualWarehouseOrder.projectName}
-                              onChange={(e) => setManualWarehouseOrder((prev) => ({ ...prev, projectName: e.target.value }))}
-                              placeholder="Проєкт"
+                              value={manualWarehouseOrder.objectName}
+                              onChange={(e) => setManualWarehouseOrder((prev) => ({ ...prev, objectName: e.target.value }))}
+                              placeholder="Обʼєкт"
+                              className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500"
+                          />
+                          <input
+                              value={manualWarehouseOrder.managerName}
+                              onChange={(e) => setManualWarehouseOrder((prev) => ({ ...prev, managerName: e.target.value }))}
+                              placeholder="Менеджер"
                               className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500"
                           />
                           <input
@@ -6502,16 +6892,67 @@ function App({ currentUser: initialUser }) {
                               placeholder="Заявник (хто подав)"
                               className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500"
                           />
+                          <select
+                              value={manualWarehouseOrder.requestType || 'issuance'}
+                              onChange={(e) => setManualWarehouseOrder((prev) => ({ ...prev, requestType: e.target.value }))}
+                              className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500"
+                          >
+                              <option value="issuance">Видача зі складу</option>
+                              <option value="reservation">Бронювання</option>
+                          </select>
                       </div>
-                      <select
-                          value={manualWarehouseOrder.requestType || 'issuance'}
-                          onChange={(e) => setManualWarehouseOrder((prev) => ({ ...prev, requestType: e.target.value }))}
-                          className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500"
-                      >
-                          <option value="issuance">Тип: Видача</option>
-                          <option value="reservation">Тип: Бронь</option>
-                      </select>
-                      <div className="flex items-center gap-3">
+                      <div>
+                          <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-2">
+                              Товарні позиції
+                          </label>
+                          <textarea
+                              value={manualWarehouseOrder.messageText}
+                              onChange={(e) => setManualWarehouseOrder((prev) => ({ ...prev, messageText: e.target.value }))}
+                              placeholder={'Наприклад:\nPV модуль 580W - 12 шт\nІнвертор Deye 10 кВт - 1 шт\nКабель Solar 6 мм - 100 м'}
+                              rows={6}
+                              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-3 text-slate-100 outline-none focus:border-blue-500 resize-y"
+                          />
+                          <div className="mt-2 text-xs text-slate-500">
+                              Не потрібно робити таблицю вручну: один рядок тут = один рядок в Excel.
+                          </div>
+                      </div>
+                      {manualWarehouseOrderLines.length > 0 && (
+                          <div className="overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/40">
+                              <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400 bg-slate-800/60">
+                                  Попередній вигляд таблиці
+                              </div>
+                              <div className="overflow-x-auto">
+                                  <table className="w-full text-sm">
+                                      <thead className="text-slate-400">
+                                          <tr>
+                                              <th className="w-14 text-left px-3 py-2 font-medium">№</th>
+                                              <th className="text-left px-3 py-2 font-medium">Назва</th>
+                                              <th className="w-40 text-left px-3 py-2 font-medium">Код / марка</th>
+                                              <th className="w-28 text-left px-3 py-2 font-medium">К-сть</th>
+                                              <th className="w-40 text-left px-3 py-2 font-medium">Статус</th>
+                                          </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-800">
+                                          {manualWarehouseOrderPreviewItems.map((item, index) => (
+                                              <tr key={`manual-order-preview-${index}`}>
+                                                  <td className="px-3 py-2 text-slate-500">{index + 1}</td>
+                                                  <td className="px-3 py-2 text-slate-200">{item.name}</td>
+                                                  <td className="px-3 py-2 text-slate-300">{item.code || '—'}</td>
+                                                  <td className="px-3 py-2 text-slate-300">{[item.requestedQty, item.unit].filter(Boolean).join(' ') || '—'}</td>
+                                                  <td className="px-3 py-2">
+                                                      <span className="inline-flex px-2 py-1 rounded-lg border text-xs bg-slate-700/60 text-slate-200 border-slate-600">
+                                                          Є
+                                                      </span>
+                                                  </td>
+                                              </tr>
+                                          ))}
+                                      </tbody>
+                                  </table>
+                              </div>
+                          </div>
+                      )}
+                      <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">
+                          <span className="text-xs text-slate-500">Файл до заявки, якщо є:</span>
                           <input
                               type="file"
                               onChange={(e) => setManualWarehouseOrderFile(e.target.files?.[0] || null)}
@@ -6519,13 +6960,6 @@ function App({ currentUser: initialUser }) {
                           />
                           {manualWarehouseOrderFile && <span className="text-xs text-slate-400 truncate">{manualWarehouseOrderFile.name}</span>}
                       </div>
-                      <textarea
-                          value={manualWarehouseOrder.messageText}
-                          onChange={(e) => setManualWarehouseOrder((prev) => ({ ...prev, messageText: e.target.value }))}
-                          placeholder="Опис замовлення"
-                          rows={2}
-                          className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500 resize-y"
-                      />
                   </div>
               )}
 
@@ -6540,10 +6974,12 @@ function App({ currentUser: initialUser }) {
                               <thead className="bg-slate-800/60 text-slate-300">
                                   <tr>
                                       <th className="text-left px-4 py-3">ID</th>
-                                      <th className="text-left px-4 py-3">Проєкт</th>
+                                      <th className="text-left px-4 py-3">Обʼєкт</th>
+                                      <th className="text-left px-4 py-3">Менеджер</th>
                                       <th className="text-left px-4 py-3">Заявник</th>
                                       <th className="text-left px-4 py-3">Тип заявки</th>
                                       <th className="text-left px-4 py-3">Зміст</th>
+                                      <th className="text-left px-4 py-3">Позиції</th>
                                       <th className="text-left px-4 py-3">Файл</th>
                                       <th className="text-left px-4 py-3">Статус</th>
                                       <th className="text-left px-4 py-3">Оновлено</th>
@@ -6551,9 +6987,11 @@ function App({ currentUser: initialUser }) {
                               </thead>
                               <tbody>
                                   {filteredWarehouseOrders.map((order) => (
-                                      <tr key={`order-row-${order.id}`} className="border-t border-slate-800">
+                                      <React.Fragment key={`order-row-group-${order.id}`}>
+                                      <tr className="border-t border-slate-800">
                                           <td className="px-4 py-3 text-slate-200 font-semibold">#{order.id}</td>
-                                          <td className="px-4 py-3 text-slate-300">{order.project_name || '—'}</td>
+                                          <td className="px-4 py-3 text-slate-300">{order.object_name || order.project_name || '—'}</td>
+                                          <td className="px-4 py-3 text-slate-300">{order.manager_name || '—'}</td>
                                           <td className="px-4 py-3 text-slate-300">{order.requester_name || order.created_by_username || '—'}</td>
                                           <td className="px-4 py-3">
                                               <div className={`inline-flex px-2 py-1 rounded-md border text-xs ${orderTypeMeta[order.request_type]?.className || 'bg-slate-700 text-slate-200 border-slate-600'}`}>
@@ -6570,6 +7008,27 @@ function App({ currentUser: initialUser }) {
                                                   >
                                                       {canManageWarehouseOrders ? 'Відкрити / Редагувати' : 'Детальніше'}
                                                   </button>
+                                              )}
+                                          </td>
+                                          <td className="px-4 py-3 text-slate-300">
+                                              <div className="text-sm text-slate-200">{getWarehouseOrderItems(order).length || '—'}</div>
+                                              {getWarehouseOrderItems(order).length > 0 && (
+                                                  <div className="mt-1 flex flex-col items-start gap-1">
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => setExpandedWarehouseOrderItems((prev) => ({ ...prev, [order.id]: !prev[order.id] }))}
+                                                          className="text-xs text-blue-300 hover:underline"
+                                                      >
+                                                          {expandedWarehouseOrderItems[order.id] ? 'Згорнути позиції' : 'Розгорнути позиції'}
+                                                      </button>
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => downloadWarehouseOrderXlsx(order.id)}
+                                                          className="text-xs text-emerald-300 hover:underline"
+                                                      >
+                                                          Скачати Excel
+                                                      </button>
+                                                  </div>
                                               )}
                                           </td>
                                           <td className="px-4 py-3 text-slate-300">
@@ -6600,6 +7059,81 @@ function App({ currentUser: initialUser }) {
                                           </td>
                                           <td className="px-4 py-3 text-slate-400">{order.status_updated_at ? new Date(order.status_updated_at).toLocaleString() : '—'}</td>
                                       </tr>
+                                      {getWarehouseOrderItems(order).length > 0 && expandedWarehouseOrderItems[order.id] && (
+                                          <tr className="border-t border-slate-900 bg-slate-950/35">
+                                              <td className="px-4 py-3" />
+                                              <td colSpan={9} className="px-4 py-3">
+                                                  <div className="overflow-hidden rounded-xl border border-slate-700/70 bg-slate-900/80">
+                                                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 px-3 py-2 bg-slate-800/70 border-b border-slate-700">
+                                                          <div className="text-sm font-semibold text-slate-200">
+                                                              Товарні позиції для складу
+                                                          </div>
+                                                          <button
+                                                              type="button"
+                                                              onClick={() => downloadWarehouseOrderXlsx(order.id)}
+                                                              className="self-start md:self-auto px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-xs transition"
+                                                          >
+                                                              Скачати Excel
+                                                          </button>
+                                                      </div>
+                                                      <div className="max-h-[58vh] overflow-auto">
+                                                          <table className="w-full min-w-[900px] text-xs">
+                                                              <thead className="sticky top-0 z-10 bg-slate-950/95 text-slate-400">
+                                                                  <tr>
+                                                                      <th className="text-left px-3 py-2 w-12">№</th>
+                                                                      <th className="text-left px-3 py-2 min-w-[260px]">Назва</th>
+                                                                      <th className="text-left px-3 py-2 min-w-[150px]">Код / марка</th>
+                                                                      <th className="text-left px-3 py-2 w-24">К-сть</th>
+                                                                      <th className="text-left px-3 py-2 w-44">Наявність</th>
+                                                                      <th className="text-left px-3 py-2 min-w-[180px]">Коментар</th>
+                                                                  </tr>
+                                                              </thead>
+                                                              <tbody>
+                                                                  {getWarehouseOrderItems(order).map((item, index) => (
+                                                                      <tr key={`order-${order.id}-inline-item-${item.id}`} className={getWarehouseItemRowClass(item.status)}>
+                                                                          <td className="px-3 py-2 text-slate-500">{index + 1}</td>
+                                                                          <td className="px-3 py-2 text-slate-200">{item.name}</td>
+                                                                          <td className="px-3 py-2 text-slate-300">{item.code || '—'}</td>
+                                                                          <td className="px-3 py-2 text-slate-300">{[item.requestedQty, item.unit].filter(Boolean).join(' ') || '—'}</td>
+                                                                          <td className="px-3 py-2">
+                                                                              {canManageWarehouseOrders ? (
+                                                                                  <select
+                                                                                      value={item.status || 'available'}
+                                                                                      onChange={(e) => updateWarehouseOrderItem(order, item.id, { status: e.target.value })}
+                                                                                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-100 outline-none focus:border-blue-500"
+                                                                                  >
+                                                                                      {['available', 'missing', 'partial', 'replacement'].map((statusKey) => (
+                                                                                          <option key={statusKey} value={statusKey}>{warehouseItemStatusMeta[statusKey].label}</option>
+                                                                                      ))}
+                                                                                  </select>
+                                                                              ) : (
+                                                                                  <span className={`inline-flex px-2 py-1 rounded-md border ${warehouseItemStatusMeta[item.status || 'available']?.className || warehouseItemStatusMeta.available.className}`}>
+                                                                                      {warehouseItemStatusMeta[item.status || 'available']?.label || 'Є'}
+                                                                                  </span>
+                                                                              )}
+                                                                          </td>
+                                                                          <td className="px-3 py-2">
+                                                                              {canManageWarehouseOrders ? (
+                                                                                  <input
+                                                                                      value={item.comment || ''}
+                                                                                      onChange={(e) => updateWarehouseOrderItem(order, item.id, { comment: e.target.value })}
+                                                                                      placeholder="Коментар"
+                                                                                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-100 outline-none focus:border-blue-500"
+                                                                                  />
+                                                                              ) : (
+                                                                                  <span className="text-slate-300">{item.comment || '—'}</span>
+                                                                              )}
+                                                                          </td>
+                                                                      </tr>
+                                                                  ))}
+                                                              </tbody>
+                                                          </table>
+                                                      </div>
+                                                  </div>
+                                              </td>
+                                          </tr>
+                                      )}
+                                      </React.Fragment>
                                   ))}
                               </tbody>
                           </table>
@@ -7515,6 +8049,377 @@ function App({ currentUser: initialUser }) {
       </div>
       )}
 
+      {/* Projects Area */}
+      {activeTab === 'projects' && (
+      <div className="flex-1 flex bg-[#0b101e] min-h-0">
+          <div className="w-full max-w-[26rem] border-r border-slate-700/50 bg-slate-900/70 flex flex-col min-h-0">
+              <div className="p-4 border-b border-slate-700/50 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                      <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                          <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h10" />
+                          </svg>
+                          Проєкти СЕС
+                      </h2>
+                      <button
+                          onClick={() => setShowProjectCreateForm((prev) => !prev)}
+                          className="px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:bg-blue-600/35 transition text-sm disabled:opacity-60"
+                          disabled={savingProjectAction}
+                      >
+                          {showProjectCreateForm ? 'Скасувати' : 'Додати'}
+                      </button>
+                  </div>
+                  {showProjectCreateForm && (
+                      <div className="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
+                          <input
+                              type="text"
+                              value={projectDraft.title}
+                              onChange={(e) => setProjectDraft((prev) => ({ ...prev, title: e.target.value }))}
+                              placeholder="Назва / адреса обʼєкта"
+                              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                              <input
+                                  type="text"
+                                  value={projectDraft.number}
+                                  readOnly
+                                  placeholder="№ проєкту (авто)"
+                                  className="w-full bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-400 outline-none"
+                              />
+                              <input
+                                  type="text"
+                                  value={projectDraft.clientName}
+                                  onChange={(e) => setProjectDraft((prev) => ({ ...prev, clientName: e.target.value }))}
+                                  placeholder="Клієнт"
+                                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                              />
+                          </div>
+                          <div className="grid grid-cols-1 gap-2">
+                              <input
+                                  type="text"
+                                  value={projectDraft.powerKw}
+                                  onChange={(e) => setProjectDraft((prev) => ({ ...prev, powerKw: e.target.value }))}
+                                  placeholder="Потужність, кВт"
+                                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                              />
+                          </div>
+                          <button
+                              onClick={handleCreateProject}
+                              className="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition disabled:opacity-60"
+                              disabled={savingProjectAction || !String(projectDraft.title || '').trim()}
+                          >
+                              {savingProjectAction ? 'Створення...' : 'Створити проєкт'}
+                          </button>
+                      </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                      <input
+                          type="text"
+                          value={projectSearchQuery}
+                          onChange={(e) => setProjectSearchQuery(e.target.value)}
+                          placeholder="Пошук"
+                          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                      />
+                      <select
+                          value={projectStatusFilter}
+                          onChange={(e) => setProjectStatusFilter(e.target.value)}
+                          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                      >
+                          <option value="all">Всі статуси</option>
+                          <option value="planning">Планування</option>
+                          <option value="active">Активні</option>
+                          <option value="done">Завершені</option>
+                          <option value="cancelled">Скасовані</option>
+                      </select>
+                  </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {loadingProjects && (
+                      <div className="text-center text-slate-400 text-sm py-8 animate-pulse">Завантаження проєктів...</div>
+                  )}
+                  {!loadingProjects && projectsError && (
+                      <div className="text-center text-red-300 text-sm py-6 px-3 border border-red-500/30 rounded-xl bg-red-500/10">{projectsError}</div>
+                  )}
+                  {!loadingProjects && !projectsError && filteredProjects.map((project) => {
+                      const stages = Array.isArray(project.stages) ? project.stages : [];
+                      const doneCount = stages.filter((stage) => stage.status === 'done').length;
+                      const progress = stages.length ? Math.round((doneCount / stages.length) * 100) : 0;
+                      const statusMeta = projectStatusMeta[project.status] || projectStatusMeta.planning;
+                      return (
+                          <button
+                              key={project.id}
+                              onClick={() => setSelectedProjectId(project.id)}
+                              className={`w-full text-left rounded-xl border p-3 transition ${selectedProjectId === project.id ? 'border-blue-500/60 bg-blue-500/10' : 'border-slate-700 bg-slate-900/70 hover:border-slate-500'}`}
+                          >
+                              <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                      <div className="text-xs text-slate-500">{project.number || 'Без номера'}</div>
+                                      <div className="text-sm font-semibold text-slate-100 truncate">{project.title || 'Без назви'}</div>
+                                      <div className="text-xs text-slate-400 truncate">{project.clientName || 'Клієнт не вказаний'}</div>
+                                  </div>
+                                  <span className={`text-[10px] px-2 py-1 rounded-full border whitespace-nowrap ${statusMeta.className}`}>{statusMeta.label}</span>
+                              </div>
+                              <div className="mt-2 text-xs text-slate-400">Етапи: {doneCount}/{stages.length} ({progress}%)</div>
+                          </button>
+                      );
+                  })}
+                  {!loadingProjects && !projectsError && !filteredProjects.length && (
+                      <div className="text-center text-slate-500 text-sm py-8">Проєкти не знайдено</div>
+                  )}
+              </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+              {!selectedProject ? (
+                  <div className="h-full min-h-[16rem] border border-dashed border-slate-700 rounded-2xl flex items-center justify-center text-slate-500">
+                      Оберіть проєкт зі списку або створіть новий
+                  </div>
+              ) : (
+                  <>
+                      <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 md:p-5">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                  <div className="text-xs text-slate-500">{selectedProject.number || 'Без номера'}</div>
+                                  <h3 className="text-xl font-bold text-slate-100">{selectedProject.title || 'Без назви'}</h3>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                  <select
+                                      value={selectedProject.status || 'planning'}
+                                      onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { status: e.target.value })}
+                                      className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                                  >
+                                      <option value="planning">Планування</option>
+                                      <option value="active">Активний</option>
+                                      <option value="done">Завершений</option>
+                                      <option value="cancelled">Скасований</option>
+                                  </select>
+                                  <button
+                                      onClick={() => {
+                                          if (!window.confirm('Видалити цей проєкт?')) return;
+                                          handleDeleteProject(selectedProject.id);
+                                      }}
+                                      className="px-3 py-2 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-500/15 text-sm transition disabled:opacity-60"
+                                      disabled={savingProjectAction}
+                                  >
+                                      Видалити
+                                  </button>
+                              </div>
+                          </div>
+                          <div className="mt-3 text-sm text-slate-400">Прогрес: {selectedProjectDoneStages}/{selectedProjectStages.length} етапів ({selectedProjectProgress}%)</div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 md:p-5">
+                          <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-3">Доступ до проєкту</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+                              <input
+                                  type="text"
+                                  value={projectMemberSearch}
+                                  onChange={(e) => setProjectMemberSearch(e.target.value)}
+                                  placeholder="Пошук користувача"
+                                  className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                              />
+                              <select
+                                  value={projectMemberUserIdToAdd}
+                                  onChange={(e) => setProjectMemberUserIdToAdd(e.target.value)}
+                                  className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                              >
+                                  <option value="">{loadingProjectUsers ? 'Завантаження користувачів...' : 'Оберіть користувача'}</option>
+                                  {availableProjectUsers.map((user) => (
+                                      <option key={user.id} value={String(user.id)}>
+                                          {user.username} {user.role === 'admin' ? '(admin)' : ''}
+                                      </option>
+                                  ))}
+                              </select>
+                              <button
+                                  onClick={() => handleAddProjectMember(selectedProject.id, projectMemberUserIdToAdd)}
+                                  disabled={savingProjectAction || !projectMemberUserIdToAdd}
+                                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-medium transition"
+                              >
+                                  Додати доступ
+                              </button>
+                          </div>
+                          <div className="space-y-2">
+                              {selectedProjectMembers.map((member) => {
+                                  const isSelfByName = String(member.username || '').trim().toLowerCase() === currentUsernameLower;
+                                  const canRemove = selectedProjectMembers.length > 1;
+                                  return (
+                                      <div key={`project-member-${member.userId}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2">
+                                          <div className="text-sm">
+                                              <span className="text-slate-100 font-medium">{member.username}</span>
+                                              <span className="text-slate-500 ml-2 text-xs">ID: {member.userId}</span>
+                                              {isSelfByName && <span className="text-blue-300 ml-2 text-xs">(ви)</span>}
+                                          </div>
+                                          <button
+                                              onClick={() => handleRemoveProjectMember(selectedProject.id, member.userId)}
+                                              disabled={savingProjectAction || !canRemove}
+                                              className="px-2.5 py-1.5 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/15 disabled:opacity-60 text-xs transition"
+                                          >
+                                              Прибрати
+                                          </button>
+                                      </div>
+                                  );
+                              })}
+                              {!selectedProjectMembers.length && (
+                                  <div className="text-sm text-slate-500">Поки що тільки ви маєте доступ до цього проєкту.</div>
+                              )}
+                          </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 md:p-5">
+                          <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-3">Картка проєкту</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                              <input type="text" value={selectedProject.clientName || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { clientName: e.target.value })} placeholder="Клієнт" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                              <input type="text" value={selectedProject.owner || ''} readOnly placeholder="Відповідальний менеджер" className="bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300 outline-none" />
+                              <input type="text" value={selectedProject.powerKw || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { powerKw: e.target.value })} placeholder="Потужність, кВт" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                              <input type="date" value={selectedProject.planStart || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { planStart: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                              <input type="date" value={selectedProject.planEnd || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { planEnd: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                              <input type="date" value={selectedProject.factEnd || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { factEnd: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                          </div>
+                          <textarea
+                              value={selectedProject.delayReason || ''}
+                              onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { delayReason: e.target.value })}
+                              rows="2"
+                              placeholder="Причина затримки (якщо є)"
+                              className="mt-3 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500 resize-y"
+                          />
+                      </div>
+
+                      <div className={`rounded-2xl border p-4 md:p-5 ${isLightTheme ? 'border-slate-300 bg-white/90' : 'border-slate-700 bg-slate-900/60'}`}>
+                          <h4 className={`text-sm font-semibold uppercase tracking-wide mb-3 ${isLightTheme ? 'text-slate-700' : 'text-slate-300'}`}>Етапи проєкту</h4>
+                          <div className="space-y-3">
+                              {selectedProjectStages.map((stage) => {
+                                  const stageMeta = stageStatusMeta[stage.status] || stageStatusMeta.pending;
+                                  const stageTasks = Array.isArray(stage.stageTasks) ? stage.stageTasks : [];
+                                  const stageTaskDraftKey = `${selectedProject.id}:${stage.id}`;
+                                  const stageTaskDraft = stageTaskDrafts[stageTaskDraftKey] || '';
+                                  const isExpanded = !!expandedProjectStageIds[stage.id];
+                                  const isDone = stage.status === 'done' || !!stage.factEnd;
+                                  const dateStart = formatStageDateBadge(stage.factStart || stage.planStart);
+                                  const dateEnd = formatStageDateBadge(stage.factEnd || stage.planEnd);
+                                  return (
+                                      <div key={stage.id} className={`rounded-xl border overflow-hidden ${isDone ? (isLightTheme ? 'border-emerald-300 bg-emerald-50/70' : 'border-emerald-600/40 bg-emerald-900/20') : (isLightTheme ? 'border-slate-300 bg-slate-50' : 'border-slate-700 bg-slate-900/70')}`}>
+                                          <button
+                                              type="button"
+                                              onClick={() => setExpandedProjectStageIds((prev) => ({ ...prev, [stage.id]: !prev[stage.id] }))}
+                                              className="w-full px-3 py-3 flex items-center justify-between gap-3 text-left"
+                                          >
+                                              <div className="flex items-center gap-3 min-w-0">
+                                                  <span className={`w-7 h-7 rounded-full border text-sm font-semibold flex items-center justify-center ${isDone ? 'border-emerald-500 text-emerald-700 bg-emerald-100' : (isLightTheme ? 'border-slate-400 text-slate-600 bg-white' : 'border-slate-500 text-slate-300 bg-slate-800')}`}>{stage.orderIndex + 1}</span>
+                                                  <span className={`font-semibold truncate ${isLightTheme ? 'text-slate-800' : 'text-slate-100'}`}>{stage.name}</span>
+                                              </div>
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                  <span className={`text-sm ${isDone ? 'text-emerald-700' : (isLightTheme ? 'text-slate-600' : 'text-slate-300')}`}>{dateStart || '--.--'} - {dateEnd || '--.--'}</span>
+                                                  <span className={`text-xs rounded-lg border px-2 py-1 ${stageMeta.className}`}>{stageMeta.label}</span>
+                                              </div>
+                                          </button>
+                                          {isExpanded && (
+                                            <div className={`px-3 pb-3 border-t ${isLightTheme ? 'border-slate-200' : 'border-slate-700/80'}`}>
+                                              <div className="mt-3">
+                                                <select
+                                                  value={stage.status || 'pending'}
+                                                  onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { status: e.target.value })}
+                                                  className={`text-xs rounded-lg border px-2 py-1 ${stageMeta.className}`}
+                                                >
+                                                  <option value="pending">Очікується</option>
+                                                  <option value="in_progress">В процесі</option>
+                                                  <option value="done">Завершено</option>
+                                                  <option value="skipped">Пропущено</option>
+                                                </select>
+                                              </div>
+                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+                                                <input type="date" value={stage.planStart || ''} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planStart: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500" />
+                                                <input type="date" value={stage.planEnd || ''} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planEnd: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500" />
+                                                <input type="date" value={stage.factStart || ''} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { factStart: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500" />
+                                                <input type="date" value={stage.factEnd || ''} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { factEnd: e.target.value, status: e.target.value ? 'done' : stage.status })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500" />
+                                              </div>
+                                              <div className="mt-3 space-y-2">
+                                                {stageTasks.map((task, taskIndex) => {
+                                                    const taskText = typeof task === 'string' ? task : String(task?.text || '');
+                                                    const taskDone = typeof task === 'object' ? !!task?.done : false;
+                                                    return (
+                                                      <div key={`stage-task-${stage.id}-${taskIndex}`} className="flex items-center gap-2">
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => {
+                                                              const nextTasks = stageTasks.map((item, idx) => {
+                                                                  if (idx !== taskIndex) return item;
+                                                                  if (typeof item === 'string') return { text: item, done: true };
+                                                                  return { ...item, done: !item.done };
+                                                              });
+                                                              handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                                          }}
+                                                          className={`w-5 h-5 rounded-full border shrink-0 ${taskDone ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500'}`}
+                                                        />
+                                                        <input
+                                                          type="text"
+                                                          value={taskText}
+                                                          onChange={(e) => {
+                                                              const nextTasks = stageTasks.map((item, idx) => idx === taskIndex ? (typeof item === 'string' ? e.target.value : { ...item, text: e.target.value }) : item);
+                                                              handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                                          }}
+                                                          className={`flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 ${taskDone ? 'text-emerald-300 line-through' : 'text-slate-200'}`}
+                                                        />
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => {
+                                                              const nextTasks = stageTasks.filter((_, idx) => idx !== taskIndex);
+                                                              handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                                          }}
+                                                          className="px-2 py-1 text-xs rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10"
+                                                        >
+                                                          Видалити
+                                                        </button>
+                                                      </div>
+                                                    );
+                                                })}
+                                                <div className="flex items-center gap-2">
+                                                  <input
+                                                    type="text"
+                                                    value={stageTaskDraft}
+                                                    onChange={(e) => setStageTaskDrafts((prev) => ({ ...prev, [stageTaskDraftKey]: e.target.value }))}
+                                                    placeholder="Нова задача етапу"
+                                                    className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+                                                  />
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const text = String(stageTaskDraft || '').trim();
+                                                        if (!text) return;
+                                                        const nextTasks = [...stageTasks, { text, done: false }];
+                                                        handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                                        setStageTaskDrafts((prev) => ({ ...prev, [stageTaskDraftKey]: '' }));
+                                                    }}
+                                                    className="px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-500"
+                                                  >
+                                                    Додати
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          )}
+                                      </div>
+                                  );
+                              })}
+                          </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 md:p-5">
+                          <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-3">Фінанси</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <input type="text" value={selectedProject.budgetPlan || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { budgetPlan: e.target.value })} placeholder="Кошторис (план)" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                              <input type="text" value={selectedProject.paidAmount || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { paidAmount: e.target.value })} placeholder="Оплачено" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                              <input type="text" value={selectedProject.expensesFact || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { expensesFact: e.target.value })} placeholder="Витрати" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                          </div>
+                          <div className={`mt-3 text-sm font-semibold ${selectedProjectProfit >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
+                              Прибуток (факт): {selectedProjectProfit.toLocaleString('uk-UA')} грн
+                          </div>
+                      </div>
+                  </>
+              )}
+          </div>
+      </div>
+      )}
+
       {/* Bulk Area (Розсилки) */}
       {activeTab === 'bulk' && (
       <div className="flex-1 flex flex-col bg-[#0b101e] relative p-6 overflow-y-auto">
@@ -7722,18 +8627,28 @@ function App({ currentUser: initialUser }) {
 
       {expandedOrder && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-              <div className="bg-slate-900 border border-slate-700 shadow-2xl rounded-2xl w-full max-w-2xl p-6 relative">
-                  <button onClick={() => { setExpandedOrder(null); setEditingWarehouseOrder(null); setEditingWarehouseOrderFile(null); }} className="absolute top-4 right-4 text-slate-400 hover:text-white">
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
+              <button
+                  onClick={() => { setExpandedOrder(null); setEditingWarehouseOrder(null); setEditingWarehouseOrderFile(null); }}
+                  className="fixed top-6 right-6 z-[80] w-11 h-11 rounded-full border border-slate-600/70 bg-slate-950/90 text-slate-200 shadow-2xl shadow-black/40 hover:bg-slate-800 hover:text-white transition flex items-center justify-center"
+                  aria-label="Закрити вікно"
+              >
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+              <div className="bg-slate-900 border border-slate-700 shadow-2xl rounded-2xl w-full max-w-4xl p-6 relative max-h-[90vh] overflow-y-auto">
                   <h3 className="text-xl font-semibold text-white mb-3">Замовлення #{expandedOrder.id}</h3>
                   {canManageWarehouseOrders && editingWarehouseOrder?.id === expandedOrder.id ? (
                       <div className="space-y-3">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                               <input
-                                  value={editingWarehouseOrder.projectName}
-                                  onChange={(e) => setEditingWarehouseOrder((prev) => ({ ...prev, projectName: e.target.value }))}
-                                  placeholder="Проєкт"
+                                  value={editingWarehouseOrder.objectName}
+                                  onChange={(e) => setEditingWarehouseOrder((prev) => ({ ...prev, objectName: e.target.value }))}
+                                  placeholder="Обʼєкт"
+                                  className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500"
+                              />
+                              <input
+                                  value={editingWarehouseOrder.managerName}
+                                  onChange={(e) => setEditingWarehouseOrder((prev) => ({ ...prev, managerName: e.target.value }))}
+                                  placeholder="Менеджер"
                                   className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500"
                               />
                               <input
@@ -7757,6 +8672,63 @@ function App({ currentUser: initialUser }) {
                               rows={8}
                               className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500 resize-y"
                           />
+                          {getWarehouseOrderItems(expandedOrder).length > 0 && (
+                              <div className="rounded-xl border border-slate-700 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-3 px-3 py-2 bg-slate-800/70 border-b border-slate-700">
+                                      <div className="text-sm font-semibold text-slate-200">Товарні позиції</div>
+                                      <button
+                                          type="button"
+                                          onClick={() => downloadWarehouseOrderXlsx(expandedOrder.id)}
+                                          className="px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-xs transition"
+                                      >
+                                          Скачати Excel
+                                      </button>
+                                  </div>
+                                  <div className="max-h-[55vh] overflow-auto">
+                                      <table className="w-full min-w-[820px] text-xs">
+                                          <thead className="sticky top-0 z-10 bg-slate-900/95 text-slate-400">
+                                              <tr>
+                                                  <th className="text-left px-3 py-2">№</th>
+                                                  <th className="text-left px-3 py-2">Назва</th>
+                                                  <th className="text-left px-3 py-2">Код / марка</th>
+                                                  <th className="text-left px-3 py-2">К-сть</th>
+                                                  <th className="text-left px-3 py-2">Статус</th>
+                                                  <th className="text-left px-3 py-2">Коментар</th>
+                                              </tr>
+                                          </thead>
+                                          <tbody>
+                                              {getWarehouseOrderItems(expandedOrder).map((item, index) => (
+                                                  <tr key={`${expandedOrder.id}-${item.id}`} className={getWarehouseItemRowClass(item.status)}>
+                                                      <td className="px-3 py-2 text-slate-500">{index + 1}</td>
+                                                      <td className="px-3 py-2 text-slate-200 min-w-[220px]">{item.name}</td>
+                                                      <td className="px-3 py-2 text-slate-300 min-w-[140px]">{item.code || '—'}</td>
+                                                      <td className="px-3 py-2 text-slate-300">{[item.requestedQty, item.unit].filter(Boolean).join(' ') || '—'}</td>
+                                                      <td className="px-3 py-2">
+                                                          <select
+                                                              value={item.status || 'available'}
+                                                              onChange={(e) => updateWarehouseOrderItem(expandedOrder, item.id, { status: e.target.value })}
+                                                              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-100 outline-none focus:border-blue-500"
+                                                          >
+                                                              {['available', 'missing', 'partial', 'replacement'].map((statusKey) => (
+                                                                  <option key={statusKey} value={statusKey}>{warehouseItemStatusMeta[statusKey].label}</option>
+                                                              ))}
+                                                          </select>
+                                                      </td>
+                                                      <td className="px-3 py-2">
+                                                          <input
+                                                              value={item.comment || ''}
+                                                              onChange={(e) => updateWarehouseOrderItem(expandedOrder, item.id, { comment: e.target.value })}
+                                                              placeholder="Коментар"
+                                                              className="w-48 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-100 outline-none focus:border-blue-500"
+                                                          />
+                                                      </td>
+                                                  </tr>
+                                              ))}
+                                          </tbody>
+                                      </table>
+                                  </div>
+                              </div>
+                          )}
                           <div className="flex items-center gap-3">
                               <input
                                   type="file"
@@ -7788,10 +8760,55 @@ function App({ currentUser: initialUser }) {
                   ) : (
                       <>
                           <div className="grid grid-cols-2 gap-3 text-sm mb-4">
-                              <div className="text-slate-300">Проєкт: <span className="text-slate-100">{expandedOrder.project_name || '—'}</span></div>
+                              <div className="text-slate-300">Обʼєкт: <span className="text-slate-100">{expandedOrder.object_name || expandedOrder.project_name || '—'}</span></div>
+                              <div className="text-slate-300">Менеджер: <span className="text-slate-100">{expandedOrder.manager_name || '—'}</span></div>
                               <div className="text-slate-300">Заявник: <span className="text-slate-100">{expandedOrder.requester_name || expandedOrder.created_by_username || '—'}</span></div>
                               <div className="text-slate-300">Тип заявки: <span className="text-slate-100">{orderTypeMeta[expandedOrder.request_type]?.label || 'Видача'}</span></div>
                           </div>
+                          {getWarehouseOrderItems(expandedOrder).length > 0 && (
+                              <div className="rounded-xl border border-slate-700 overflow-hidden mb-4">
+                                  <div className="flex items-center justify-between gap-3 px-3 py-2 bg-slate-800/70 border-b border-slate-700">
+                                      <div className="text-sm font-semibold text-slate-200">Товарні позиції</div>
+                                      <button
+                                          type="button"
+                                          onClick={() => downloadWarehouseOrderXlsx(expandedOrder.id)}
+                                          className="px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-xs transition"
+                                      >
+                                          Скачати Excel
+                                      </button>
+                                  </div>
+                                  <div className="max-h-[55vh] overflow-auto">
+                                      <table className="w-full min-w-[820px] text-xs">
+                                          <thead className="sticky top-0 z-10 bg-slate-900/95 text-slate-400">
+                                              <tr>
+                                                  <th className="text-left px-3 py-2">№</th>
+                                                  <th className="text-left px-3 py-2">Назва</th>
+                                                  <th className="text-left px-3 py-2">Код / марка</th>
+                                                  <th className="text-left px-3 py-2">К-сть</th>
+                                                  <th className="text-left px-3 py-2">Статус</th>
+                                                  <th className="text-left px-3 py-2">Коментар</th>
+                                              </tr>
+                                          </thead>
+                                          <tbody>
+                                              {getWarehouseOrderItems(expandedOrder).map((item, index) => (
+                                                  <tr key={`${expandedOrder.id}-readonly-${item.id}`} className={getWarehouseItemRowClass(item.status)}>
+                                                      <td className="px-3 py-2 text-slate-500">{index + 1}</td>
+                                                      <td className="px-3 py-2 text-slate-200 min-w-[220px]">{item.name}</td>
+                                                      <td className="px-3 py-2 text-slate-300 min-w-[140px]">{item.code || '—'}</td>
+                                                      <td className="px-3 py-2 text-slate-300">{[item.requestedQty, item.unit].filter(Boolean).join(' ') || '—'}</td>
+                                                      <td className="px-3 py-2">
+                                                          <span className={`inline-flex px-2 py-1 rounded-md border ${warehouseItemStatusMeta[item.status || 'available']?.className || warehouseItemStatusMeta.available.className}`}>
+                                                              {warehouseItemStatusMeta[item.status || 'available']?.label || 'Є'}
+                                                          </span>
+                                                      </td>
+                                                      <td className="px-3 py-2 text-slate-300">{item.comment || '—'}</td>
+                                                  </tr>
+                                              ))}
+                                          </tbody>
+                                      </table>
+                                  </div>
+                              </div>
+                          )}
                           <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 max-h-[50vh] overflow-y-auto whitespace-pre-wrap text-slate-200 text-sm">
                               {expandedOrder.message_text || 'Без тексту'}
                           </div>

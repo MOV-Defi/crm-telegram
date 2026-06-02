@@ -1,5 +1,5 @@
 const express = require('express');
-const { getClient } = require('../telegram');
+const { getClient, initTelegramClient } = require('../telegram');
 const { Api } = require('telegram');
 const db = require('../db');
 const context = require('../context');
@@ -32,6 +32,37 @@ const isAvatarTransientError = (error) => {
 const isMediaTransientError = (error) => {
   const text = String(error?.message || error || '').toLowerCase();
   return text.includes('timeout') || text.includes('flood') || text.includes('chatforbidden') || text.includes('rate');
+};
+
+const mediaDownloadErrorResponse = (error) => {
+  const text = String(error?.message || error || '').toLowerCase();
+  if (text.includes('not connected') || text.includes('disconnected') || text.includes('connection')) {
+    return { status: 503, error: 'Telegram-зʼєднання втрачено. Оновіть сторінку або спробуйте ще раз за хвилину.' };
+  }
+  if (text.includes('timeout') || text.includes('timed out')) {
+    return { status: 504, error: 'Telegram не відповів вчасно під час завантаження медіа. Спробуйте ще раз.' };
+  }
+  if (text.includes('flood') || text.includes('rate')) {
+    return { status: 429, error: 'Telegram тимчасово обмежив завантаження медіа. Спробуйте пізніше.' };
+  }
+  if (text.includes('forbidden') || text.includes('chatforbidden')) {
+    return { status: 403, error: 'Немає доступу до цього медіа в Telegram.' };
+  }
+  return { status: 500, error: 'Не вдалося завантажити медіа з Telegram.' };
+};
+
+const getReadyTelegramClient = async () => {
+  let client = getClient();
+  if (client?.connected) return client;
+
+  const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
+  const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
+  const apiId = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
+  const apiHash = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
+  if (!apiId || !apiHash) return null;
+
+  client = await initTelegramClient(apiId, apiHash);
+  return client?.connected ? client : null;
 };
 
 const sanitizeFileBaseName = (name) => String(name || '')
@@ -164,6 +195,19 @@ const extractMessageContact = (message) => {
   };
 };
 
+const buildContactVcard = (contact) => {
+  if (contact?.vcard) return String(contact.vcard).trim();
+  const fullName = [contact?.firstName, contact?.lastName].map((part) => String(part || '').trim()).filter(Boolean).join(' ') || 'Telegram Contact';
+  const phone = String(contact?.phone || '').trim();
+  return [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    `FN:${fullName}`,
+    phone ? `TEL:${phone}` : '',
+    'END:VCARD'
+  ].filter(Boolean).join('\n');
+};
+
 const ensureMessageMediaCached = async ({ client, chatId, messageId }) => {
   const existing = db.prepare('SELECT media_path, media_name FROM message_media WHERE message_id = ? AND peer_id = ?').get(messageId, chatId);
   if (existing?.media_path) {
@@ -182,7 +226,15 @@ const ensureMessageMediaCached = async ({ client, chatId, messageId }) => {
   }
 
   const mediaMeta = resolveMediaMeta(message);
-  const buffer = await client.downloadMedia(message);
+  let buffer = null;
+  if (mediaMeta.mediaType === 'contact') {
+    const contact = extractMessageContact(message);
+    if (!contact) return null;
+    buffer = Buffer.from(buildContactVcard(contact), 'utf8');
+    mediaMeta.originalName = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || `contact_${chatId}_${messageId}`;
+  } else {
+    buffer = await client.downloadMedia(message);
+  }
   if (!buffer || buffer.length === 0) {
     throw new Error('Не вдалося завантажити медіа');
   }
@@ -227,9 +279,20 @@ const buildInputDialogPeer = async (client, peerCandidate) => {
 
 router.get('/dialogs', async (req, res) => {
   try {
-    const client = getClient();
+    let client = getClient();
     if (!client || !client.connected) {
-      return res.status(401).json({ error: 'Telegram клієнт не підключений' });
+      const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
+      const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
+      const apiId = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
+      const apiHash = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
+
+      if (apiId && apiHash) {
+        client = await initTelegramClient(apiId, apiHash);
+      }
+    }
+
+    if (!client || !client.connected) {
+      return res.status(401).json({ error: 'Telegram клієнт не підключений. Запустіть авторизацію Telegram у налаштуваннях.' });
     }
 
     // Отримуємо всі ігноровані чати
@@ -924,8 +987,8 @@ router.post('/messages/:chatId/:messageId/download-media', async (req, res) => {
 
     let media = getCachedMessageMedia({ chatId, messageId });
     if (!media) {
-      const client = getClient();
-      if (!client || !client.connected) {
+      const client = await getReadyTelegramClient();
+      if (!client) {
         return res.status(401).json({ error: 'Telegram клієнт не підключений' });
       }
       media = await ensureMessageMediaCached({ client, chatId, messageId });
@@ -936,7 +999,8 @@ router.post('/messages/:chatId/:messageId/download-media', async (req, res) => {
     res.json({ success: true, mediaPath: media.mediaPath, mediaName: media.mediaName || null });
   } catch (error) {
     console.error('Помилка ручного завантаження медіа:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const response = mediaDownloadErrorResponse(error);
+    res.status(response.status).json({ error: response.error });
   }
 });
 
@@ -950,8 +1014,8 @@ router.get('/messages/:chatId/:messageId/file', async (req, res) => {
 
     let media = getCachedMessageMedia({ chatId, messageId });
     if (!media) {
-      const client = getClient();
-      if (!client || !client.connected) {
+      const client = await getReadyTelegramClient();
+      if (!client) {
         return res.status(401).json({ error: 'Telegram клієнт не підключений' });
       }
       media = await ensureMessageMediaCached({ client, chatId, messageId });
@@ -966,7 +1030,8 @@ router.get('/messages/:chatId/:messageId/file', async (req, res) => {
     return sendDownloadFile(res, media, downloadName);
   } catch (error) {
     console.error('Помилка скачування медіа-файлу:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const response = mediaDownloadErrorResponse(error);
+    res.status(response.status).json({ error: response.error });
   }
 });
 
