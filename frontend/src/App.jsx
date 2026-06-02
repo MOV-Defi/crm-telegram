@@ -1559,6 +1559,14 @@ function App({ currentUser: initialUser }) {
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+          if (data?.directDownload) {
+              await handleDownloadMessageFile(chatId, {
+                  id: messageId,
+                  mediaName: data.mediaName || null,
+                  mediaType: data.mediaType || null
+              });
+              return;
+          }
           setMessages((prev) => prev.map((msg) => (
               String(msg.id) === String(messageId)
                   ? { ...msg, mediaPath: data.mediaPath || msg.mediaPath, mediaName: data.mediaName || msg.mediaName || null }

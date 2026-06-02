@@ -23,6 +23,9 @@ const mediaRetryAfterByMessage = new Map();
 const MEDIA_RETRY_MS = 15 * 60 * 1000;
 const MEDIA_BATCH_LIMIT = 4;
 const MEDIA_REQUEST_DELAY_MS = 1300;
+const MB = 1024 * 1024;
+const LARGE_VIDEO_CACHE_LIMIT_BYTES = Math.max(1, Number.parseInt(String(process.env.MEDIA_VIDEO_CACHE_LIMIT_MB || '20'), 10) || 20) * MB;
+const LARGE_FILE_CACHE_LIMIT_BYTES = Math.max(1, Number.parseInt(String(process.env.MEDIA_FILE_CACHE_LIMIT_MB || '50'), 10) || 50) * MB;
 
 const isAvatarTransientError = (error) => {
   const text = String(error?.message || error || '').toLowerCase();
@@ -113,6 +116,20 @@ const sendDownloadFile = (res, media, downloadName) => {
   }
 };
 
+const sendDownloadBuffer = (res, buffer, downloadName, contentType = 'application/octet-stream') => {
+  const safeName = sanitizeDownloadName(downloadName, 'file.bin');
+  const encodedName = encodeURIComponent(safeName).replace(/[!'()*]/g, (ch) => (
+    `%${ch.charCodeAt(0).toString(16).toUpperCase()}`
+  ));
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Content-Type', contentType || 'application/octet-stream');
+  res.setHeader('Content-Length', String(buffer.length));
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
+  return res.end(buffer);
+};
+
 const decodeMultipartFileName = (name) => {
   const raw = String(name || '').trim();
   if (!raw) return '';
@@ -178,6 +195,58 @@ const resolveMediaMeta = (message) => {
   return { hasMedia: true, mediaType: 'other', ext: '.bin' };
 };
 
+const getDocumentSizeBytes = (document) => {
+  const rawSize = document?.size;
+  if (typeof rawSize === 'bigint') return Number(rawSize);
+  const size = Number(rawSize || 0);
+  return Number.isFinite(size) && size > 0 ? size : 0;
+};
+
+const getMediaSizeBytes = (message) => {
+  if (message?.media?.document) return getDocumentSizeBytes(message.media.document);
+  return 0;
+};
+
+const getMediaCacheLimitBytes = (mediaMeta) => (
+  mediaMeta?.mediaType === 'video' ? LARGE_VIDEO_CACHE_LIMIT_BYTES : LARGE_FILE_CACHE_LIMIT_BYTES
+);
+
+const shouldCacheMedia = (mediaMeta, sizeBytes) => {
+  if (mediaMeta?.mediaType === 'contact') return true;
+  if (mediaMeta?.mediaType === 'photo') return true;
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return true;
+  return sizeBytes <= getMediaCacheLimitBytes(mediaMeta);
+};
+
+const getMessageMediaForDownload = async ({ client, chatId, messageId }) => {
+  let peer = chatId;
+  if (/^-?\d+$/.test(peer)) peer = BigInt(peer);
+  const fetched = await client.getMessages(peer, { ids: [messageId] });
+  const message = Array.isArray(fetched) ? fetched[0] : fetched;
+  if (!message || !message.media) return null;
+
+  const mediaMeta = resolveMediaMeta(message);
+  let buffer = null;
+  if (mediaMeta.mediaType === 'contact') {
+    const contact = extractMessageContact(message);
+    if (!contact) return null;
+    buffer = Buffer.from(buildContactVcard(contact), 'utf8');
+    mediaMeta.originalName = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || `contact_${chatId}_${messageId}`;
+  } else {
+    buffer = await client.downloadMedia(message);
+  }
+  if (!buffer || buffer.length === 0) {
+    throw new Error('Не вдалося завантажити медіа');
+  }
+  const fallbackName = `${chatId}_${messageId}${mediaMeta.ext || '.bin'}`;
+  return {
+    buffer,
+    mediaMeta,
+    mediaName: repairFileNameMojibake(mediaMeta.originalName) || fallbackName,
+    contentType: message?.media?.document?.mimeType || 'application/octet-stream'
+  };
+};
+
 const extractMessageContact = (message) => {
   if (!message?.media || message.media.className !== 'MessageMediaContact') return null;
   const media = message.media;
@@ -226,6 +295,16 @@ const ensureMessageMediaCached = async ({ client, chatId, messageId }) => {
   }
 
   const mediaMeta = resolveMediaMeta(message);
+  const sizeBytes = getMediaSizeBytes(message);
+  if (!shouldCacheMedia(mediaMeta, sizeBytes)) {
+    return {
+      skippedCache: true,
+      mediaType: mediaMeta.mediaType,
+      mediaName: repairFileNameMojibake(mediaMeta.originalName) || null,
+      sizeBytes,
+      cacheLimitBytes: getMediaCacheLimitBytes(mediaMeta)
+    };
+  }
   let buffer = null;
   if (mediaMeta.mediaType === 'contact') {
     const contact = extractMessageContact(message);
@@ -770,7 +849,13 @@ router.get('/messages/:id', async (req, res) => {
     const staleMediaKeys = [];
     for (const row of mediaRows) {
       const mediaPath = String(row.media_path || '').trim();
-      if (!mediaPath) continue;
+      if (!mediaPath) {
+        mediaMap.set(row.message_id, {
+          path: null,
+          name: row.media_name ? repairFileNameMojibake(String(row.media_name)) : null
+        });
+        continue;
+      }
       if (uploadPathExists(mediaPath)) {
         mediaMap.set(row.message_id, {
           path: mediaPath,
@@ -926,6 +1011,18 @@ router.get('/messages/:id', async (req, res) => {
                         if (mediaMeta.mediaType === 'video' && !autoDownloadVideo) {
                             continue;
                         }
+                        const sizeBytes = getMediaSizeBytes(m);
+                        if (!shouldCacheMedia(mediaMeta, sizeBytes)) {
+                            db.prepare('INSERT OR REPLACE INTO message_media (message_id, peer_id, media_path, media_name) VALUES (?, ?, ?, ?)').run(
+                              m.id,
+                              rawPeerId,
+                              '',
+                              repairFileNameMojibake(mediaMeta.originalName) || null
+                            );
+                            mediaMap.set(m.id, { path: '', name: repairFileNameMojibake(mediaMeta.originalName) || null });
+                            processedMedia += 1;
+                            continue;
+                        }
                         const buffer = await Promise.race([
                             client.downloadMedia(m),
                             new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000))
@@ -993,6 +1090,17 @@ router.post('/messages/:chatId/:messageId/download-media', async (req, res) => {
       }
       media = await ensureMessageMediaCached({ client, chatId, messageId });
     }
+    if (media?.skippedCache) {
+      return res.json({
+        success: true,
+        directDownload: true,
+        mediaPath: null,
+        mediaName: media.mediaName || null,
+        mediaType: media.mediaType || null,
+        sizeBytes: media.sizeBytes || null,
+        cacheLimitBytes: media.cacheLimitBytes || null
+      });
+    }
     if (!media) {
       return res.status(404).json({ error: 'Медіа не знайдено у повідомленні' });
     }
@@ -1018,7 +1126,13 @@ router.get('/messages/:chatId/:messageId/file', async (req, res) => {
       if (!client) {
         return res.status(401).json({ error: 'Telegram клієнт не підключений' });
       }
-      media = await ensureMessageMediaCached({ client, chatId, messageId });
+      const directMedia = await getMessageMediaForDownload({ client, chatId, messageId });
+      if (!directMedia) {
+        return res.status(404).json({ error: 'Медіа не знайдено у повідомленні' });
+      }
+      const fallbackName = `file_${chatId}_${messageId}${directMedia.mediaMeta?.ext || '.bin'}`;
+      const downloadName = sanitizeDownloadName(directMedia.mediaName || fallbackName, fallbackName);
+      return sendDownloadBuffer(res, directMedia.buffer, downloadName, directMedia.contentType);
     }
     if (!media || !media.diskPath || !fs.existsSync(media.diskPath)) {
       return res.status(404).json({ error: 'Файл не знайдено' });
