@@ -4988,7 +4988,7 @@ function App({ currentUser: initialUser }) {
                     <span className={navLabelClass}>Замовлення (Склад)</span>
                 </button>
                 <button
-                    onClick={() => window.open('https://luxury-babka-f2df54.netlify.app/', '_blank', 'noopener,noreferrer')}
+                    onClick={() => window.open('https://solar-calculator-railway-production.up.railway.app/', '_blank', 'noopener,noreferrer')}
                     data-tooltip="Калькулятор СЕС"
                     className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-slate-800 text-slate-300`}
                 >

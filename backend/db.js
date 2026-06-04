@@ -3,14 +3,33 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
+const { emergencyMediaCleanup } = require('./startup-cleanup');
 const debugDbInit = String(process.env.LOCAL_START_DEBUG || '') === '1';
 const dbInitLog = (msg) => {
   if (debugDbInit) console.log(`[db:init] ${msg}`);
 };
 
+const isSqliteFullError = (error) => (
+  String(error?.code || '').toUpperCase() === 'SQLITE_FULL' ||
+  /database or disk is full/i.test(String(error?.message || ''))
+);
+
+const runWithSqliteFullRecovery = (operationName, fn) => {
+  try {
+    return fn();
+  } catch (error) {
+    if (!isSqliteFullError(error)) throw error;
+    console.warn(`[db] SQLite disk full during "${operationName}". Trying emergency media cleanup...`);
+    emergencyMediaCleanup(`sqlite-full:${operationName}`);
+    return fn();
+  }
+};
+
 dbInitLog('opening central database');
 const centralDb = new Database(runtimePaths.centralDbPath);
-centralDb.pragma('journal_mode = WAL');
+runWithSqliteFullRecovery('central journal_mode WAL', () => {
+  centralDb.pragma('journal_mode = WAL');
+});
 dbInitLog('central database opened');
 
 const isReadonlyDbError = (error) => (
@@ -22,6 +41,11 @@ const safeDbWrite = (dbInstance, operationName, fn) => {
   try {
     return fn();
   } catch (error) {
+    if (isSqliteFullError(error)) {
+      console.warn(`[db] SQLite disk full during "${operationName}". Trying emergency media cleanup...`);
+      emergencyMediaCleanup(`sqlite-full:${operationName}`);
+      return fn();
+    }
     if (isReadonlyDbError(error)) {
       console.warn(`[db] Skip write operation "${operationName}" because database is readonly.`);
       return null;
@@ -31,7 +55,7 @@ const safeDbWrite = (dbInstance, operationName, fn) => {
 };
 
 dbInitLog('running central schema init');
-centralDb.exec(`
+runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
@@ -174,7 +198,7 @@ centralDb.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
-`);
+`));
 dbInitLog('central schema init done');
 
 const ensureUsersRoleColumn = () => {
