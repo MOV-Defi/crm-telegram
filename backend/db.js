@@ -165,6 +165,8 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     fact_start TEXT,
     fact_end TEXT,
     delay_reason TEXT,
+    project_value TEXT,
+    project_value_currency TEXT NOT NULL DEFAULT 'UAH',
     budget_plan TEXT,
     paid_amount TEXT,
     expenses_fact TEXT,
@@ -191,9 +193,25 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     plan_end TEXT,
     fact_start TEXT,
     fact_end TEXT,
+    plan_date TEXT,
+    fact_date TEXT,
     stage_tasks_json TEXT NOT NULL DEFAULT '[]',
     plan_notes TEXT,
     fact_notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS project_finance_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    entry_type TEXT NOT NULL CHECK(entry_type IN ('income', 'expense')),
+    amount TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'UAH',
+    usd_rate TEXT,
+    payment_date TEXT,
+    note TEXT,
+    created_by_user_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -234,7 +252,16 @@ ensureCentralColumn('project_stages', 'plan_start', 'TEXT');
 ensureCentralColumn('project_stages', 'plan_end', 'TEXT');
 ensureCentralColumn('project_stages', 'fact_start', 'TEXT');
 ensureCentralColumn('project_stages', 'fact_end', 'TEXT');
+ensureCentralColumn('project_stages', 'plan_date', 'TEXT');
+ensureCentralColumn('project_stages', 'fact_date', 'TEXT');
 ensureCentralColumn('project_stages', 'stage_tasks_json', "TEXT NOT NULL DEFAULT '[]'");
+ensureCentralColumn('projects', 'project_value', 'TEXT');
+ensureCentralColumn('projects', 'project_value_currency', "TEXT NOT NULL DEFAULT 'UAH'");
+ensureCentralColumn('project_finance_entries', 'currency', "TEXT NOT NULL DEFAULT 'UAH'");
+ensureCentralColumn('project_finance_entries', 'usd_rate', 'TEXT');
+ensureCentralColumn('project_finance_entries', 'payment_date', 'TEXT');
+ensureCentralColumn('project_finance_entries', 'note', 'TEXT');
+ensureCentralColumn('project_finance_entries', 'created_by_user_id', 'INTEGER');
 dbInitLog('ensureCentralColumn migrations done');
 
 const migrateTenantCreditManagersToCentral = () => {
@@ -323,6 +350,7 @@ safeDbWrite(centralDb, 'project indexes', () => {
     CREATE INDEX IF NOT EXISTS idx_project_members_user_id ON project_members(user_id);
     CREATE INDEX IF NOT EXISTS idx_project_members_project_id ON project_members(project_id);
     CREATE INDEX IF NOT EXISTS idx_project_stages_project_id ON project_stages(project_id);
+    CREATE INDEX IF NOT EXISTS idx_project_finance_entries_project_id ON project_finance_entries(project_id);
   `);
 });
 dbInitLog('project indexes ensured');

@@ -3,17 +3,17 @@ const db = require('../db');
 
 const router = express.Router();
 
-const DEFAULT_PROJECT_STAGES = [
-  'Договір',
-  'Авансування',
-  'Обстеження',
-  'Проєктування специфікація',
-  'Закупки, постачання',
-  'Логістика, спецтехніка',
-  'Монтаж',
-  'Підключення, навчання',
-  'Виконавчі документи, Паспорт',
-  'Перевиставлення рахунків'
+const DEFAULT_PROJECT_STAGE_TEMPLATES = [
+  { name: 'Договір', tasks: ['Підготовка договору', 'Узгодження умов', 'Підписання договору'] },
+  { name: 'Авансування', tasks: ['Виставлення рахунку', 'Контроль оплати', 'Підтвердження надходження'] },
+  { name: 'Обстеження', tasks: ['Виїзд на обʼєкт', 'Заміри', 'Фотофіксація'] },
+  { name: 'Проєктування специфікація', tasks: ['Підготовка ТЗ', 'Схема проєкту', 'Специфікація'] },
+  { name: 'Закупки, постачання', tasks: ['Закупка панелей', 'Закупка інверторів', 'Закупка комплектуючих'] },
+  { name: 'Логістика, спецтехніка', tasks: ['План доставки', 'Замовлення спецтехніки', 'Погодження вікна доставки'] },
+  { name: 'Монтаж', tasks: ['Монтаж конструкцій', 'Монтаж основного обладнання', 'Фото-звіт по монтажу'] },
+  { name: 'Підключення, навчання', tasks: ['Пусконалагоджувальні роботи', 'Тест системи', 'Навчання клієнта'] },
+  { name: 'Виконавчі документи, Паспорт', tasks: ['Підготовка техпаспорту', 'Підготовка актів', 'Передача комплекту документів'] },
+  { name: 'Перевиставлення рахунків', tasks: ['Фінальні рахунки', 'Контроль оплат', 'Фінальне закриття'] }
 ];
 
 const PROJECT_FIELD_MAP = {
@@ -29,6 +29,8 @@ const PROJECT_FIELD_MAP = {
   factStart: 'fact_start',
   factEnd: 'fact_end',
   delayReason: 'delay_reason',
+  projectValue: 'project_value',
+  projectValueCurrency: 'project_value_currency',
   budgetPlan: 'budget_plan',
   paidAmount: 'paid_amount',
   expensesFact: 'expenses_fact'
@@ -42,28 +44,54 @@ const STAGE_FIELD_MAP = {
   planEnd: 'plan_end',
   factStart: 'fact_start',
   factEnd: 'fact_end',
-  stageTasks: 'stage_tasks_json',
+  planDate: 'plan_date',
+  factDate: 'fact_date',
   planNotes: 'plan_notes',
-  factNotes: 'fact_notes'
+  factNotes: 'fact_notes',
+  stageTasks: 'stage_tasks_json'
 };
 
-const toProjectDto = (row, stages, members) => ({
+const getProjectFinanceEntries = (projectId) => (
+  db.central.prepare(`
+    SELECT id, project_id, entry_type, amount, currency, usd_rate, payment_date, note, created_by_user_id, created_at, updated_at
+    FROM project_finance_entries
+    WHERE project_id = ?
+    ORDER BY COALESCE(payment_date, '') DESC, id DESC
+  `).all(projectId).map((row) => ({
+    id: row.id,
+    projectId: row.project_id,
+    type: row.entry_type,
+    amount: row.amount || '',
+    currency: String(row.currency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH',
+    usdRate: row.usd_rate || '',
+    paymentDate: row.payment_date || '',
+    note: row.note || '',
+    createdByUserId: row.created_by_user_id || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }))
+);
+
+const toProjectDto = (row, stages, members, financeEntries) => ({
   id: row.id,
   number: row.number || '',
   title: row.title || '',
   clientName: row.client_name || '',
   type: row.project_type || 'private',
   powerKw: row.power_kw || '',
-  owner: row.owner_name || '',
+  owner: row.owner_name || row.created_by_username || '',
   status: row.status || 'planning',
   planStart: row.plan_start || '',
   planEnd: row.plan_end || '',
   factStart: row.fact_start || '',
   factEnd: row.fact_end || '',
   delayReason: row.delay_reason || '',
+  projectValue: row.project_value || '',
+  projectValueCurrency: String(row.project_value_currency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH',
   budgetPlan: row.budget_plan || '',
   paidAmount: row.paid_amount || '',
   expensesFact: row.expenses_fact || '',
+  financeEntries: Array.isArray(financeEntries) ? financeEntries : [],
   createdByUserId: row.created_by_user_id,
   createdAt: row.created_at || null,
   updatedAt: row.updated_at || null,
@@ -73,8 +101,9 @@ const toProjectDto = (row, stages, members) => ({
 
 const getAccessibleProjectRow = (projectId, userId) => (
   db.central.prepare(`
-    SELECT p.*
+    SELECT p.*, cu.username AS created_by_username
     FROM projects p
+    LEFT JOIN users cu ON cu.id = p.created_by_user_id
     INNER JOIN project_members pm ON pm.project_id = p.id
     WHERE p.id = ? AND pm.user_id = ?
     LIMIT 1
@@ -83,19 +112,11 @@ const getAccessibleProjectRow = (projectId, userId) => (
 
 const getProjectStages = (projectId) => (
   db.central.prepare(`
-    SELECT id, name, order_index, status, plan_start, plan_end, fact_start, fact_end, stage_tasks_json, plan_notes, fact_notes, created_at, updated_at
+    SELECT id, name, order_index, status, plan_start, plan_end, fact_start, fact_end, plan_date, fact_date, plan_notes, fact_notes, stage_tasks_json, created_at, updated_at
     FROM project_stages
     WHERE project_id = ?
     ORDER BY order_index ASC, id ASC
   `).all(projectId).map((row) => ({
-    id: row.id,
-    name: row.name || '',
-    orderIndex: Number(row.order_index || 0),
-    status: row.status || 'pending',
-    planStart: row.plan_start || '',
-    planEnd: row.plan_end || '',
-    factStart: row.fact_start || '',
-    factEnd: row.fact_end || '',
     stageTasks: (() => {
       try {
         const parsed = JSON.parse(String(row.stage_tasks_json || '[]'));
@@ -104,11 +125,21 @@ const getProjectStages = (projectId) => (
         return [];
       }
     })(),
+    id: row.id,
+    name: row.name || '',
+    orderIndex: Number(row.order_index || 0),
+    status: row.status || 'pending',
+    planStart: row.plan_start || '',
+    planEnd: row.plan_end || '',
+    factStart: row.fact_start || '',
+    factEnd: row.fact_end || '',
+    planDate: row.plan_date || '',
+    factDate: row.fact_date || '',
     planNotes: row.plan_notes || '',
     factNotes: row.fact_notes || '',
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
-  }))
+  })).filter((stage) => String(stage.name || '').trim().toLowerCase() !== 'гарантія')
 );
 
 const getProjectMembers = (projectId) => (
@@ -130,7 +161,7 @@ const getProjectMembers = (projectId) => (
 const loadProjectForUser = (projectId, userId) => {
   const row = getAccessibleProjectRow(projectId, userId);
   if (!row) return null;
-  return toProjectDto(row, getProjectStages(projectId), getProjectMembers(projectId));
+  return toProjectDto(row, getProjectStages(projectId), getProjectMembers(projectId), getProjectFinanceEntries(projectId));
 };
 
 router.get('/users', (req, res) => {
@@ -166,13 +197,14 @@ router.get('/users', (req, res) => {
 router.get('/', (req, res) => {
   try {
     const rows = db.central.prepare(`
-      SELECT DISTINCT p.*
+      SELECT DISTINCT p.*, cu.username AS created_by_username
       FROM projects p
+      LEFT JOIN users cu ON cu.id = p.created_by_user_id
       INNER JOIN project_members pm ON pm.project_id = p.id
       WHERE pm.user_id = ?
       ORDER BY p.updated_at DESC, p.id DESC
     `).all(req.userId);
-    const projects = rows.map((row) => toProjectDto(row, getProjectStages(row.id), getProjectMembers(row.id)));
+    const projects = rows.map((row) => toProjectDto(row, getProjectStages(row.id), getProjectMembers(row.id), getProjectFinanceEntries(row.id)));
     return res.json({ projects });
   } catch (error) {
     console.error('projects list error:', error);
@@ -180,40 +212,40 @@ router.get('/', (req, res) => {
   }
 });
 
+
 router.post('/', (req, res) => {
   try {
     const title = String(req.body?.title || '').trim();
     if (!title) return res.status(400).json({ error: 'Назва проєкту обовʼязкова' });
 
     const now = new Date().toISOString();
-    const numberInput = String(req.body?.number || '').trim();
-    const countRow = db.central.prepare('SELECT COUNT(*) AS count FROM projects').get();
-    const fallbackNumber = `${new Date().getFullYear()}-${String(Number(countRow?.count || 0) + 1).padStart(3, '0')}`;
-    const number = numberInput || fallbackNumber;
+    const seqRow = db.central.prepare('SELECT COALESCE(MAX(id), 0) + 1 AS next_seq FROM projects').get();
+    const number = String(seqRow?.next_seq || 1);
     const projectType = String(req.body?.type || 'private').trim() || 'private';
-    const creator = db.central.prepare('SELECT username FROM users WHERE id = ? LIMIT 1').get(req.userId);
-    const ownerName = String(creator?.username || req.body?.owner || '').trim() || null;
+    const ownerName = String(req.username || '').trim();
 
     const projectInfo = db.central.prepare(`
       INSERT INTO projects (
         number, title, client_name, project_type, power_kw, owner_name, status,
-        plan_start, plan_end, fact_start, fact_end, delay_reason,
+        plan_start, plan_end, fact_start, fact_end, delay_reason, project_value, project_value_currency,
         budget_plan, paid_amount, expenses_fact, created_by_user_id, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       number,
       title,
       String(req.body?.clientName || '').trim() || null,
       projectType,
       String(req.body?.powerKw || '').trim() || null,
-      ownerName,
+      ownerName || null,
       String(req.body?.status || 'planning').trim() || 'planning',
       String(req.body?.planStart || '').trim() || null,
       String(req.body?.planEnd || '').trim() || null,
       String(req.body?.factStart || '').trim() || null,
       String(req.body?.factEnd || '').trim() || null,
       String(req.body?.delayReason || '').trim() || null,
+      String(req.body?.projectValue || '').trim() || null,
+      String(req.body?.projectValueCurrency || 'UAH').trim().toUpperCase() === 'USD' ? 'USD' : 'UAH',
       String(req.body?.budgetPlan || '').trim() || null,
       String(req.body?.paidAmount || '').trim() || null,
       String(req.body?.expensesFact || '').trim() || null,
@@ -231,12 +263,22 @@ router.post('/', (req, res) => {
     const incomingStages = Array.isArray(req.body?.stages) ? req.body.stages : [];
     const stagesToInsert = incomingStages.length > 0
       ? incomingStages
-      : DEFAULT_PROJECT_STAGES.map((name, index) => ({ name, orderIndex: index, status: 'pending' }));
+      : DEFAULT_PROJECT_STAGE_TEMPLATES.map((stageTemplate, index) => ({
+        name: stageTemplate.name,
+        orderIndex: index,
+        status: 'pending',
+        stageTasks: (stageTemplate.tasks || []).map((taskText) => ({
+          text: taskText,
+          plannedDate: '',
+          completedAt: '',
+          done: false
+        }))
+      }));
     const insertStage = db.central.prepare(`
       INSERT INTO project_stages (
-        project_id, name, order_index, status, plan_start, plan_end, fact_start, fact_end, stage_tasks_json, plan_notes, fact_notes, created_at, updated_at
+        project_id, name, order_index, status, plan_start, plan_end, fact_start, fact_end, plan_date, fact_date, plan_notes, fact_notes, stage_tasks_json, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (let i = 0; i < stagesToInsert.length; i += 1) {
       const stage = stagesToInsert[i] || {};
@@ -248,12 +290,14 @@ router.post('/', (req, res) => {
         Number.isFinite(Number(stage.orderIndex)) ? Number(stage.orderIndex) : i,
         String(stage.status || 'pending').trim() || 'pending',
         String(stage.planStart || '').trim() || null,
-        String(stage.planEnd || '').trim() || null,
+        String(stage.planEnd || '').trim() || String(stage.planDate || '').trim() || null,
         String(stage.factStart || '').trim() || null,
-        String(stage.factEnd || '').trim() || null,
-        JSON.stringify(Array.isArray(stage.stageTasks) ? stage.stageTasks : []),
+        String(stage.factEnd || '').trim() || String(stage.factDate || '').trim() || null,
+        String(stage.planDate || '').trim() || null,
+        String(stage.factDate || '').trim() || null,
         String(stage.planNotes || '').trim() || null,
         String(stage.factNotes || '').trim() || null,
+        JSON.stringify(Array.isArray(stage.stageTasks) ? stage.stageTasks : []),
         now,
         now
       );
@@ -339,15 +383,16 @@ router.patch('/:projectId/stages/:stageId', (req, res) => {
     for (const [inputKey, columnName] of Object.entries(STAGE_FIELD_MAP)) {
       if (!Object.prototype.hasOwnProperty.call(req.body || {}, inputKey)) continue;
       const raw = req.body?.[inputKey];
-      if (inputKey === 'stageTasks') {
-        sets.push(`${columnName} = ?`);
-        values.push(JSON.stringify(Array.isArray(raw) ? raw : []));
-        continue;
-      }
       if (inputKey === 'orderIndex') {
         const orderValue = Number.parseInt(String(raw), 10);
         sets.push(`${columnName} = ?`);
         values.push(Number.isFinite(orderValue) ? orderValue : 0);
+        continue;
+      }
+      if (inputKey === 'stageTasks') {
+        const tasks = Array.isArray(raw) ? raw : [];
+        sets.push(`${columnName} = ?`);
+        values.push(JSON.stringify(tasks));
         continue;
       }
       const nextValue = raw == null ? null : String(raw).trim();
@@ -375,6 +420,76 @@ router.patch('/:projectId/stages/:stageId', (req, res) => {
     return res.json({ project });
   } catch (error) {
     console.error('projects stage patch error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/:id/finance', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(projectId)) return res.status(400).json({ error: 'Некоректний ID проєкту' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    const type = String(req.body?.type || '').trim().toLowerCase();
+    if (type !== 'income' && type !== 'expense') {
+      return res.status(400).json({ error: 'Некоректний тип операції' });
+    }
+    const amountRaw = String(req.body?.amount || '').trim().replace(',', '.');
+    const amountNum = Number.parseFloat(amountRaw);
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      return res.status(400).json({ error: 'Сума має бути більше 0' });
+    }
+    const currencyRaw = String(req.body?.currency || 'UAH').trim().toUpperCase();
+    const currency = currencyRaw === 'USD' ? 'USD' : 'UAH';
+    const paymentDate = String(req.body?.paymentDate || '').trim();
+    const usdRateRaw = String(req.body?.usdRate || '').trim().replace(',', '.');
+    const usdRateNum = Number.parseFloat(usdRateRaw);
+    const usdRate = currency === 'USD' && Number.isFinite(usdRateNum) && usdRateNum > 0 ? String(usdRateNum) : null;
+    const note = String(req.body?.note || '').trim();
+    const now = new Date().toISOString();
+
+    db.central.prepare(`
+      INSERT INTO project_finance_entries
+      (project_id, entry_type, amount, currency, usd_rate, payment_date, note, created_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      projectId,
+      type,
+      String(amountNum),
+      currency,
+      usdRate,
+      paymentDate || null,
+      note || null,
+      req.userId,
+      now,
+      now
+    );
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    const project = loadProjectForUser(projectId, req.userId);
+    return res.status(201).json({ project });
+  } catch (error) {
+    console.error('projects finance create error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.delete('/:projectId/finance/:financeId', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.projectId, 10);
+    const financeId = Number.parseInt(req.params.financeId, 10);
+    if (!Number.isFinite(projectId) || !Number.isFinite(financeId)) {
+      return res.status(400).json({ error: 'Некоректні параметри' });
+    }
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    db.central.prepare('DELETE FROM project_finance_entries WHERE id = ? AND project_id = ?').run(financeId, projectId);
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    const project = loadProjectForUser(projectId, req.userId);
+    return res.json({ project });
+  } catch (error) {
+    console.error('projects finance delete error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
