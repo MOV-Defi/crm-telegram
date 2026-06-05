@@ -11,17 +11,17 @@ const API_URL = resolveApiUrl();
 const URL_IN_TEXT_RE = /((?:https?:\/\/|www\.)[^\s]+)/gi;
 const UPLOADS_BASE_URL = API_URL.replace('/api', '');
 const REQUEST_HISTORY_VIEW_ID = '__request_history__';
-const DEFAULT_PROJECT_STAGES = [
-  'Договір',
-  'Авансування',
-  'Обстеження',
-  'Проєктування специфікація',
-  'Закупки, постачання',
-  'Логістика, спецтехніка',
-  'Монтаж',
-  'Підключення, навчання',
-  'Виконавчі документи, Паспорт',
-  'Перевиставлення рахунків'
+const DEFAULT_PROJECT_STAGE_TEMPLATES = [
+  { name: 'Договір', tasks: ['Підготовка договору', 'Узгодження умов', 'Підписання договору'] },
+  { name: 'Авансування', tasks: ['Виставлення рахунку', 'Контроль оплати', 'Підтвердження надходження'] },
+  { name: 'Обстеження', tasks: ['Виїзд на обʼєкт', 'Заміри', 'Фотофіксація'] },
+  { name: 'Проєктування специфікація', tasks: ['Підготовка ТЗ', 'Схема проєкту', 'Специфікація'] },
+  { name: 'Закупки, постачання', tasks: ['Закупка панелей', 'Закупка інверторів', 'Закупка комплектуючих'] },
+  { name: 'Логістика, спецтехніка', tasks: ['План доставки', 'Замовлення спецтехніки', 'Погодження вікна доставки'] },
+  { name: 'Монтаж', tasks: ['Монтаж конструкцій', 'Монтаж основного обладнання', 'Фото-звіт по монтажу'] },
+  { name: 'Підключення, навчання', tasks: ['Пусконалагоджувальні роботи', 'Тест системи', 'Навчання клієнта'] },
+  { name: 'Виконавчі документи, Паспорт', tasks: ['Підготовка техпаспорту', 'Підготовка актів', 'Передача комплекту документів'] },
+  { name: 'Перевиставлення рахунків', tasks: ['Фінальні рахунки', 'Контроль оплат', 'Фінальне закриття'] }
 ];
 
 const parseApiJson = async (response, fallbackMessage) => {
@@ -198,6 +198,8 @@ function App({ currentUser: initialUser }) {
   const fileInputRef = useRef(null);
   const requestFileInputRef = useRef(null);
   const dialogLoadRequestRef = useRef(0);
+  const projectStagePatchSeqRef = useRef({});
+  const projectPatchSeqRef = useRef({});
   const activeDialogIdRef = useRef(null);
   const dialogFetchControllersRef = useRef({
       messages: null,
@@ -281,22 +283,41 @@ function App({ currentUser: initialUser }) {
   const [projectsError, setProjectsError] = useState('');
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [showProjectCreateForm, setShowProjectCreateForm] = useState(false);
+  const [isProjectsLeftCollapsed, setIsProjectsLeftCollapsed] = useState(false);
+  const [isProjectsRightCollapsed, setIsProjectsRightCollapsed] = useState(false);
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
   const [projectStatusFilter, setProjectStatusFilter] = useState('all');
+  const [projectCurrencyOverrides, setProjectCurrencyOverrides] = useState(() => {
+      try {
+          const raw = localStorage.getItem('tgcrm-project-currency-overrides-v1');
+          const parsed = raw ? JSON.parse(raw) : {};
+          return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (_) {
+          return {};
+      }
+  });
+  const [projectCurrencyLocal, setProjectCurrencyLocal] = useState('UAH');
   const [projectUsers, setProjectUsers] = useState([]);
   const [loadingProjectUsers, setLoadingProjectUsers] = useState(false);
   const [projectMemberSearch, setProjectMemberSearch] = useState('');
   const [projectMemberUserIdToAdd, setProjectMemberUserIdToAdd] = useState('');
   const [savingProjectAction, setSavingProjectAction] = useState(false);
+  const [projectViewTab, setProjectViewTab] = useState('stages');
   const [expandedProjectStageIds, setExpandedProjectStageIds] = useState({});
+  const [showStageStats, setShowStageStats] = useState(false);
+  const [calendarZoom, setCalendarZoom] = useState(1);
+  const [calendarMonthOffset, setCalendarMonthOffset] = useState(0);
+  const [selectedCalendarTaskKey, setSelectedCalendarTaskKey] = useState('');
+  const [projectFinanceDraft, setProjectFinanceDraft] = useState({ type: 'income', amount: '', currency: 'UAH', usdRate: '', paymentDate: '', note: '' });
+  const [projectFinanceSaving, setProjectFinanceSaving] = useState(false);
+  const [showFinanceStatsExpanded, setShowFinanceStatsExpanded] = useState(false);
   const [stageTaskDrafts, setStageTaskDrafts] = useState({});
+  const [stageTasksLocal, setStageTasksLocal] = useState({});
   const [projectDraft, setProjectDraft] = useState({
-      number: '',
       title: '',
       clientName: '',
       type: 'private',
       powerKw: '',
-      owner: '',
       planStart: '',
       planEnd: ''
   });
@@ -341,6 +362,12 @@ function App({ currentUser: initialUser }) {
           return { enabled: false, time: '09:00', chatId: '', lastSentDate: '' };
       }
   });
+
+  useEffect(() => {
+      try {
+          localStorage.setItem('tgcrm-project-currency-overrides-v1', JSON.stringify(projectCurrencyOverrides || {}));
+      } catch (_) {}
+  }, [projectCurrencyOverrides]);
   const reminderProcessingRef = useRef(false);
   const dailyDigestProcessingRef = useRef(false);
   const backendTaskSyncLoadedRef = useRef(false);
@@ -2125,7 +2152,7 @@ function App({ currentUser: initialUser }) {
       setLoadingProjects(true);
       setProjectsError('');
       try {
-          const res = await fetch(`${API_URL}/projects`);
+          const res = await fetch(buildApiUrlWithToken('/projects'));
           const data = await parseApiJson(res, 'Не вдалося завантажити проєкти');
           setProjects(Array.isArray(data?.projects) ? data.projects : []);
       } catch (error) {
@@ -2140,7 +2167,7 @@ function App({ currentUser: initialUser }) {
       try {
           const q = String(query || '').trim();
           const suffix = q ? `?q=${encodeURIComponent(q)}` : '';
-          const res = await fetch(`${API_URL}/projects/users${suffix}`);
+          const res = await fetch(buildApiUrlWithToken(`/projects/users${suffix}`));
           const data = await parseApiJson(res, 'Не вдалося завантажити користувачів');
           setProjectUsers(Array.isArray(data?.users) ? data.users : []);
       } catch (_) {
@@ -2155,12 +2182,22 @@ function App({ currentUser: initialUser }) {
       if (!title) return;
       setSavingProjectAction(true);
       try {
-          const res = await fetch(`${API_URL}/projects`, {
+          const res = await fetch(buildApiUrlWithToken('/projects'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                   ...projectDraft,
-                  stages: DEFAULT_PROJECT_STAGES.map((name, index) => ({ name, orderIndex: index, status: 'pending' }))
+                  stages: DEFAULT_PROJECT_STAGE_TEMPLATES.map((stageTemplate, index) => ({
+                      name: stageTemplate.name,
+                      orderIndex: index,
+                      status: 'pending',
+                      stageTasks: (stageTemplate.tasks || []).map((taskText) => ({
+                          text: taskText,
+                          plannedDate: '',
+                          completedAt: '',
+                          done: false
+                      }))
+                  }))
               })
           });
           const data = await parseApiJson(res, 'Не вдалося створити проєкт');
@@ -2173,12 +2210,10 @@ function App({ currentUser: initialUser }) {
           }
           setShowProjectCreateForm(false);
           setProjectDraft({
-              number: '',
               title: '',
               clientName: '',
               type: 'private',
               powerKw: '',
-              owner: '',
               planStart: '',
               planEnd: ''
           });
@@ -2190,24 +2225,74 @@ function App({ currentUser: initialUser }) {
   };
 
   const handleProjectFieldUpdate = async (projectId, patch) => {
-      setProjects((prev) => prev.map((project) => (project.id === projectId ? { ...project, ...patch } : project)));
+      const requestKey = String(projectId);
+      const nextSeq = Number(projectPatchSeqRef.current[requestKey] || 0) + 1;
+      projectPatchSeqRef.current[requestKey] = nextSeq;
+      const normalizedId = Number(projectId);
+      setProjects((prev) => prev.map((project) => (Number(project.id) === normalizedId ? { ...project, ...patch } : project)));
       try {
-          const res = await fetch(`${API_URL}/projects/${projectId}`, {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${projectId}`), {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(patch)
           });
           const data = await parseApiJson(res, 'Не вдалося оновити проєкт');
+          if (projectPatchSeqRef.current[requestKey] !== nextSeq) return;
           if (data?.project) {
-              setProjects((prev) => prev.map((project) => (project.id === projectId ? data.project : project)));
+              setProjects((prev) => prev.map((project) => (Number(project.id) === normalizedId ? data.project : project)));
           }
       } catch (error) {
+          if (projectPatchSeqRef.current[requestKey] !== nextSeq) return;
           await loadProjects();
           console.error('update project field error:', error);
       }
   };
 
+  const handleProjectCurrencyUpdate = async (projectId, currency) => {
+      const normalizedCurrency = String(currency || '').toUpperCase() === 'USD' ? 'USD' : 'UAH';
+      setProjectCurrencyLocal(normalizedCurrency);
+      const key = String(projectId);
+      setProjectCurrencyOverrides((prev) => ({ ...prev, [key]: normalizedCurrency }));
+      setProjects((prev) => prev.map((project) => (
+          Number(project.id) === Number(projectId)
+            ? { ...project, projectValueCurrency: normalizedCurrency }
+            : project
+      )));
+      try {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${projectId}`), {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectValueCurrency: normalizedCurrency })
+          });
+          const data = await parseApiJson(res, 'Не вдалося оновити валюту проєкту');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (
+                  Number(project.id) === Number(projectId) ? data.project : project
+              )));
+              setProjectCurrencyOverrides((prev) => {
+                  const next = { ...prev };
+                  next[key] = String(data.project.projectValueCurrency || normalizedCurrency).toUpperCase() === 'USD' ? 'USD' : 'UAH';
+                  return next;
+              });
+          }
+      } catch (error) {
+          console.error('update project currency error:', error);
+      }
+  };
+
+  useEffect(() => {
+      if (!selectedProjectId) return;
+      const project = projects.find((item) => Number(item.id) === Number(selectedProjectId));
+      if (!project) return;
+      const key = String(project.id);
+      const nextCurrency = String(projectCurrencyOverrides[key] || project.projectValueCurrency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH';
+      setProjectCurrencyLocal(nextCurrency);
+  }, [selectedProjectId, projects, projectCurrencyOverrides]);
+
   const handleProjectStageUpdate = async (projectId, stageId, patch) => {
+      const requestKey = `${projectId}:${stageId}`;
+      const nextSeq = Number(projectStagePatchSeqRef.current[requestKey] || 0) + 1;
+      projectStagePatchSeqRef.current[requestKey] = nextSeq;
       setProjects((prev) => prev.map((project) => {
           if (project.id !== projectId) return project;
           const stages = Array.isArray(project.stages) ? project.stages.map((stage) => (
@@ -2216,26 +2301,83 @@ function App({ currentUser: initialUser }) {
           return { ...project, stages };
       }));
       try {
-          const res = await fetch(`${API_URL}/projects/${projectId}/stages/${stageId}`, {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${projectId}/stages/${stageId}`), {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(patch)
           });
           const data = await parseApiJson(res, 'Не вдалося оновити етап');
+          if (projectStagePatchSeqRef.current[requestKey] !== nextSeq) return;
           if (data?.project) {
               setProjects((prev) => prev.map((project) => (project.id === projectId ? data.project : project)));
           }
       } catch (error) {
+          if (projectStagePatchSeqRef.current[requestKey] !== nextSeq) return;
           await loadProjects();
           console.error('update project stage error:', error);
       }
   };
 
+  const handleAddProjectFinanceEntry = async (typeOverride = null) => {
+      if (!selectedProject?.id) return;
+      const amount = Number.parseFloat(String(projectFinanceDraft.amount || '').replace(',', '.'));
+      if (!Number.isFinite(amount) || amount <= 0) {
+          alert('Вкажіть коректну суму');
+          return;
+      }
+      setProjectFinanceSaving(true);
+      const entryType = typeOverride || projectFinanceDraft.type || 'income';
+      try {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/finance`), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  type: entryType,
+                  amount: String(amount),
+                  currency: projectFinanceDraft.currency,
+                  usdRate: projectFinanceDraft.usdRate,
+                  paymentDate: projectFinanceDraft.paymentDate || todayIso,
+                  note: projectFinanceDraft.note
+              })
+          });
+          const data = await parseApiJson(res, 'Не вдалося додати фінансову операцію');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          } else {
+              await loadProjects();
+          }
+          setProjectFinanceDraft((prev) => ({ ...prev, amount: '', usdRate: '', note: '', paymentDate: prev.paymentDate || todayIso }));
+      } catch (error) {
+          alert(error?.message || 'Не вдалося додати фінансову операцію');
+      } finally {
+          setProjectFinanceSaving(false);
+      }
+  };
+
+  const handleDeleteProjectFinanceEntry = async (entryId) => {
+      if (!selectedProject?.id || !entryId) return;
+      setProjectFinanceSaving(true);
+      try {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/finance/${entryId}`), { method: 'DELETE' });
+          const data = await parseApiJson(res, 'Не вдалося видалити фінансову операцію');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          } else {
+              await loadProjects();
+          }
+      } catch (error) {
+          alert(error?.message || 'Не вдалося видалити фінансову операцію');
+      } finally {
+          setProjectFinanceSaving(false);
+      }
+  };
+
+
   const handleAddProjectMember = async (projectId, userId) => {
       if (!userId) return;
       setSavingProjectAction(true);
       try {
-          const res = await fetch(`${API_URL}/projects/${projectId}/members`, {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${projectId}/members`), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ userId: Number(userId) })
@@ -2255,7 +2397,7 @@ function App({ currentUser: initialUser }) {
   const handleRemoveProjectMember = async (projectId, userId) => {
       setSavingProjectAction(true);
       try {
-          const res = await fetch(`${API_URL}/projects/${projectId}/members/${userId}`, { method: 'DELETE' });
+          const res = await fetch(buildApiUrlWithToken(`/projects/${projectId}/members/${userId}`), { method: 'DELETE' });
           const data = await parseApiJson(res, 'Не вдалося видалити учасника');
           if (!data?.project) {
               setProjects((prev) => prev.filter((project) => project.id !== projectId));
@@ -2273,7 +2415,7 @@ function App({ currentUser: initialUser }) {
   const handleDeleteProject = async (projectId) => {
       setSavingProjectAction(true);
       try {
-          const res = await fetch(`${API_URL}/projects/${projectId}`, { method: 'DELETE' });
+          const res = await fetch(buildApiUrlWithToken(`/projects/${projectId}`), { method: 'DELETE' });
           await parseApiJson(res, 'Не вдалося видалити проєкт');
           setProjects((prev) => prev.filter((project) => project.id !== projectId));
           setSelectedProjectId((prev) => (String(prev) === String(projectId) ? null : prev));
@@ -4722,7 +4864,9 @@ function App({ currentUser: initialUser }) {
       return String(project.status || '') === projectStatusFilter;
   });
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
-  const isLightTheme = appTheme === 'light';
+  const selectedProjectCurrency = selectedProject
+      ? (String(projectCurrencyLocal || projectCurrencyOverrides[String(selectedProject.id)] || selectedProject.projectValueCurrency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH')
+      : 'UAH';
   const parseMoneyValue = (value) => {
       const normalized = String(value || '').replace(/\s+/g, '').replace(',', '.');
       const amount = Number.parseFloat(normalized);
@@ -4730,18 +4874,229 @@ function App({ currentUser: initialUser }) {
   };
   const selectedProjectStages = Array.isArray(selectedProject?.stages) ? selectedProject.stages : [];
   const selectedProjectMembers = Array.isArray(selectedProject?.members) ? selectedProject.members : [];
-  const selectedProjectDoneStages = selectedProjectStages.filter((stage) => stage.status === 'done').length;
+  const selectedProjectFinanceEntries = Array.isArray(selectedProject?.financeEntries) ? selectedProject.financeEntries : [];
+  const normalizeStageTasks = (tasks) => {
+      if (!Array.isArray(tasks)) return [];
+      return tasks.map((task) => {
+          if (typeof task === 'string') {
+              return { text: task, plannedDate: '', completedAt: '', done: false };
+          }
+          return {
+              text: String(task?.text || ''),
+              plannedDate: String(task?.plannedDate || task?.startDate || ''),
+              completedAt: String(task?.completedAt || task?.endDate || ''),
+              done: !!task?.done
+          };
+      });
+  };
+  const toIsoDate = (value) => normalizeDateInputValue(value);
+  const diffDaysInclusive = (from, to) => {
+      const a = toIsoDate(from);
+      const b = toIsoDate(to);
+      if (!a || !b) return 0;
+      const ms = new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime();
+      return ms >= 0 ? Math.floor(ms / 86400000) + 1 : 0;
+  };
+  const toLocalIsoDate = (date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+  };
+  const todayIso = toLocalIsoDate(new Date());
+  const getStageDateRange = (stage) => {
+      const tasks = normalizeStageTasks(stage?.stageTasks);
+      const start = toIsoDate(stage?.planStart || stage?.planDate) || tasks.map((t) => toIsoDate(t.plannedDate)).filter(Boolean).sort()[0] || '';
+      const completedDates = tasks.map((t) => (t.done ? toIsoDate(t.completedAt) : '')).filter(Boolean).sort();
+      const end = toIsoDate(stage?.planEnd || stage?.factDate) || completedDates[completedDates.length - 1] || '';
+      return { start, end };
+  };
+  const getStageDurationDays = (stage) => {
+      const { start, end } = getStageDateRange(stage);
+      if (!start) return 0;
+      return diffDaysInclusive(start, end || todayIso);
+  };
+  const isStageDoneByTasks = (stage) => {
+      const tasks = normalizeStageTasks(stage?.stageTasks);
+      return tasks.length > 0 && tasks.every((task) => task.done);
+  };
+  const selectedProjectDoneStages = selectedProjectStages.filter((stage) => (
+      String(stage.status || '') === 'done' || isStageDoneByTasks(stage)
+  )).length;
   const selectedProjectProgress = selectedProjectStages.length > 0 ? Math.round((selectedProjectDoneStages / selectedProjectStages.length) * 100) : 0;
-  const selectedProjectProfit = parseMoneyValue(selectedProject?.paidAmount) - parseMoneyValue(selectedProject?.expensesFact);
+  const financeStatsByCurrency = selectedProjectFinanceEntries.reduce((acc, entry) => {
+      const currency = String(entry?.currency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH';
+      const amount = parseMoneyValue(entry?.amount);
+      if (!acc[currency]) acc[currency] = { income: 0, expense: 0 };
+      if (String(entry?.type || '') === 'expense') acc[currency].expense += amount;
+      else acc[currency].income += amount;
+      return acc;
+  }, {});
+  const convertCurrencyAmount = (amount, fromCurrency, toCurrency, usdRateOverride = null) => {
+      const value = Number(amount || 0);
+      const from = String(fromCurrency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH';
+      const to = String(toCurrency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH';
+      if (from === to) return value;
+      const rate = Number(usdRateOverride || 0);
+      if (!Number.isFinite(rate) || rate <= 0) return 0;
+      if (from === 'UAH' && to === 'USD') return value / rate;
+      if (from === 'USD' && to === 'UAH') return value * rate;
+      return value;
+  };
+  const selectedProjectIncomeUah = selectedProjectFinanceEntries
+      .filter((entry) => String(entry?.type || '') !== 'expense')
+      .reduce((sum, entry) => sum + convertCurrencyAmount(parseMoneyValue(entry?.amount), entry?.currency, 'UAH', parseMoneyValue(entry?.usdRate)), 0);
+  const selectedProjectIncomeUsd = selectedProjectFinanceEntries
+      .filter((entry) => String(entry?.type || '') !== 'expense')
+      .reduce((sum, entry) => sum + convertCurrencyAmount(parseMoneyValue(entry?.amount), entry?.currency, 'USD', parseMoneyValue(entry?.usdRate)), 0);
+  const selectedProjectExpenseUah = selectedProjectFinanceEntries
+      .filter((entry) => String(entry?.type || '') === 'expense')
+      .reduce((sum, entry) => sum + convertCurrencyAmount(parseMoneyValue(entry?.amount), entry?.currency, 'UAH', parseMoneyValue(entry?.usdRate)), 0);
+  const selectedProjectExpenseUsd = selectedProjectFinanceEntries
+      .filter((entry) => String(entry?.type || '') === 'expense')
+      .reduce((sum, entry) => sum + convertCurrencyAmount(parseMoneyValue(entry?.amount), entry?.currency, 'USD', parseMoneyValue(entry?.usdRate)), 0);
+  const selectedProjectProfitUah = selectedProjectIncomeUah - selectedProjectExpenseUah;
+  const selectedProjectProfitUsd = selectedProjectIncomeUsd - selectedProjectExpenseUsd;
+  const selectedProjectValueRaw = parseMoneyValue(selectedProject?.projectValue || selectedProject?.budgetPlan || 0);
+  const selectedProjectOutstanding = (() => {
+      const projectCurrency = selectedProjectCurrency === 'USD' ? 'USD' : 'UAH';
+      if (projectCurrency === 'USD') {
+          const dueUsd = selectedProjectValueRaw - selectedProjectIncomeUsd;
+          return { amount: dueUsd, currency: 'USD' };
+      }
+      const dueUah = selectedProjectValueRaw - selectedProjectIncomeUah;
+      return { amount: dueUah, currency: 'UAH' };
+  })();
+  const todayDate = new Date();
+  const calendarViewStartDate = new Date(todayDate.getFullYear(), todayDate.getMonth() + calendarMonthOffset, 1);
+  const calendarStartTs = calendarViewStartDate.getTime();
+  const calendarDayCount = new Date(calendarViewStartDate.getFullYear(), calendarViewStartDate.getMonth() + 1, 0).getDate();
+  const calendarEndTs = calendarStartTs + ((calendarDayCount - 1) * 86400000);
+  const calendarTotalDays = calendarDayCount;
+  const calendarMinDate = toLocalIsoDate(new Date(calendarStartTs));
+  const calendarMaxDate = toLocalIsoDate(new Date(calendarEndTs));
+  const calendarDays = Array.from({ length: calendarDayCount }, (_, index) => {
+      const date = new Date(calendarStartTs + (index * 86400000));
+      const iso = toLocalIsoDate(date);
+      const weekdayShort = date.toLocaleDateString('uk-UA', { weekday: 'short' }).replace('.', '');
+      const isSunday = date.getDay() === 0;
+      return { iso, day: Number(iso.slice(8, 10)), month: iso.slice(5, 7), weekdayShort, isSunday };
+  });
+  const isDateInRange = (dateIso, startRaw, endRaw) => {
+      const startIso = toIsoDate(startRaw);
+      if (!startIso) return false;
+      const endIso = toIsoDate(endRaw) || startIso;
+      return dateIso >= startIso && dateIso <= endIso;
+  };
+  const selectedProjectTotalDays = (() => {
+      if (!selectedProjectStages.length) return 0;
+      const starts = selectedProjectStages.map((stage) => getStageDateRange(stage).start).filter(Boolean).sort();
+      const ends = selectedProjectStages.map((stage) => {
+          const r = getStageDateRange(stage);
+          return r.end || (r.start ? todayIso : '');
+      }).filter(Boolean).sort();
+      if (!starts.length || !ends.length) return 0;
+      return diffDaysInclusive(starts[0], ends[ends.length - 1]);
+  })();
+  const getProjectTotalDays = (project) => {
+      const stages = Array.isArray(project?.stages) ? project.stages : [];
+      if (!stages.length) return 0;
+      const starts = stages
+          .map((stage) => getStageDateRange(stage).start)
+          .filter(Boolean)
+          .sort();
+      const ends = stages
+          .map((stage) => {
+              const r = getStageDateRange(stage);
+              return r.end || (r.start ? todayIso : '');
+          })
+          .filter(Boolean)
+          .sort();
+      if (!starts.length || !ends.length) return 0;
+      return diffDaysInclusive(starts[0], ends[ends.length - 1]);
+  };
+  const closedProjectsStats = (() => {
+      const closedProjects = projects.filter((project) => String(project?.status || '').toLowerCase() === 'done');
+      if (!closedProjects.length) {
+          return {
+              count: 0,
+              avgDays: 0,
+              avgProfitUah: 0,
+              avgProfitUsd: 0,
+              totalIncomeUah: 0,
+              totalExpenseUah: 0,
+              totalProfitUah: 0,
+              totalIncomeUsd: 0,
+              totalExpenseUsd: 0,
+              totalProfitUsd: 0
+          };
+      }
+      let totalDays = 0;
+      let totalIncomeUah = 0;
+      let totalExpenseUah = 0;
+      let totalIncomeUsd = 0;
+      let totalExpenseUsd = 0;
+      closedProjects.forEach((project) => {
+          totalDays += getProjectTotalDays(project);
+          const entries = Array.isArray(project?.financeEntries) ? project.financeEntries : [];
+          entries.forEach((entry) => {
+              const amount = parseMoneyValue(entry?.amount);
+              const usdRate = parseMoneyValue(entry?.usdRate);
+              const isExpense = String(entry?.type || '') === 'expense';
+              const convertedUah = convertCurrencyAmount(amount, entry?.currency, 'UAH', usdRate);
+              const convertedUsd = convertCurrencyAmount(amount, entry?.currency, 'USD', usdRate);
+              if (isExpense) {
+                  totalExpenseUah += convertedUah;
+                  totalExpenseUsd += convertedUsd;
+              } else {
+                  totalIncomeUah += convertedUah;
+                  totalIncomeUsd += convertedUsd;
+              }
+          });
+      });
+      const totalProfitUah = totalIncomeUah - totalExpenseUah;
+      const totalProfitUsd = totalIncomeUsd - totalExpenseUsd;
+      const count = closedProjects.length;
+      return {
+          count,
+          avgDays: count ? Math.round(totalDays / count) : 0,
+          avgProfitUah: count ? (totalProfitUah / count) : 0,
+          avgProfitUsd: count ? (totalProfitUsd / count) : 0,
+          totalIncomeUah,
+          totalExpenseUah,
+          totalProfitUah,
+          totalIncomeUsd,
+          totalExpenseUsd,
+          totalProfitUsd
+      };
+  })();
   const availableProjectUsers = projectUsers.filter((user) => !selectedProjectMembers.some((member) => Number(member.userId) === Number(user.id)));
   const currentUsernameLower = String(currentUser || '').trim().toLowerCase();
+  const isLightTheme = appTheme === 'light';
+  const projectPageBgClass = isLightTheme ? 'bg-slate-100' : 'bg-[#0b101e]';
+  const projectPanelClass = isLightTheme
+      ? 'border-slate-200 bg-white'
+      : 'border-slate-700 bg-slate-900/60';
+  const projectInputClass = isLightTheme
+      ? 'bg-white border-slate-300 text-slate-900 placeholder:text-slate-400'
+      : 'bg-slate-800 border-slate-700 text-slate-200 placeholder:text-slate-500';
+  const projectInputReadOnlyClass = isLightTheme
+      ? 'bg-slate-100 border-slate-300 text-slate-500'
+      : 'bg-slate-800 border-slate-700 text-slate-400';
   const formatStageDateBadge = (value) => {
       const raw = String(value || '').trim();
-      if (!raw) return '';
       const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (!match) return raw;
+      if (!match) return raw || '--.--';
       return `${match[3]}.${match[2]}`;
   };
+  function normalizeDateInputValue(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+      const dmY = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+      if (dmY) return `${dmY[3]}-${dmY[2]}-${dmY[1]}`;
+      return '';
+  }
   const orderStatusMeta = {
       new: { label: 'Нова', className: 'bg-slate-700/60 text-slate-200 border-slate-600' },
       in_progress: { label: 'В роботі', className: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
@@ -8059,372 +8414,628 @@ function App({ currentUser: initialUser }) {
 
       {/* Projects Area */}
       {activeTab === 'projects' && (
-      <div className="flex-1 flex bg-[#0b101e] min-h-0">
-          <div className="w-full max-w-[26rem] border-r border-slate-700/50 bg-slate-900/70 flex flex-col min-h-0">
-              <div className="p-4 border-b border-slate-700/50 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                      <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                          <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h10" />
-                          </svg>
-                          Проєкти СЕС
-                      </h2>
-                      <button
-                          onClick={() => setShowProjectCreateForm((prev) => !prev)}
-                          className="px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:bg-blue-600/35 transition text-sm disabled:opacity-60"
-                          disabled={savingProjectAction}
-                      >
-                          {showProjectCreateForm ? 'Скасувати' : 'Додати'}
-                      </button>
-                  </div>
-                  {showProjectCreateForm && (
-                      <div className="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
-                          <input
-                              type="text"
-                              value={projectDraft.title}
-                              onChange={(e) => setProjectDraft((prev) => ({ ...prev, title: e.target.value }))}
-                              placeholder="Назва / адреса обʼєкта"
-                              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
-                          />
-                          <div className="grid grid-cols-2 gap-2">
-                              <input
-                                  type="text"
-                                  value={projectDraft.number}
-                                  readOnly
-                                  placeholder="№ проєкту (авто)"
-                                  className="w-full bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-400 outline-none"
-                              />
-                              <input
-                                  type="text"
-                                  value={projectDraft.clientName}
-                                  onChange={(e) => setProjectDraft((prev) => ({ ...prev, clientName: e.target.value }))}
-                                  placeholder="Клієнт"
-                                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
-                              />
-                          </div>
-                          <div className="grid grid-cols-1 gap-2">
-                              <input
-                                  type="text"
-                                  value={projectDraft.powerKw}
-                                  onChange={(e) => setProjectDraft((prev) => ({ ...prev, powerKw: e.target.value }))}
-                                  placeholder="Потужність, кВт"
-                                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
-                              />
-                          </div>
-                          <button
-                              onClick={handleCreateProject}
-                              className="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition disabled:opacity-60"
-                              disabled={savingProjectAction || !String(projectDraft.title || '').trim()}
-                          >
-                              {savingProjectAction ? 'Створення...' : 'Створити проєкт'}
-                          </button>
-                      </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-2">
-                      <input
-                          type="text"
-                          value={projectSearchQuery}
-                          onChange={(e) => setProjectSearchQuery(e.target.value)}
-                          placeholder="Пошук"
-                          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
-                      />
-                      <select
-                          value={projectStatusFilter}
-                          onChange={(e) => setProjectStatusFilter(e.target.value)}
-                          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
-                      >
-                          <option value="all">Всі статуси</option>
-                          <option value="planning">Планування</option>
-                          <option value="active">Активні</option>
-                          <option value="done">Завершені</option>
-                          <option value="cancelled">Скасовані</option>
-                      </select>
-                  </div>
+      <div className={`flex-1 flex min-h-0 ${projectPageBgClass}`}>
+        <div className={`border-r flex flex-col min-h-0 transition-all duration-200 ${isProjectsLeftCollapsed ? 'w-40 min-w-[160px]' : 'w-full max-w-[26rem]'} ${isLightTheme ? 'border-slate-200 bg-slate-50' : 'border-slate-700/50 bg-slate-900/70'}`}>
+          <div className={`p-4 border-b space-y-3 ${isLightTheme ? 'border-slate-200' : 'border-slate-700/50'}`}>
+            <div className="flex items-center justify-between">
+              {!isProjectsLeftCollapsed && <h2 className={`text-lg font-bold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Проєкти СЕС</h2>}
+              <div className="flex items-center gap-2">
+                {!isProjectsLeftCollapsed && <button onClick={() => setShowProjectCreateForm((p) => !p)} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm">{showProjectCreateForm ? 'Скасувати' : 'Додати'}</button>}
+                <button onClick={() => setIsProjectsLeftCollapsed((prev) => !prev)} className={`px-2 py-1 rounded border text-xs ${projectInputClass}`}>{isProjectsLeftCollapsed ? '>>' : '<<'}</button>
               </div>
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                  {loadingProjects && (
-                      <div className="text-center text-slate-400 text-sm py-8 animate-pulse">Завантаження проєктів...</div>
-                  )}
-                  {!loadingProjects && projectsError && (
-                      <div className="text-center text-red-300 text-sm py-6 px-3 border border-red-500/30 rounded-xl bg-red-500/10">{projectsError}</div>
-                  )}
-                  {!loadingProjects && !projectsError && filteredProjects.map((project) => {
-                      const stages = Array.isArray(project.stages) ? project.stages : [];
-                      const doneCount = stages.filter((stage) => stage.status === 'done').length;
-                      const progress = stages.length ? Math.round((doneCount / stages.length) * 100) : 0;
-                      const statusMeta = projectStatusMeta[project.status] || projectStatusMeta.planning;
-                      return (
-                          <button
-                              key={project.id}
-                              onClick={() => setSelectedProjectId(project.id)}
-                              className={`w-full text-left rounded-xl border p-3 transition ${selectedProjectId === project.id ? 'border-blue-500/60 bg-blue-500/10' : 'border-slate-700 bg-slate-900/70 hover:border-slate-500'}`}
-                          >
-                              <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                      <div className="text-xs text-slate-500">{project.number || 'Без номера'}</div>
-                                      <div className="text-sm font-semibold text-slate-100 truncate">{project.title || 'Без назви'}</div>
-                                      <div className="text-xs text-slate-400 truncate">{project.clientName || 'Клієнт не вказаний'}</div>
-                                  </div>
-                                  <span className={`text-[10px] px-2 py-1 rounded-full border whitespace-nowrap ${statusMeta.className}`}>{statusMeta.label}</span>
-                              </div>
-                              <div className="mt-2 text-xs text-slate-400">Етапи: {doneCount}/{stages.length} ({progress}%)</div>
-                          </button>
-                      );
-                  })}
-                  {!loadingProjects && !projectsError && !filteredProjects.length && (
-                      <div className="text-center text-slate-500 text-sm py-8">Проєкти не знайдено</div>
-                  )}
+            </div>
+            {!isProjectsLeftCollapsed && (
+            <>
+            {showProjectCreateForm && (
+              <div className={`rounded-xl border p-3 space-y-2 ${projectPanelClass}`}>
+                <input type="text" value={projectDraft.title} onChange={(e) => setProjectDraft((p) => ({ ...p, title: e.target.value }))} placeholder="Назва / адреса обʼєкта" className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                <input type="text" value={projectDraft.clientName} onChange={(e) => setProjectDraft((p) => ({ ...p, clientName: e.target.value }))} placeholder="Клієнт" className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                <input type="text" value={projectDraft.powerKw} onChange={(e) => setProjectDraft((p) => ({ ...p, powerKw: e.target.value }))} placeholder="Потужність, кВт" className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                <button onClick={handleCreateProject} disabled={savingProjectAction || !String(projectDraft.title || '').trim()} className="w-full py-2 rounded-lg bg-blue-600 text-white disabled:opacity-60">{savingProjectAction ? 'Створення...' : 'Створити проєкт'}</button>
               </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
-              {!selectedProject ? (
-                  <div className="h-full min-h-[16rem] border border-dashed border-slate-700 rounded-2xl flex items-center justify-center text-slate-500">
-                      Оберіть проєкт зі списку або створіть новий
-                  </div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <input type="text" value={projectSearchQuery} onChange={(e) => setProjectSearchQuery(e.target.value)} placeholder="Пошук" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+              <select value={projectStatusFilter} onChange={(e) => setProjectStatusFilter(e.target.value)} className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}>
+                <option value="all">Всі статуси</option><option value="planning">Планування</option><option value="active">Активні</option><option value="done">Завершені</option><option value="cancelled">Скасовані</option>
+              </select>
+            </div>
+            <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+              <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Статистика закритих проєктів</div>
+              {closedProjectsStats.count === 0 ? (
+                <div className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Ще немає закритих проєктів зі статусом "done".</div>
               ) : (
-                  <>
-                      <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 md:p-5">
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                  <div className="text-xs text-slate-500">{selectedProject.number || 'Без номера'}</div>
-                                  <h3 className="text-xl font-bold text-slate-100">{selectedProject.title || 'Без назви'}</h3>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                  <select
-                                      value={selectedProject.status || 'planning'}
-                                      onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { status: e.target.value })}
-                                      className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
-                                  >
-                                      <option value="planning">Планування</option>
-                                      <option value="active">Активний</option>
-                                      <option value="done">Завершений</option>
-                                      <option value="cancelled">Скасований</option>
-                                  </select>
-                                  <button
-                                      onClick={() => {
-                                          if (!window.confirm('Видалити цей проєкт?')) return;
-                                          handleDeleteProject(selectedProject.id);
-                                      }}
-                                      className="px-3 py-2 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-500/15 text-sm transition disabled:opacity-60"
-                                      disabled={savingProjectAction}
-                                  >
-                                      Видалити
-                                  </button>
-                              </div>
-                          </div>
-                          <div className="mt-3 text-sm text-slate-400">Прогрес: {selectedProjectDoneStages}/{selectedProjectStages.length} етапів ({selectedProjectProgress}%)</div>
+                <div className="space-y-2 text-xs">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">К-сть закритих</div>
+                      <div className={`font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{closedProjectsStats.count}</div>
+                    </div>
+                    <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Сер. днів</div>
+                      <div className={`font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{closedProjectsStats.avgDays} дн.</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Сер. залишок ₴</div>
+                      <div className={`${closedProjectsStats.avgProfitUah >= 0 ? 'text-emerald-500' : 'text-red-500'} font-semibold`}>
+                        ₴ {Number(closedProjectsStats.avgProfitUah || 0).toLocaleString('uk-UA')}
                       </div>
-
-                      <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 md:p-5">
-                          <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-3">Доступ до проєкту</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
-                              <input
-                                  type="text"
-                                  value={projectMemberSearch}
-                                  onChange={(e) => setProjectMemberSearch(e.target.value)}
-                                  placeholder="Пошук користувача"
-                                  className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
-                              />
-                              <select
-                                  value={projectMemberUserIdToAdd}
-                                  onChange={(e) => setProjectMemberUserIdToAdd(e.target.value)}
-                                  className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
-                              >
-                                  <option value="">{loadingProjectUsers ? 'Завантаження користувачів...' : 'Оберіть користувача'}</option>
-                                  {availableProjectUsers.map((user) => (
-                                      <option key={user.id} value={String(user.id)}>
-                                          {user.username} {user.role === 'admin' ? '(admin)' : ''}
-                                      </option>
-                                  ))}
-                              </select>
-                              <button
-                                  onClick={() => handleAddProjectMember(selectedProject.id, projectMemberUserIdToAdd)}
-                                  disabled={savingProjectAction || !projectMemberUserIdToAdd}
-                                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-medium transition"
-                              >
-                                  Додати доступ
-                              </button>
-                          </div>
-                          <div className="space-y-2">
-                              {selectedProjectMembers.map((member) => {
-                                  const isSelfByName = String(member.username || '').trim().toLowerCase() === currentUsernameLower;
-                                  const canRemove = selectedProjectMembers.length > 1;
-                                  return (
-                                      <div key={`project-member-${member.userId}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2">
-                                          <div className="text-sm">
-                                              <span className="text-slate-100 font-medium">{member.username}</span>
-                                              <span className="text-slate-500 ml-2 text-xs">ID: {member.userId}</span>
-                                              {isSelfByName && <span className="text-blue-300 ml-2 text-xs">(ви)</span>}
-                                          </div>
-                                          <button
-                                              onClick={() => handleRemoveProjectMember(selectedProject.id, member.userId)}
-                                              disabled={savingProjectAction || !canRemove}
-                                              className="px-2.5 py-1.5 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/15 disabled:opacity-60 text-xs transition"
-                                          >
-                                              Прибрати
-                                          </button>
-                                      </div>
-                                  );
-                              })}
-                              {!selectedProjectMembers.length && (
-                                  <div className="text-sm text-slate-500">Поки що тільки ви маєте доступ до цього проєкту.</div>
-                              )}
-                          </div>
+                    </div>
+                    <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Сер. залишок $</div>
+                      <div className={`${closedProjectsStats.avgProfitUsd >= 0 ? 'text-emerald-400' : 'text-red-400'} font-semibold`}>
+                        $ {Number(closedProjectsStats.avgProfitUsd || 0).toLocaleString('uk-UA')}
                       </div>
-
-                      <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 md:p-5">
-                          <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-3">Картка проєкту</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                              <input type="text" value={selectedProject.clientName || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { clientName: e.target.value })} placeholder="Клієнт" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
-                              <input type="text" value={selectedProject.owner || ''} readOnly placeholder="Відповідальний менеджер" className="bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300 outline-none" />
-                              <input type="text" value={selectedProject.powerKw || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { powerKw: e.target.value })} placeholder="Потужність, кВт" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
-                              <input type="date" value={selectedProject.planStart || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { planStart: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
-                              <input type="date" value={selectedProject.planEnd || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { planEnd: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
-                              <input type="date" value={selectedProject.factEnd || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { factEnd: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
-                          </div>
-                          <textarea
-                              value={selectedProject.delayReason || ''}
-                              onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { delayReason: e.target.value })}
-                              rows="2"
-                              placeholder="Причина затримки (якщо є)"
-                              className="mt-3 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500 resize-y"
-                          />
-                      </div>
-
-                      <div className={`rounded-2xl border p-4 md:p-5 ${isLightTheme ? 'border-slate-300 bg-white/90' : 'border-slate-700 bg-slate-900/60'}`}>
-                          <h4 className={`text-sm font-semibold uppercase tracking-wide mb-3 ${isLightTheme ? 'text-slate-700' : 'text-slate-300'}`}>Етапи проєкту</h4>
-                          <div className="space-y-3">
-                              {selectedProjectStages.map((stage) => {
-                                  const stageMeta = stageStatusMeta[stage.status] || stageStatusMeta.pending;
-                                  const stageTasks = Array.isArray(stage.stageTasks) ? stage.stageTasks : [];
-                                  const stageTaskDraftKey = `${selectedProject.id}:${stage.id}`;
-                                  const stageTaskDraft = stageTaskDrafts[stageTaskDraftKey] || '';
-                                  const isExpanded = !!expandedProjectStageIds[stage.id];
-                                  const isDone = stage.status === 'done' || !!stage.factEnd;
-                                  const dateStart = formatStageDateBadge(stage.factStart || stage.planStart);
-                                  const dateEnd = formatStageDateBadge(stage.factEnd || stage.planEnd);
-                                  return (
-                                      <div key={stage.id} className={`rounded-xl border overflow-hidden ${isDone ? (isLightTheme ? 'border-emerald-300 bg-emerald-50/70' : 'border-emerald-600/40 bg-emerald-900/20') : (isLightTheme ? 'border-slate-300 bg-slate-50' : 'border-slate-700 bg-slate-900/70')}`}>
-                                          <button
-                                              type="button"
-                                              onClick={() => setExpandedProjectStageIds((prev) => ({ ...prev, [stage.id]: !prev[stage.id] }))}
-                                              className="w-full px-3 py-3 flex items-center justify-between gap-3 text-left"
-                                          >
-                                              <div className="flex items-center gap-3 min-w-0">
-                                                  <span className={`w-7 h-7 rounded-full border text-sm font-semibold flex items-center justify-center ${isDone ? 'border-emerald-500 text-emerald-700 bg-emerald-100' : (isLightTheme ? 'border-slate-400 text-slate-600 bg-white' : 'border-slate-500 text-slate-300 bg-slate-800')}`}>{stage.orderIndex + 1}</span>
-                                                  <span className={`font-semibold truncate ${isLightTheme ? 'text-slate-800' : 'text-slate-100'}`}>{stage.name}</span>
-                                              </div>
-                                              <div className="flex items-center gap-2 shrink-0">
-                                                  <span className={`text-sm ${isDone ? 'text-emerald-700' : (isLightTheme ? 'text-slate-600' : 'text-slate-300')}`}>{dateStart || '--.--'} - {dateEnd || '--.--'}</span>
-                                                  <span className={`text-xs rounded-lg border px-2 py-1 ${stageMeta.className}`}>{stageMeta.label}</span>
-                                              </div>
-                                          </button>
-                                          {isExpanded && (
-                                            <div className={`px-3 pb-3 border-t ${isLightTheme ? 'border-slate-200' : 'border-slate-700/80'}`}>
-                                              <div className="mt-3">
-                                                <select
-                                                  value={stage.status || 'pending'}
-                                                  onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { status: e.target.value })}
-                                                  className={`text-xs rounded-lg border px-2 py-1 ${stageMeta.className}`}
-                                                >
-                                                  <option value="pending">Очікується</option>
-                                                  <option value="in_progress">В процесі</option>
-                                                  <option value="done">Завершено</option>
-                                                  <option value="skipped">Пропущено</option>
-                                                </select>
-                                              </div>
-                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
-                                                <input type="date" value={stage.planStart || ''} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planStart: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500" />
-                                                <input type="date" value={stage.planEnd || ''} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planEnd: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500" />
-                                                <input type="date" value={stage.factStart || ''} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { factStart: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500" />
-                                                <input type="date" value={stage.factEnd || ''} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { factEnd: e.target.value, status: e.target.value ? 'done' : stage.status })} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500" />
-                                              </div>
-                                              <div className="mt-3 space-y-2">
-                                                {stageTasks.map((task, taskIndex) => {
-                                                    const taskText = typeof task === 'string' ? task : String(task?.text || '');
-                                                    const taskDone = typeof task === 'object' ? !!task?.done : false;
-                                                    return (
-                                                      <div key={`stage-task-${stage.id}-${taskIndex}`} className="flex items-center gap-2">
-                                                        <button
-                                                          type="button"
-                                                          onClick={() => {
-                                                              const nextTasks = stageTasks.map((item, idx) => {
-                                                                  if (idx !== taskIndex) return item;
-                                                                  if (typeof item === 'string') return { text: item, done: true };
-                                                                  return { ...item, done: !item.done };
-                                                              });
-                                                              handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
-                                                          }}
-                                                          className={`w-5 h-5 rounded-full border shrink-0 ${taskDone ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500'}`}
-                                                        />
-                                                        <input
-                                                          type="text"
-                                                          value={taskText}
-                                                          onChange={(e) => {
-                                                              const nextTasks = stageTasks.map((item, idx) => idx === taskIndex ? (typeof item === 'string' ? e.target.value : { ...item, text: e.target.value }) : item);
-                                                              handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
-                                                          }}
-                                                          className={`flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 ${taskDone ? 'text-emerald-300 line-through' : 'text-slate-200'}`}
-                                                        />
-                                                        <button
-                                                          type="button"
-                                                          onClick={() => {
-                                                              const nextTasks = stageTasks.filter((_, idx) => idx !== taskIndex);
-                                                              handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
-                                                          }}
-                                                          className="px-2 py-1 text-xs rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10"
-                                                        >
-                                                          Видалити
-                                                        </button>
-                                                      </div>
-                                                    );
-                                                })}
-                                                <div className="flex items-center gap-2">
-                                                  <input
-                                                    type="text"
-                                                    value={stageTaskDraft}
-                                                    onChange={(e) => setStageTaskDrafts((prev) => ({ ...prev, [stageTaskDraftKey]: e.target.value }))}
-                                                    placeholder="Нова задача етапу"
-                                                    className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
-                                                  />
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const text = String(stageTaskDraft || '').trim();
-                                                        if (!text) return;
-                                                        const nextTasks = [...stageTasks, { text, done: false }];
-                                                        handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
-                                                        setStageTaskDrafts((prev) => ({ ...prev, [stageTaskDraftKey]: '' }));
-                                                    }}
-                                                    className="px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-500"
-                                                  >
-                                                    Додати
-                                                  </button>
-                                                </div>
-                                              </div>
-                                            </div>
-                                          )}
-                                      </div>
-                                  );
-                              })}
-                          </div>
-                      </div>
-
-                      <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 md:p-5">
-                          <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-3">Фінанси</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              <input type="text" value={selectedProject.budgetPlan || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { budgetPlan: e.target.value })} placeholder="Кошторис (план)" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
-                              <input type="text" value={selectedProject.paidAmount || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { paidAmount: e.target.value })} placeholder="Оплачено" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
-                              <input type="text" value={selectedProject.expensesFact || ''} onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { expensesFact: e.target.value })} placeholder="Витрати" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
-                          </div>
-                          <div className={`mt-3 text-sm font-semibold ${selectedProjectProfit >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
-                              Прибуток (факт): {selectedProjectProfit.toLocaleString('uk-UA')} грн
-                          </div>
-                      </div>
-                  </>
+                    </div>
+                  </div>
+                </div>
               )}
+            </div>
+            </>
+            )}
           </div>
+          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {!isProjectsLeftCollapsed && (
+            <>
+            {filteredProjects.map((project) => {
+              const stages = Array.isArray(project.stages) ? project.stages : [];
+              const doneCount = stages.filter((stage) => String(stage.status || '') === 'done' || isStageDoneByTasks(stage)).length;
+              return (
+                <button key={project.id} onClick={() => setSelectedProjectId(project.id)} className={`w-full text-left rounded-xl border p-3 ${selectedProjectId === project.id ? 'border-blue-500 bg-blue-500/10' : (isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/70')}`}>
+                  <div className="text-xs text-slate-500">№ {project.number}</div>
+                  <div className={`text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{project.title}</div>
+                  <div className="text-sm text-slate-500">Етапи: {doneCount}/{stages.length}</div>
+                </button>
+              );
+            })}
+            </>
+            )}
+            {isProjectsLeftCollapsed && (
+              <div className="space-y-2">
+                {filteredProjects.map((project) => {
+                  const shortName = String(project.title || project.number || 'Проєкт').trim();
+                  return (
+                    <button
+                      key={`mini-project-${project.id}`}
+                      onClick={() => setSelectedProjectId(project.id)}
+                      title={`${project.number || ''} ${project.title || ''}`.trim()}
+                      className={`w-full h-10 rounded-lg border text-xs font-semibold transition px-2 text-left ${selectedProjectId === project.id ? 'border-blue-500 bg-blue-500/20 text-blue-200' : (isLightTheme ? 'border-slate-300 bg-white text-slate-700' : 'border-slate-700 bg-slate-900/70 text-slate-300')}`}
+                    >
+                      <span className="block truncate">{shortName}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 md:p-6">
+          {!selectedProject ? <div className="text-slate-500">Оберіть проєкт</div> : (
+            <div className={`grid grid-cols-1 ${isProjectsRightCollapsed ? '' : 'xl:grid-cols-[minmax(0,1fr)_30rem]'} gap-4`}>
+              <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
+                <div className="flex items-center gap-2 mb-3">
+                  <button type="button" onClick={() => setProjectViewTab('stages')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'stages' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Етапи</button>
+                  <button type="button" onClick={() => setProjectViewTab('calendar')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'calendar' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Календар</button>
+                  <button type="button" onClick={() => setProjectViewTab('finance')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'finance' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Фінанси</button>
+                  {projectViewTab === 'calendar' && (
+                    <div className="ml-auto flex items-center gap-1">
+                      <button type="button" onClick={() => setCalendarMonthOffset((prev) => prev - 1)} className={`px-2 py-1 rounded border text-xs ${projectInputClass}`}>Місяць -</button>
+                      <button type="button" onClick={() => setCalendarMonthOffset((prev) => prev + 1)} className={`px-2 py-1 rounded border text-xs ${projectInputClass}`}>Місяць +</button>
+                      <button type="button" onClick={() => setCalendarZoom((prev) => Math.max(0.7, Number((prev - 0.1).toFixed(2))))} className={`px-2 py-1 rounded border text-xs ${projectInputClass}`}>-</button>
+                      <span className={`text-xs w-12 text-center ${isLightTheme ? 'text-slate-700' : 'text-slate-300'}`}>{Math.round(calendarZoom * 100)}%</span>
+                      <button type="button" onClick={() => setCalendarZoom((prev) => Math.min(2, Number((prev + 0.1).toFixed(2))))} className={`px-2 py-1 rounded border text-xs ${projectInputClass}`}>+</button>
+                    </div>
+                  )}
+                </div>
+                {projectViewTab === 'stages' && (
+                <div className="space-y-2">
+                    {selectedProjectStages.map((stage, idx) => {
+                      const isExpanded = !!expandedProjectStageIds[stage.id];
+                      const isDone = String(stage.status || '') === 'done' || isStageDoneByTasks(stage);
+                      const isStarted = !!(toIsoDate(stage.planStart || stage.planDate) || normalizeStageTasks(stage.stageTasks).some((task) => toIsoDate(task.plannedDate) || task.done));
+                      const isActive = !isDone && isStarted;
+                      const draftKey = `${selectedProject.id}:${stage.id}`;
+                      const stageTasks = normalizeStageTasks(Array.isArray(stageTasksLocal[draftKey])
+                        ? stageTasksLocal[draftKey]
+                        : stage.stageTasks);
+                      const dateStart = formatStageDateBadge(stage.planStart || stage.planDate);
+                      const dateEnd = formatStageDateBadge(stage.planEnd);
+                      return (
+                      <div key={stage.id} className={`rounded-xl border ${
+                        isDone
+                          ? (isLightTheme ? 'border-emerald-300 bg-emerald-50/70' : 'border-emerald-600/40 bg-emerald-900/20')
+                          : isActive
+                            ? (isLightTheme ? 'border-cyan-300 bg-cyan-50/70' : 'border-cyan-500/40 bg-cyan-900/20')
+                            : (isLightTheme ? 'border-slate-200 bg-slate-50' : 'border-slate-700 bg-slate-900/40')
+                      }`}>
+                        <button type="button" onClick={() => setExpandedProjectStageIds((prev) => ({ ...prev, [stage.id]: !prev[stage.id] }))} className="w-full p-3 flex items-center justify-between text-left">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className={`w-7 h-7 rounded-full border flex items-center justify-center text-sm font-semibold ${
+                              isDone
+                                ? 'border-emerald-500 text-emerald-700 bg-emerald-100'
+                                : isActive
+                                  ? 'border-cyan-500 text-cyan-700 bg-cyan-100'
+                                  : (isLightTheme ? 'border-slate-400 text-slate-600 bg-white' : 'border-slate-500 text-slate-300 bg-slate-800')
+                            }`}>{idx + 1}</span>
+                            <div className={`font-medium truncate ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{stage.name}</div>
+                          </div>
+                          <span className={`text-sm ${
+                            isDone
+                              ? 'text-emerald-700'
+                              : isActive
+                                ? 'text-cyan-700'
+                                : 'text-slate-500'
+                          }`}>{dateStart} - {dateEnd}</span>
+                        </button>
+                        {isExpanded && (
+                        <div className={`px-3 pb-3 border-t ${isLightTheme ? 'border-slate-200' : 'border-slate-700/80'}`}>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+                            <input type="date" value={normalizeDateInputValue(stage.planStart || stage.planDate)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planStart: e.target.value, planDate: e.target.value })} title="Початок етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                            <input type="date" value={normalizeDateInputValue(stage.planEnd)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planEnd: e.target.value })} title="Кінець етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            {stageTasks.map((task, taskIndex) => {
+                              const taskText = String(task?.text || '');
+                              const taskDone = !!task?.done;
+                              return (
+                                <div key={`task-${stage.id}-${taskIndex}`} className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_12rem_auto] gap-2 items-center w-full">
+                                  <button type="button" onClick={() => {
+                                    const nextTasks = stageTasks.map((item, idx2) => {
+                                      if (idx2 !== taskIndex) return item;
+                                      const nextDone = !item.done;
+                                      return { ...item, done: nextDone, completedAt: nextDone ? todayIso : '' };
+                                    });
+                                    setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                    handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                  }} className={`w-5 h-5 rounded-full border shrink-0 ${taskDone ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500'}`} />
+                                  <input type="text" value={taskText} onChange={(e) => {
+                                    const nextTasks = stageTasks.map((item, idx2) => idx2 !== taskIndex ? item : { ...item, text: e.target.value });
+                                    setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                    handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                  }} className={`flex-1 border rounded-lg px-3 py-1.5 text-sm ${projectInputClass} ${taskDone ? 'line-through text-emerald-500' : ''}`} />
+                                  <input type="date" value={normalizeDateInputValue(task.plannedDate)} onChange={(e) => {
+                                    const nextTasks = stageTasks.map((item, idx2) => idx2 !== taskIndex ? item : { ...item, plannedDate: e.target.value });
+                                    setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                    handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                  }} className={`border rounded-lg px-2 py-1.5 text-xs ${projectInputClass}`} />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const nextTasks = stageTasks.filter((_, idx2) => idx2 !== taskIndex);
+                                      setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                      handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                    }}
+                                    className="px-2 py-1.5 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs"
+                                  >
+                                    Видалити
+                                  </button>
+                                </div>
+                              );
+                            })}
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={stageTaskDrafts[draftKey] || ''}
+                                onChange={(e) => setStageTaskDrafts((prev) => ({ ...prev, [draftKey]: e.target.value }))}
+                                onKeyDown={(e) => {
+                                  if (e.key !== 'Enter') return;
+                                  e.preventDefault();
+                                  const raw = String(stageTaskDrafts[draftKey] || '').trim();
+                                  const text = raw || `Нова задача ${stageTasks.length + 1}`;
+                                  const nextTasks = [...stageTasks, { text, plannedDate: '', completedAt: '', done: false }];
+                                  setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                  handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                  setStageTaskDrafts((prev) => ({ ...prev, [draftKey]: '' }));
+                                }}
+                                placeholder="Нова задача етапу"
+                                className={`flex-1 border rounded-lg px-3 py-1.5 text-sm ${projectInputClass}`}
+                              />
+                              <button type="button" onClick={() => {
+                                const raw = String(stageTaskDrafts[draftKey] || '').trim();
+                                const text = raw || `Нова задача ${stageTasks.length + 1}`;
+                                const nextTasks = [...stageTasks, { text, plannedDate: '', completedAt: '', done: false }];
+                                setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                setStageTaskDrafts((prev) => ({ ...prev, [draftKey]: '' }));
+                              }} className="px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm">Додати</button>
+                            </div>
+                          </div>
+                        </div>
+                        )}
+                      </div>
+                    )})}
+                </div>
+                )}
+                {projectViewTab === 'calendar' && (
+                  <div className="space-y-3">
+                    <div className={`text-sm ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>Період: {calendarMinDate} - {calendarMaxDate} ({calendarTotalDays} дн.)</div>
+                    <div className={`text-base font-semibold ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>
+                      {new Date(calendarStartTs).toLocaleDateString('uk-UA', { month: 'long', year: 'numeric' })} - {new Date(calendarEndTs).toLocaleDateString('uk-UA', { month: 'long', year: 'numeric' })}
+                    </div>
+                    <div className={`rounded-xl border p-3 ${isLightTheme ? 'border-slate-200 bg-slate-50' : 'border-slate-700 bg-slate-900/40'}`}>
+                      <div className="overflow-auto">
+                        <div className="min-w-[1200px]">
+                          <div className="flex items-center mb-1">
+                            <div className={`w-72 shrink-0 text-xs font-semibold ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>Етап / задача</div>
+                            <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${calendarDays.length}, minmax(${Math.round(24 * calendarZoom)}px, 1fr))` }}>
+                              {calendarDays.map((day) => (
+                                <div key={`cal-h-${day.iso}`} className={`h-10 border text-[11px] flex flex-col items-center justify-center leading-tight ${
+                                  day.isSunday
+                                    ? (isLightTheme ? 'border-rose-300 text-rose-700 bg-rose-50' : 'border-rose-500/40 text-rose-300 bg-rose-900/20')
+                                    : (isLightTheme ? 'border-slate-300 text-slate-700 bg-white' : 'border-slate-700 text-slate-200 bg-slate-800/70')
+                                }`}>
+                                  <span className={`text-[10px] opacity-90 uppercase ${day.isSunday ? (isLightTheme ? 'text-rose-700' : 'text-rose-300') : ''}`}>{day.weekdayShort}</span>
+                                  <span>{day.day}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          {selectedProjectStages.map((stage) => {
+                            const tasks = normalizeStageTasks(stage.stageTasks);
+                            return (
+                              <div key={`cal-grid-${stage.id}`} className="mb-1">
+                                <div className="flex items-center">
+                                <div className={`w-72 shrink-0 px-2 py-1 text-sm font-semibold ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>{stage.name}</div>
+                                  <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${calendarDays.length}, minmax(${Math.round(24 * calendarZoom)}px, 1fr))` }}>
+                                    {calendarDays.map((day) => (
+                                      <div key={`cal-stage-${stage.id}-${day.iso}`} className={`h-7 border ${isDateInRange(day.iso, stage.planStart || stage.planDate, stage.planEnd) ? (isLightTheme ? 'bg-blue-200 border-blue-300' : 'bg-blue-500/40 border-blue-500/50') : (day.isSunday ? (isLightTheme ? 'border-rose-200 bg-rose-50/60' : 'border-rose-500/20 bg-rose-900/10') : (isLightTheme ? 'border-slate-300 bg-slate-100/70' : 'border-slate-800 bg-slate-900/50'))}`} />
+                                    ))}
+                                  </div>
+                                </div>
+                                {tasks.map((task, idx) => {
+                                  const taskRowKey = `${stage.id}:${idx}`;
+                                  const isSelectedTaskRow = selectedCalendarTaskKey === taskRowKey;
+                                  return (
+                                  <div key={`cal-task-grid-${stage.id}-${idx}`} className="flex items-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedCalendarTaskKey((prev) => (prev === taskRowKey ? '' : taskRowKey))}
+                                      className={`w-72 shrink-0 px-2 py-1 text-left text-xs truncate rounded transition ${task.done ? 'line-through' : ''} ${isSelectedTaskRow ? (isLightTheme ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-400' : 'bg-blue-500/25 text-blue-100 ring-1 ring-blue-400/80') : (isLightTheme ? 'text-slate-600' : 'text-slate-400')}`}
+                                    >
+                                      {task.text}
+                                    </button>
+                                    <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${calendarDays.length}, minmax(${Math.round(24 * calendarZoom)}px, 1fr))` }}>
+                                      {calendarDays.map((day) => (
+                                        <div key={`cal-task-cell-${stage.id}-${idx}-${day.iso}`} className={`h-6 border transition ${isDateInRange(day.iso, task.plannedDate, task.done ? task.completedAt : task.plannedDate) ? (task.done ? (isLightTheme ? 'bg-emerald-300 border-emerald-400' : 'bg-emerald-500/60 border-emerald-500/70') : (isLightTheme ? 'bg-amber-200 border-amber-300' : 'bg-amber-500/60 border-amber-500/70')) : (day.isSunday ? (isLightTheme ? 'border-rose-200 bg-rose-50/60' : 'border-rose-500/20 bg-rose-900/10') : (isLightTheme ? 'border-slate-300 bg-white' : 'border-slate-800 bg-slate-900/40'))} ${isSelectedTaskRow ? (isLightTheme ? 'bg-blue-100/70 ring-1 ring-blue-500 border-blue-400' : 'bg-blue-500/20 ring-1 ring-cyan-300/90 border-cyan-400/70') : ''}`} />
+                                      ))}
+                                    </div>
+                                  </div>
+                                )})}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {projectViewTab === 'finance' && (
+                  <div className="space-y-3">
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className={`text-sm font-semibold ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Параметри проєкту</div>
+                        
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={selectedProject.projectValue ?? selectedProject.budgetPlan ?? ''}
+                          onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { projectValue: e.target.value, budgetPlan: e.target.value })}
+                          placeholder="Загальна вартість проєкту"
+                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleProjectCurrencyUpdate(selectedProject.id, 'UAH')}
+                            className={`border rounded-lg px-3 py-2 text-sm transition ${selectedProjectCurrency === 'UAH' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}
+                          >
+                            грн
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleProjectCurrencyUpdate(selectedProject.id, 'USD')}
+                            className={`border rounded-lg px-3 py-2 text-sm transition ${selectedProjectCurrency === 'USD' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}
+                          >
+                            USD $
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Нова фінансова операція</div>
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className={`rounded-lg border p-2 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/50'}`}>
+                          <div className={`text-xs mb-2 ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>Додати дохід</div>
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={projectFinanceDraft.amount}
+                              onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, amount: e.target.value }))}
+                              placeholder="Сума"
+                              className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            />
+                            <select
+                              value={projectFinanceDraft.currency}
+                              onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, currency: e.target.value }))}
+                              className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            >
+                              <option value="UAH">грн</option>
+                              <option value="USD">$</option>
+                            </select>
+                            {projectFinanceDraft.currency === 'USD' && (
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.0001"
+                                value={projectFinanceDraft.usdRate || ''}
+                                onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, usdRate: e.target.value }))}
+                                placeholder="Курс USD/UAH"
+                                className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                              />
+                            )}
+                            <input
+                              type="date"
+                              value={projectFinanceDraft.paymentDate || todayIso}
+                              onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, paymentDate: e.target.value }))}
+                              className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleAddProjectFinanceEntry('income')}
+                              disabled={projectFinanceSaving}
+                              className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60"
+                            >
+                              {projectFinanceSaving ? 'Збереження...' : 'Додати дохід'}
+                            </button>
+                          </div>
+                        </div>
+                        <div className={`rounded-lg border p-2 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/50'}`}>
+                          <div className={`text-xs mb-2 ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>Додати витрату</div>
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={projectFinanceDraft.amount}
+                              onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, amount: e.target.value }))}
+                              placeholder="Сума"
+                              className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            />
+                            <select
+                              value={projectFinanceDraft.currency}
+                              onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, currency: e.target.value }))}
+                              className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            >
+                              <option value="UAH">грн</option>
+                              <option value="USD">$</option>
+                            </select>
+                            {projectFinanceDraft.currency === 'USD' && (
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.0001"
+                                value={projectFinanceDraft.usdRate || ''}
+                                onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, usdRate: e.target.value }))}
+                                placeholder="Курс USD/UAH"
+                                className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                              />
+                            )}
+                            <input
+                              type="date"
+                              value={projectFinanceDraft.paymentDate || todayIso}
+                              onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, paymentDate: e.target.value }))}
+                              className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleAddProjectFinanceEntry('expense')}
+                              disabled={projectFinanceSaving}
+                              className="px-3 py-2 rounded-lg bg-red-600 text-white text-sm disabled:opacity-60"
+                            >
+                              {projectFinanceSaving ? 'Збереження...' : 'Додати витрату'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={projectFinanceDraft.note}
+                        onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, note: e.target.value }))}
+                        placeholder="Примітка (опціонально)"
+                        className={`mt-2 w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                      />
+                    </div>
+
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Журнал оплат / витрат</div>
+                      {!selectedProjectFinanceEntries.length && (
+                        <div className={`text-sm ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Поки немає операцій</div>
+                      )}
+                      <div className="space-y-2">
+                        {selectedProjectFinanceEntries.map((entry) => (
+                          <div key={`finance-entry-${entry.id}`} className={`rounded-lg border p-2 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/60'}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs px-2 py-0.5 rounded-full border ${String(entry.type) === 'expense' ? 'border-red-500/40 text-red-400' : 'border-emerald-500/40 text-emerald-400'}`}>
+                                  {String(entry.type) === 'expense' ? 'Витрата' : 'Отримано'}
+                                </span>
+                                <span className={`text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{Number(parseMoneyValue(entry.amount)).toLocaleString('uk-UA')} {entry.currency === 'USD' ? '$' : 'грн'}</span>
+                              </div>
+                              <button type="button" onClick={() => handleDeleteProjectFinanceEntry(entry.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10">Видалити</button>
+                            </div>
+                            <div className={`mt-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-slate-400'}`}>
+                              Дата: {entry.paymentDate || '—'} {entry.note ? `• ${entry.note}` : ''}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {!isProjectsRightCollapsed && <div className="space-y-4">
+                <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
+                  <div className={`text-xl font-semibold mb-3 ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Доступ до проєкту</div>
+                  <div className="grid grid-cols-1 gap-2">
+                    <input
+                      type="text"
+                      value={projectMemberSearch}
+                      onChange={(e) => setProjectMemberSearch(e.target.value)}
+                      placeholder="Пошук користувача"
+                      className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                    />
+                    <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-2">
+                      <select
+                        value={projectMemberUserIdToAdd}
+                        onChange={(e) => setProjectMemberUserIdToAdd(e.target.value)}
+                        className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                      >
+                        <option value="">Оберіть користувача</option>
+                        {availableProjectUsers.map((user) => (
+                          <option key={`project-user-option-${user.id}`} value={user.id}>
+                            {user.username || user.login || user.email || `user-${user.id}`}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!projectMemberUserIdToAdd) return;
+                          handleAddProjectMember(selectedProject.id, projectMemberUserIdToAdd);
+                          setProjectMemberUserIdToAdd('');
+                        }}
+                        disabled={savingProjectAction || !projectMemberUserIdToAdd}
+                        className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60"
+                      >
+                        {savingProjectAction ? 'Додавання...' : 'Додати доступ'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {selectedProjectMembers.length === 0 && (
+                      <div className={`text-sm ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Поки немає доданих користувачів.</div>
+                    )}
+                    {selectedProjectMembers.map((member) => (
+                      <div key={`project-member-${member.userId}`} className={`rounded-lg border p-2 flex items-center justify-between gap-2 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/60'}`}>
+                        <div className="min-w-0">
+                          <div className={`text-sm font-semibold truncate ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
+                            {member.username || member.login || member.email || `ID: ${member.userId}`}
+                          </div>
+                          {member.email && <div className={`text-xs truncate ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>{member.email}</div>}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveProjectMember(selectedProject.id, member.userId)}
+                          className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10"
+                        >
+                          Прибрати
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
+                  <div className={`text-xl font-semibold mb-3 ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Інформація</div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div><div className="text-slate-500">Потужність</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProject.powerKw || '—'} кВт</div></div>
+                    <div><div className="text-slate-500">Відповідальний</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProject.owner || '—'}</div></div>
+                    <div><div className="text-slate-500">Днів по проєкту</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProjectTotalDays || 0}</div></div>
+                    <div><div className="text-slate-500">Прогрес етапів</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProjectDoneStages}/{selectedProjectStages.length}</div></div>
+                  </div>
+                </div>
+                <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
+                  <button type="button" onClick={() => setShowStageStats((prev) => !prev)} className="w-full flex items-center justify-between">
+                    <div className={`text-xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Статистика етапів</div>
+                    <div className={`text-sm ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>{showStageStats ? 'Згорнути' : 'Розгорнути'}</div>
+                  </button>
+                  {showStageStats && (
+                    <div className="space-y-2 text-sm mt-3">
+                      {selectedProjectStages.map((stage) => (
+                        <div key={`stage-stats-${stage.id}`} className="flex items-center justify-between">
+                          <span className={isLightTheme ? 'text-slate-700' : 'text-slate-300'}>{stage.name}</span>
+                          <span className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{getStageDurationDays(stage)} дн.</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
+                  <div className="flex items-center justify-between mb-3 gap-2">
+                    <div className={`text-xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Загальна статистика</div>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setShowFinanceStatsExpanded((prev) => !prev)} className={`text-sm ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>
+                        {showFinanceStatsExpanded ? 'Згорнути' : 'Розгорнути'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Загальна вартість проєкту</div>
+                      <div className={`${isLightTheme ? 'text-slate-900' : 'text-slate-100'} text-2xl font-bold`}>
+                        {Number(selectedProjectValueRaw || 0).toLocaleString('uk-UA')} {selectedProjectCurrency === 'USD' ? '$' : 'грн'}
+                      </div>
+                    </div>
+                    <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Клієнт має доплатити</div>
+                      <div className={`${selectedProjectOutstanding.amount > 0 ? 'text-amber-500' : 'text-emerald-500'} text-xl font-bold`}>
+                        {selectedProjectOutstanding.currency === 'USD' ? '$' : '₴'} {Number(selectedProjectOutstanding.amount || 0).toLocaleString('uk-UA')}
+                      </div>
+                    </div>
+                    <div className={`rounded-xl p-3 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Дохід</div>
+                      <div className="text-cyan-500 text-lg font-bold">₴ {Number(selectedProjectIncomeUah || 0).toLocaleString('uk-UA')}</div>
+                      <div className="text-cyan-400 text-sm">$ {Number(selectedProjectIncomeUsd || 0).toLocaleString('uk-UA')}</div>
+                    </div>
+                    <div className={`rounded-xl p-3 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Витрати</div>
+                      <div className={`${isLightTheme ? 'text-slate-900' : 'text-slate-100'} text-lg font-bold`}>₴ {Number(selectedProjectExpenseUah || 0).toLocaleString('uk-UA')}</div>
+                      <div className={`${isLightTheme ? 'text-slate-700' : 'text-slate-300'} text-sm`}>$ {Number(selectedProjectExpenseUsd || 0).toLocaleString('uk-UA')}</div>
+                    </div>
+                    <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Залишок</div>
+                      <div className={`${selectedProjectProfitUah >= 0 ? 'text-emerald-500' : 'text-red-500'} text-lg font-bold`}>₴ {Number(selectedProjectProfitUah || 0).toLocaleString('uk-UA')}</div>
+                      <div className={`${selectedProjectProfitUsd >= 0 ? 'text-emerald-400' : 'text-red-400'} text-sm`}>$ {Number(selectedProjectProfitUsd || 0).toLocaleString('uk-UA')}</div>
+                    </div>
+                  </div>
+                  {showFinanceStatsExpanded && (
+                    <div className={`mt-2 rounded-xl border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/40'}`}>
+                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Розгорнута статистика</div>
+                      <div className={`text-xs mb-2 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
+                        Конвертація USD/UAH рахується по курсу, який ти вказуєш у кожній $-операції.
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        {['UAH', 'USD'].map((currency) => {
+                          const cur = financeStatsByCurrency[currency] || { income: 0, expense: 0 };
+                          const balance = Number(cur.income || 0) - Number(cur.expense || 0);
+                          return (
+                            <div key={`finance-stats-${currency}`} className="grid grid-cols-4 gap-2">
+                              <div className={isLightTheme ? 'text-slate-700' : 'text-slate-300'}>{currency === 'USD' ? '$' : 'грн'}</div>
+                              <div className="text-cyan-500">+ {Number(cur.income || 0).toLocaleString('uk-UA')}</div>
+                              <div className={isLightTheme ? 'text-slate-900' : 'text-slate-100'}>- {Number(cur.expense || 0).toLocaleString('uk-UA')}</div>
+                              <div className={balance >= 0 ? 'text-emerald-500' : 'text-red-500'}>{balance >= 0 ? '+' : ''}{Number(balance || 0).toLocaleString('uk-UA')}</div>
+                            </div>
+                          );
+                        })}
+                        <div className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>К-сть операцій: {selectedProjectFinanceEntries.length}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>}
+              <div className="fixed right-3 top-28 z-30">
+                <button onClick={() => setIsProjectsRightCollapsed((prev) => !prev)} className={`px-2 py-1 rounded border text-xs ${projectInputClass}`}>{isProjectsRightCollapsed ? '<<' : '>>'}</button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
       )}
 
