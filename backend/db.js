@@ -9,6 +9,39 @@ const dbInitLog = (msg) => {
   if (debugDbInit) console.log(`[db:init] ${msg}`);
 };
 
+const DEFAULT_PROJECT_STAGE_TEMPLATES = [
+  { name: 'Договір', tasks: ['Підготовка договору', 'Узгодження умов', 'Підписання договору'] },
+  { name: 'Авансування', tasks: ['Виставлення рахунку', 'Контроль оплати', 'Підтвердження надходження'] },
+  { name: 'Обстеження', tasks: ['Виїзд на обʼєкт', 'Заміри', 'Фотофіксація'] },
+  { name: 'Проєктування специфікація', tasks: ['Підготовка ТЗ', 'Схема проєкту', 'Специфікація'] },
+  { name: 'Закупки, постачання', tasks: ['Закупка панелей', 'Закупка інверторів', 'Закупка комплектуючих'] },
+  { name: 'Логістика, спецтехніка', tasks: ['План доставки', 'Замовлення спецтехніки', 'Погодження вікна доставки'] },
+  { name: 'Монтаж', tasks: ['Монтаж конструкцій', 'Монтаж основного обладнання', 'Фото-звіт по монтажу'] },
+  { name: 'Підключення, навчання', tasks: ['Пусконалагоджувальні роботи', 'Тест системи', 'Навчання клієнта'] },
+  { name: 'Виконавчі документи, Паспорт', tasks: ['Підготовка техпаспорту', 'Підготовка актів', 'Передача комплекту документів'] },
+  { name: 'Перевиставлення рахунків', tasks: ['Фінальні рахунки', 'Контроль оплат', 'Фінальне закриття'] }
+];
+
+const normalizeProjectStageName = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/ё/g, 'е')
+  .replace(/є/g, 'е')
+  .replace(/[’ʼ`]/g, "'")
+  .replace(/\s+/g, ' ');
+
+const defaultProjectStageTasksByName = new Map(
+  DEFAULT_PROJECT_STAGE_TEMPLATES.map((stage) => [
+    normalizeProjectStageName(stage.name),
+    stage.tasks.map((text) => ({
+      text,
+      plannedDate: '',
+      completedAt: '',
+      done: false
+    }))
+  ])
+);
+
 const isSqliteFullError = (error) => (
   String(error?.code || '').toUpperCase() === 'SQLITE_FULL' ||
   /database or disk is full/i.test(String(error?.message || ''))
@@ -263,6 +296,44 @@ ensureCentralColumn('project_finance_entries', 'payment_date', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'note', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'created_by_user_id', 'INTEGER');
 dbInitLog('ensureCentralColumn migrations done');
+
+const backfillDefaultProjectStageTasks = () => {
+  safeDbWrite(centralDb, 'backfill default project stage tasks', () => {
+    const rows = centralDb.prepare(`
+      SELECT id, name, stage_tasks_json
+      FROM project_stages
+      WHERE stage_tasks_json IS NULL
+         OR TRIM(stage_tasks_json) = ''
+         OR TRIM(stage_tasks_json) = '[]'
+    `).all();
+    if (!rows.length) return;
+
+    const update = centralDb.prepare(`
+      UPDATE project_stages
+      SET stage_tasks_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+
+    for (const row of rows) {
+      let currentTasks = [];
+      try {
+        const parsed = JSON.parse(String(row.stage_tasks_json || '[]'));
+        currentTasks = Array.isArray(parsed) ? parsed : [];
+      } catch (_) {
+        currentTasks = [];
+      }
+      if (currentTasks.length > 0) continue;
+
+      const defaultTasks = defaultProjectStageTasksByName.get(normalizeProjectStageName(row.name));
+      if (!defaultTasks?.length) continue;
+      update.run(JSON.stringify(defaultTasks), row.id);
+    }
+  });
+};
+
+dbInitLog('backfillDefaultProjectStageTasks start');
+backfillDefaultProjectStageTasks();
+dbInitLog('backfillDefaultProjectStageTasks done');
 
 const migrateTenantCreditManagersToCentral = () => {
   safeDbWrite(centralDb, 'migrate tenant credit_managers to central', () => {
