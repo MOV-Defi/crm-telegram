@@ -311,6 +311,10 @@ function App({ currentUser: initialUser }) {
   const [projectFinanceDraft, setProjectFinanceDraft] = useState({ type: 'income', amount: '', currency: 'UAH', usdRate: '', paymentDate: '', note: '' });
   const [projectFinanceSaving, setProjectFinanceSaving] = useState(false);
   const [showFinanceStatsExpanded, setShowFinanceStatsExpanded] = useState(false);
+  const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', dueAt: '', remindAt: '', assignedUserId: '' });
+  const [projectTaskSaving, setProjectTaskSaving] = useState(false);
+  const [projectNoteDraft, setProjectNoteDraft] = useState('');
+  const [projectNoteSaving, setProjectNoteSaving] = useState(false);
   const [stageTaskDrafts, setStageTaskDrafts] = useState({});
   const [stageTasksLocal, setStageTasksLocal] = useState({});
   const [projectDraft, setProjectDraft] = useState({
@@ -443,6 +447,9 @@ function App({ currentUser: initialUser }) {
   const [sendContactSearchQuery, setSendContactSearchQuery] = useState('');
   const [showNotificationCenter, setShowNotificationCenter] = useState(false);
   const [showDirectNotificationCenter, setShowDirectNotificationCenter] = useState(false);
+  const [showProjectNotificationCenter, setShowProjectNotificationCenter] = useState(false);
+  const [projectNotifications, setProjectNotifications] = useState([]);
+  const [projectNotificationsUnreadTotal, setProjectNotificationsUnreadTotal] = useState(0);
   const [mutedNotificationChatIds, setMutedNotificationChatIds] = useState(() => {
       try {
           const raw = localStorage.getItem('tgcrm-muted-notification-chat-ids');
@@ -456,10 +463,13 @@ function App({ currentUser: initialUser }) {
   const directNotificationCenterRef = useRef(null);
   const notificationPanelRef = useRef(null);
   const directNotificationPanelRef = useRef(null);
+  const projectNotificationPanelRef = useRef(null);
   const notificationBellButtonRef = useRef(null);
   const directNotificationBellButtonRef = useRef(null);
+  const projectNotificationBellButtonRef = useRef(null);
   const [notificationPanelPosition, setNotificationPanelPosition] = useState({ top: 72, left: 88 });
   const [directNotificationPanelPosition, setDirectNotificationPanelPosition] = useState({ top: 72, left: 88 });
+  const [projectNotificationPanelPosition, setProjectNotificationPanelPosition] = useState({ top: 72, left: 88 });
 
   const [documentCategories, setDocumentCategories] = useState([]);
   const [documentTemplates, setDocumentTemplates] = useState([]);
@@ -1518,6 +1528,7 @@ function App({ currentUser: initialUser }) {
       if (activeTab === 'projects') {
           loadProjects();
           loadProjectUsers(projectMemberSearch);
+          loadProjectNotifications();
       }
   }, [activeTab]);
 
@@ -2162,6 +2173,32 @@ function App({ currentUser: initialUser }) {
       }
   };
 
+  const loadProjectNotifications = async () => {
+      try {
+          const res = await fetch(buildApiUrlWithToken('/projects/notifications'));
+          const data = await parseApiJson(res, 'Не вдалося завантажити сповіщення проєктів');
+          setProjectNotifications(Array.isArray(data?.notifications) ? data.notifications : []);
+          setProjectNotificationsUnreadTotal(Number(data?.unreadCount || 0));
+      } catch (error) {
+          console.error('load project notifications error:', error);
+      }
+  };
+
+  const markProjectNotificationsRead = async (ids = []) => {
+      try {
+          const res = await fetch(buildApiUrlWithToken('/projects/notifications/read'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ids })
+          });
+          const data = await parseApiJson(res, 'Не вдалося оновити сповіщення проєктів');
+          setProjectNotifications(Array.isArray(data?.notifications) ? data.notifications : []);
+          setProjectNotificationsUnreadTotal(Number(data?.unreadCount || 0));
+      } catch (error) {
+          console.error('mark project notifications read error:', error);
+      }
+  };
+
   const loadProjectUsers = async (query = '') => {
       setLoadingProjectUsers(true);
       try {
@@ -2369,6 +2406,160 @@ function App({ currentUser: initialUser }) {
           alert(error?.message || 'Не вдалося видалити фінансову операцію');
       } finally {
           setProjectFinanceSaving(false);
+      }
+  };
+
+  const handleAddProjectTask = async () => {
+      if (!selectedProject?.id) return;
+      const title = String(projectTaskDraft.title || '').trim();
+      if (!title) {
+          alert('Вкажіть назву задачі');
+          return;
+      }
+      setProjectTaskSaving(true);
+      try {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/tasks`), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  title,
+                  description: projectTaskDraft.description,
+                  status: projectTaskDraft.status || 'new',
+                  dueAt: projectTaskDraft.dueAt,
+                  remindAt: projectTaskDraft.remindAt,
+                  assignedUserId: projectTaskDraft.assignedUserId || null
+              })
+          });
+          const data = await parseApiJson(res, 'Не вдалося додати задачу');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          } else {
+              await loadProjects();
+          }
+          setProjectTaskDraft({ title: '', description: '', status: 'new', dueAt: '', remindAt: '', assignedUserId: '' });
+          await loadProjectNotifications();
+      } catch (error) {
+          alert(error?.message || 'Не вдалося додати задачу');
+      } finally {
+          setProjectTaskSaving(false);
+      }
+  };
+
+  const handleUpdateProjectTask = async (taskId, patch) => {
+      if (!selectedProject?.id || !taskId) return;
+      setProjectTaskSaving(true);
+      try {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/tasks/${taskId}`), {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(patch)
+          });
+          const data = await parseApiJson(res, 'Не вдалося оновити задачу');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          } else {
+              await loadProjects();
+          }
+          await loadProjectNotifications();
+      } catch (error) {
+          alert(error?.message || 'Не вдалося оновити задачу');
+      } finally {
+          setProjectTaskSaving(false);
+      }
+  };
+
+  const handleDeleteProjectTask = async (taskId) => {
+      if (!selectedProject?.id || !taskId) return;
+      if (!window.confirm('Видалити цю задачу?')) return;
+      setProjectTaskSaving(true);
+      try {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/tasks/${taskId}`), { method: 'DELETE' });
+          const data = await parseApiJson(res, 'Не вдалося видалити задачу');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          } else {
+              await loadProjects();
+          }
+      } catch (error) {
+          alert(error?.message || 'Не вдалося видалити задачу');
+      } finally {
+          setProjectTaskSaving(false);
+      }
+  };
+
+  const handleAddProjectNote = async () => {
+      if (!selectedProject?.id) return;
+      const body = String(projectNoteDraft || '').trim();
+      if (!body) {
+          alert('Вкажіть текст нотатки');
+          return;
+      }
+      setProjectNoteSaving(true);
+      try {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/notes`), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ body })
+          });
+          const data = await parseApiJson(res, 'Не вдалося додати нотатку');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          } else {
+              await loadProjects();
+          }
+          setProjectNoteDraft('');
+          await loadProjectNotifications();
+      } catch (error) {
+          alert(error?.message || 'Не вдалося додати нотатку');
+      } finally {
+          setProjectNoteSaving(false);
+      }
+  };
+
+  const handleUpdateProjectNote = async (noteId, body) => {
+      if (!selectedProject?.id || !noteId) return;
+      const nextBody = String(body || '').trim();
+      if (!nextBody) {
+          alert('Текст нотатки не може бути порожнім');
+          return;
+      }
+      setProjectNoteSaving(true);
+      try {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/notes/${noteId}`), {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ body: nextBody })
+          });
+          const data = await parseApiJson(res, 'Не вдалося оновити нотатку');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          } else {
+              await loadProjects();
+          }
+          await loadProjectNotifications();
+      } catch (error) {
+          alert(error?.message || 'Не вдалося оновити нотатку');
+      } finally {
+          setProjectNoteSaving(false);
+      }
+  };
+
+  const handleDeleteProjectNote = async (noteId) => {
+      if (!selectedProject?.id || !noteId) return;
+      if (!window.confirm('Видалити цю нотатку?')) return;
+      setProjectNoteSaving(true);
+      try {
+          const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/notes/${noteId}`), { method: 'DELETE' });
+          const data = await parseApiJson(res, 'Не вдалося видалити нотатку');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          } else {
+              await loadProjects();
+          }
+      } catch (error) {
+          alert(error?.message || 'Не вдалося видалити нотатку');
+      } finally {
+          setProjectNoteSaving(false);
       }
   };
 
@@ -4204,6 +4395,12 @@ function App({ currentUser: initialUser }) {
   }, [mutedNotificationChatIds]);
 
   useEffect(() => {
+      loadProjectNotifications();
+      const timer = setInterval(loadProjectNotifications, 30000);
+      return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
       const handleClickOutside = (event) => {
           if (showNotificationCenter) {
               const clickedInsideBell = notificationCenterRef.current && notificationCenterRef.current.contains(event.target);
@@ -4219,10 +4416,17 @@ function App({ currentUser: initialUser }) {
                   setShowDirectNotificationCenter(false);
               }
           }
+          if (showProjectNotificationCenter) {
+              const clickedInsideBell = projectNotificationBellButtonRef.current && projectNotificationBellButtonRef.current.contains(event.target);
+              const clickedInsidePanel = projectNotificationPanelRef.current && projectNotificationPanelRef.current.contains(event.target);
+              if (!clickedInsideBell && !clickedInsidePanel) {
+                  setShowProjectNotificationCenter(false);
+              }
+          }
       };
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showNotificationCenter, showDirectNotificationCenter]);
+  }, [showNotificationCenter, showDirectNotificationCenter, showProjectNotificationCenter]);
 
   useEffect(() => {
       if (!showNotificationCenter) return;
@@ -4275,6 +4479,32 @@ function App({ currentUser: initialUser }) {
           window.removeEventListener('scroll', updatePosition, true);
       };
   }, [showDirectNotificationCenter]);
+
+  useEffect(() => {
+      if (!showProjectNotificationCenter) return;
+
+      const updatePosition = () => {
+          const bell = projectNotificationBellButtonRef.current;
+          if (!bell) return;
+          const rect = bell.getBoundingClientRect();
+          const viewportWidth = window.innerWidth || 1280;
+          const panelWidth = Math.min(420, Math.floor(viewportWidth * 0.84), 420);
+          const desiredLeft = rect.right + 8;
+          const maxLeft = Math.max(8, viewportWidth - panelWidth - 8);
+          setProjectNotificationPanelPosition({
+              top: Math.max(8, rect.top),
+              left: Math.min(desiredLeft, maxLeft)
+          });
+      };
+
+      updatePosition();
+      window.addEventListener('resize', updatePosition);
+      window.addEventListener('scroll', updatePosition, true);
+      return () => {
+          window.removeEventListener('resize', updatePosition);
+          window.removeEventListener('scroll', updatePosition, true);
+      };
+  }, [showProjectNotificationCenter]);
 
   const isChatMutedForNotifications = (chatId) => mutedNotificationChatIds.includes(String(chatId));
 
@@ -4329,6 +4559,22 @@ function App({ currentUser: initialUser }) {
       setShowDirectNotificationCenter(false);
       handleDialogClick(dialog);
       setActiveTab('messenger');
+  };
+
+  const handleOpenProjectNotification = async (notification) => {
+      if (notification?.projectId) {
+          setActiveTab('projects');
+          setSelectedProjectId(notification.projectId);
+      }
+      if (notification?.id && !notification.isRead) {
+          await markProjectNotificationsRead([notification.id]);
+      }
+      setShowProjectNotificationCenter(false);
+  };
+
+  const handleMarkAllProjectNotificationsRead = async () => {
+      await markProjectNotificationsRead([]);
+      setShowProjectNotificationCenter(false);
   };
 
   const handleMarkAllNotificationsRead = () => {
@@ -4875,6 +5121,8 @@ function App({ currentUser: initialUser }) {
   const selectedProjectStages = Array.isArray(selectedProject?.stages) ? selectedProject.stages : [];
   const selectedProjectMembers = Array.isArray(selectedProject?.members) ? selectedProject.members : [];
   const selectedProjectFinanceEntries = Array.isArray(selectedProject?.financeEntries) ? selectedProject.financeEntries : [];
+  const selectedProjectTasks = Array.isArray(selectedProject?.tasks) ? selectedProject.tasks : [];
+  const selectedProjectNotes = Array.isArray(selectedProject?.notes) ? selectedProject.notes : [];
   const normalizeStageTasks = (tasks) => {
       if (!Array.isArray(tasks)) return [];
       return tasks.map((task) => {
@@ -5197,6 +5445,7 @@ function App({ currentUser: initialUser }) {
                                 ref={notificationBellButtonRef}
                                 onClick={() => {
                                     setShowDirectNotificationCenter(false);
+                                    setShowProjectNotificationCenter(false);
                                     setShowNotificationCenter((prev) => !prev);
                                 }}
                                 className="relative w-8 h-8 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
@@ -5212,9 +5461,29 @@ function App({ currentUser: initialUser }) {
                                 )}
                             </button>
                             <button
+                                ref={projectNotificationBellButtonRef}
+                                onClick={() => {
+                                    setShowNotificationCenter(false);
+                                    setShowDirectNotificationCenter(false);
+                                    setShowProjectNotificationCenter((prev) => !prev);
+                                }}
+                                className="relative w-8 h-8 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
+                                title="Проєктні сповіщення"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v14l-4-2-4 2-4-2-4 2V6a2 2 0 012-2z" />
+                                </svg>
+                                {projectNotificationsUnreadTotal > 0 && (
+                                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-cyan-400 text-slate-950 text-[9px] font-semibold flex items-center justify-center">
+                                        {projectNotificationsUnreadTotal > 99 ? '99+' : projectNotificationsUnreadTotal}
+                                    </span>
+                                )}
+                            </button>
+                            <button
                                 ref={directNotificationBellButtonRef}
                                 onClick={() => {
                                     setShowNotificationCenter(false);
+                                    setShowProjectNotificationCenter(false);
                                     setShowDirectNotificationCenter((prev) => !prev);
                                 }}
                                 className="relative w-8 h-8 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
@@ -5249,6 +5518,7 @@ function App({ currentUser: initialUser }) {
                         ref={notificationBellButtonRef}
                         onClick={() => {
                             setShowDirectNotificationCenter(false);
+                            setShowProjectNotificationCenter(false);
                             setShowNotificationCenter((prev) => !prev);
                         }}
                         className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-slate-800 text-slate-300`}
@@ -5267,9 +5537,32 @@ function App({ currentUser: initialUser }) {
                         <span className={navLabelClass}>Сповіщення</span>
                     </button>
                     <button
+                        ref={projectNotificationBellButtonRef}
+                        onClick={() => {
+                            setShowNotificationCenter(false);
+                            setShowDirectNotificationCenter(false);
+                            setShowProjectNotificationCenter((prev) => !prev);
+                        }}
+                        className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-slate-800 text-slate-300`}
+                        data-tooltip="Проєктні сповіщення"
+                    >
+                        <div className="relative">
+                            <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v14l-4-2-4 2-4-2-4 2V6a2 2 0 012-2z" />
+                            </svg>
+                            {projectNotificationsUnreadTotal > 0 && (
+                                <span className="absolute -top-1.5 -right-2 min-w-[16px] h-[16px] px-1 rounded-full bg-cyan-400 text-slate-950 text-[9px] font-semibold flex items-center justify-center">
+                                    {projectNotificationsUnreadTotal > 99 ? '99+' : projectNotificationsUnreadTotal}
+                                </span>
+                            )}
+                        </div>
+                        <span className={navLabelClass}>Проєкти</span>
+                    </button>
+                    <button
                         ref={directNotificationBellButtonRef}
                         onClick={() => {
                             setShowNotificationCenter(false);
+                            setShowProjectNotificationCenter(false);
                             setShowDirectNotificationCenter((prev) => !prev);
                         }}
                         className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-slate-800 text-slate-300`}
@@ -5486,6 +5779,55 @@ function App({ currentUser: initialUser }) {
                                           </div>
                                       </div>
                                       <div className="text-xs text-slate-300 truncate mt-1">{dialog.lastMessage || 'Нове повідомлення'}</div>
+                                  </div>
+                              </div>
+                          </button>
+                      ))
+                  )}
+              </div>
+          </div>
+      )}
+
+      {showProjectNotificationCenter && (
+          <div
+              ref={projectNotificationPanelRef}
+              className="notification-panel fixed w-[420px] max-w-[84vw] rounded-xl border border-slate-600 shadow-2xl z-[2147483000] overflow-hidden"
+              style={{
+                  top: `${projectNotificationPanelPosition.top}px`,
+                  left: `${projectNotificationPanelPosition.left}px`,
+              }}
+          >
+              <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between" style={{ backgroundColor: '#0f172a' }}>
+                  <div className="text-sm font-semibold text-slate-100">Проєктні сповіщення</div>
+                  <button onClick={handleMarkAllProjectNotificationsRead} className="text-xs text-blue-300 hover:text-blue-200 transition">
+                      Позначити всі як прочитані
+                  </button>
+              </div>
+              <div className="notification-panel-list max-h-[460px] overflow-y-auto" style={{ backgroundColor: '#0b1220' }}>
+                  {projectNotifications.length === 0 ? (
+                      <div className="px-4 py-8 text-sm text-slate-400 text-center">Нових сповіщень по проєктах немає</div>
+                  ) : (
+                      projectNotifications.map((notification) => (
+                          <button
+                              key={`project-notification-${notification.id}`}
+                              onClick={() => handleOpenProjectNotification(notification)}
+                              className={`notification-panel-item w-full min-w-0 text-left px-4 py-3 border-b border-slate-800 hover:bg-slate-800 transition ${notification.isRead ? 'opacity-60' : ''}`}
+                              style={{ backgroundColor: '#0b1220' }}
+                          >
+                              <div className="flex items-start gap-3">
+                                  <div className={`w-9 h-9 rounded-full ${notification.isRead ? 'bg-slate-700' : 'bg-cyan-500/20'} text-cyan-200 font-semibold flex items-center justify-center shrink-0`}>
+                                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v14l-4-2-4 2-4-2-4 2V6a2 2 0 012-2z" />
+                                      </svg>
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                      <div className="flex items-start justify-between gap-2">
+                                          <div className="text-sm text-slate-100 font-medium leading-snug">{notification.title || 'Сповіщення проєкту'}</div>
+                                          {!notification.isRead && <span className="mt-1 w-2 h-2 rounded-full bg-cyan-400 shrink-0" />}
+                                      </div>
+                                      <div className="text-xs text-slate-400 mt-1 truncate">{notification.projectTitle || notification.projectNumber || 'Проєкт'}</div>
+                                      {notification.body && <div className="text-xs text-slate-300 mt-1 line-clamp-2">{notification.body}</div>}
+                                      <div className="text-[10px] text-slate-500 mt-2">{formatDateTime(notification.createdAt)}</div>
                                   </div>
                               </div>
                           </button>
@@ -8519,6 +8861,8 @@ function App({ currentUser: initialUser }) {
                   <button type="button" onClick={() => setProjectViewTab('stages')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'stages' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Етапи</button>
                   <button type="button" onClick={() => setProjectViewTab('calendar')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'calendar' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Календар</button>
                   <button type="button" onClick={() => setProjectViewTab('finance')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'finance' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Фінанси</button>
+                  <button type="button" onClick={() => setProjectViewTab('tasks')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'tasks' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Задачі</button>
+                  <button type="button" onClick={() => setProjectViewTab('notes')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'notes' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Нотатки</button>
                   {projectViewTab === 'calendar' && (
                     <div className="ml-auto flex items-center gap-1">
                       <button type="button" onClick={() => setCalendarMonthOffset((prev) => prev - 1)} className={`px-2 py-1 rounded border text-xs ${projectInputClass}`}>Місяць -</button>
@@ -8873,6 +9217,146 @@ function App({ currentUser: initialUser }) {
                             </div>
                             <div className={`mt-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-slate-400'}`}>
                               Дата: {entry.paymentDate || '—'} {entry.note ? `• ${entry.note}` : ''}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {projectViewTab === 'tasks' && (
+                  <div className="space-y-3">
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Нова задача по проєкту</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={projectTaskDraft.title}
+                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, title: e.target.value }))}
+                          placeholder="Назва задачі"
+                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                        />
+                        <select
+                          value={projectTaskDraft.assignedUserId}
+                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, assignedUserId: e.target.value }))}
+                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                        >
+                          <option value="">Без відповідального</option>
+                          {selectedProjectMembers.map((member) => (
+                            <option key={`task-assignee-${member.userId}`} value={member.userId}>
+                              {member.username || `user-${member.userId}`}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="datetime-local"
+                          value={projectTaskDraft.dueAt}
+                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, dueAt: e.target.value }))}
+                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                          title="Дедлайн"
+                        />
+                        <input
+                          type="datetime-local"
+                          value={projectTaskDraft.remindAt}
+                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, remindAt: e.target.value }))}
+                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                          title="Нагадати"
+                        />
+                      </div>
+                      <textarea
+                        value={projectTaskDraft.description}
+                        onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, description: e.target.value }))}
+                        placeholder="Опис задачі"
+                        rows={3}
+                        className={`mt-2 w-full border rounded-lg px-3 py-2 text-sm resize-y ${projectInputClass}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddProjectTask}
+                        disabled={projectTaskSaving}
+                        className="mt-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60"
+                      >
+                        {projectTaskSaving ? 'Збереження...' : 'Додати задачу'}
+                      </button>
+                    </div>
+
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Задачі проєкту</div>
+                      {!selectedProjectTasks.length && (
+                        <div className={`text-sm ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Поки немає задач</div>
+                      )}
+                      <div className="space-y-2">
+                        {selectedProjectTasks.map((task) => (
+                          <div key={`project-task-${task.id}`} className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/60'}`}>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className={`font-semibold ${task.status === 'done' ? 'line-through text-emerald-500' : (isLightTheme ? 'text-slate-900' : 'text-slate-100')}`}>{task.title}</div>
+                                {task.description && <div className={`mt-1 text-sm whitespace-pre-wrap ${isLightTheme ? 'text-slate-600' : 'text-slate-400'}`}>{task.description}</div>}
+                                <div className={`mt-2 flex flex-wrap gap-2 text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
+                                  <span>Відповідальний: {task.assignedUsername || '—'}</span>
+                                  <span>Дедлайн: {task.dueAt ? new Date(task.dueAt).toLocaleString('uk-UA') : '—'}</span>
+                                  <span>Нагадати: {task.remindAt ? new Date(task.remindAt).toLocaleString('uk-UA') : '—'}</span>
+                                  <span>Автор: {task.createdByUsername || '—'}</span>
+                                </div>
+                              </div>
+                              <div className="flex flex-col gap-2 shrink-0">
+                                <select
+                                  value={task.status || 'new'}
+                                  onChange={(e) => handleUpdateProjectTask(task.id, { status: e.target.value })}
+                                  className={`border rounded-lg px-2 py-1 text-xs ${projectInputClass}`}
+                                >
+                                  <option value="new">Нова</option>
+                                  <option value="in_progress">В роботі</option>
+                                  <option value="done">Виконана</option>
+                                </select>
+                                <button type="button" onClick={() => handleDeleteProjectTask(task.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10">Видалити</button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {projectViewTab === 'notes' && (
+                  <div className="space-y-3">
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Нова нотатка</div>
+                      <textarea
+                        value={projectNoteDraft}
+                        onChange={(e) => setProjectNoteDraft(e.target.value)}
+                        placeholder="Напишіть нотатку по проєкту..."
+                        rows={4}
+                        className={`w-full border rounded-lg px-3 py-2 text-sm resize-y ${projectInputClass}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddProjectNote}
+                        disabled={projectNoteSaving}
+                        className="mt-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60"
+                      >
+                        {projectNoteSaving ? 'Збереження...' : 'Додати нотатку'}
+                      </button>
+                    </div>
+
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Нотатки проєкту</div>
+                      {!selectedProjectNotes.length && (
+                        <div className={`text-sm ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Поки немає нотаток</div>
+                      )}
+                      <div className="space-y-2">
+                        {selectedProjectNotes.map((note) => (
+                          <div key={`project-note-${note.id}`} className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/60'}`}>
+                            <div className={`text-sm whitespace-pre-wrap ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>{note.body}</div>
+                            <div className={`mt-2 flex items-center justify-between gap-2 text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
+                              <span>{note.createdByUsername || '—'} • {note.createdAt ? new Date(note.createdAt).toLocaleString('uk-UA') : '—'}</span>
+                              <div className="flex gap-2">
+                                <button type="button" onClick={() => {
+                                  const nextBody = window.prompt('Редагувати нотатку', note.body || '');
+                                  if (nextBody != null) handleUpdateProjectNote(note.id, nextBody);
+                                }} className="px-2 py-1 rounded border border-slate-500/40 hover:bg-slate-500/10">Редагувати</button>
+                                <button type="button" onClick={() => handleDeleteProjectNote(note.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 hover:bg-red-500/10">Видалити</button>
+                              </div>
                             </div>
                           </div>
                         ))}

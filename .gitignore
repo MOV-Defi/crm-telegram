@@ -1,24 +1,42 @@
+# dependencies
 node_modules/
-.env
-.DS_Store
-*.log
+*/node_modules/
 
-# Runtime data must stay local/server-side.
+# build output
+frontend/dist/
+dist/
+build/
+
+# environment / secrets
+.env
+.env.*
+backend/.env
+backend/.env.*
+!.env.example
+!backend/.env.example
+
+# local databases and persistent data
 data/
 .local-data/
-uploads/
-telegram_sessions/
 *.db
-*.db-shm
-*.db-wal
 *.sqlite
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
 
-# Local process/runtime files.
-*.pid
-.backend.port
+# local runtime files
+*.log
 .local-dev.pid
-*.app/
+.backend.pid
+.backend.port
+backend-start.log
+frontend.log
 
-# Local archives/backups.
-*.zip
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# macOS local launcher apps
+*.app/

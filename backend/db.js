@@ -9,39 +9,6 @@ const dbInitLog = (msg) => {
   if (debugDbInit) console.log(`[db:init] ${msg}`);
 };
 
-const DEFAULT_PROJECT_STAGE_TEMPLATES = [
-  { name: 'Договір', tasks: ['Підготовка договору', 'Узгодження умов', 'Підписання договору'] },
-  { name: 'Авансування', tasks: ['Виставлення рахунку', 'Контроль оплати', 'Підтвердження надходження'] },
-  { name: 'Обстеження', tasks: ['Виїзд на обʼєкт', 'Заміри', 'Фотофіксація'] },
-  { name: 'Проєктування специфікація', tasks: ['Підготовка ТЗ', 'Схема проєкту', 'Специфікація'] },
-  { name: 'Закупки, постачання', tasks: ['Закупка панелей', 'Закупка інверторів', 'Закупка комплектуючих'] },
-  { name: 'Логістика, спецтехніка', tasks: ['План доставки', 'Замовлення спецтехніки', 'Погодження вікна доставки'] },
-  { name: 'Монтаж', tasks: ['Монтаж конструкцій', 'Монтаж основного обладнання', 'Фото-звіт по монтажу'] },
-  { name: 'Підключення, навчання', tasks: ['Пусконалагоджувальні роботи', 'Тест системи', 'Навчання клієнта'] },
-  { name: 'Виконавчі документи, Паспорт', tasks: ['Підготовка техпаспорту', 'Підготовка актів', 'Передача комплекту документів'] },
-  { name: 'Перевиставлення рахунків', tasks: ['Фінальні рахунки', 'Контроль оплат', 'Фінальне закриття'] }
-];
-
-const normalizeProjectStageName = (value) => String(value || '')
-  .trim()
-  .toLowerCase()
-  .replace(/ё/g, 'е')
-  .replace(/є/g, 'е')
-  .replace(/[’ʼ`]/g, "'")
-  .replace(/\s+/g, ' ');
-
-const defaultProjectStageTasksByName = new Map(
-  DEFAULT_PROJECT_STAGE_TEMPLATES.map((stage) => [
-    normalizeProjectStageName(stage.name),
-    stage.tasks.map((text) => ({
-      text,
-      plannedDate: '',
-      completedAt: '',
-      done: false
-    }))
-  ])
-);
-
 const isSqliteFullError = (error) => (
   String(error?.code || '').toUpperCase() === 'SQLITE_FULL' ||
   /database or disk is full/i.test(String(error?.message || ''))
@@ -249,6 +216,53 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS project_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'new',
+    due_at TEXT,
+    remind_at TEXT,
+    assigned_user_id INTEGER,
+    created_by_user_id INTEGER,
+    completed_at TEXT,
+    reminder_sent_at TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (assigned_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+  );
+  CREATE TABLE IF NOT EXISTS project_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    created_by_user_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+  );
+  CREATE TABLE IF NOT EXISTS project_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    actor_user_id INTEGER,
+    event_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    related_task_id INTEGER,
+    related_stage_id INTEGER,
+    is_read INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    read_at TEXT,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (related_task_id) REFERENCES project_tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (related_stage_id) REFERENCES project_stages(id) ON DELETE CASCADE
+  );
 `));
 dbInitLog('central schema init done');
 
@@ -295,45 +309,22 @@ ensureCentralColumn('project_finance_entries', 'usd_rate', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'payment_date', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'note', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'created_by_user_id', 'INTEGER');
+ensureCentralColumn('project_tasks', 'description', 'TEXT');
+ensureCentralColumn('project_tasks', 'status', "TEXT NOT NULL DEFAULT 'new'");
+ensureCentralColumn('project_tasks', 'due_at', 'TEXT');
+ensureCentralColumn('project_tasks', 'remind_at', 'TEXT');
+ensureCentralColumn('project_tasks', 'assigned_user_id', 'INTEGER');
+ensureCentralColumn('project_tasks', 'created_by_user_id', 'INTEGER');
+ensureCentralColumn('project_tasks', 'completed_at', 'TEXT');
+ensureCentralColumn('project_tasks', 'reminder_sent_at', 'TEXT');
+ensureCentralColumn('project_notes', 'created_by_user_id', 'INTEGER');
+ensureCentralColumn('project_notifications', 'actor_user_id', 'INTEGER');
+ensureCentralColumn('project_notifications', 'body', 'TEXT');
+ensureCentralColumn('project_notifications', 'related_task_id', 'INTEGER');
+ensureCentralColumn('project_notifications', 'related_stage_id', 'INTEGER');
+ensureCentralColumn('project_notifications', 'is_read', 'INTEGER NOT NULL DEFAULT 0');
+ensureCentralColumn('project_notifications', 'read_at', 'TEXT');
 dbInitLog('ensureCentralColumn migrations done');
-
-const backfillDefaultProjectStageTasks = () => {
-  safeDbWrite(centralDb, 'backfill default project stage tasks', () => {
-    const rows = centralDb.prepare(`
-      SELECT id, name, stage_tasks_json
-      FROM project_stages
-      WHERE stage_tasks_json IS NULL
-         OR TRIM(stage_tasks_json) = ''
-         OR TRIM(stage_tasks_json) = '[]'
-    `).all();
-    if (!rows.length) return;
-
-    const update = centralDb.prepare(`
-      UPDATE project_stages
-      SET stage_tasks_json = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `);
-
-    for (const row of rows) {
-      let currentTasks = [];
-      try {
-        const parsed = JSON.parse(String(row.stage_tasks_json || '[]'));
-        currentTasks = Array.isArray(parsed) ? parsed : [];
-      } catch (_) {
-        currentTasks = [];
-      }
-      if (currentTasks.length > 0) continue;
-
-      const defaultTasks = defaultProjectStageTasksByName.get(normalizeProjectStageName(row.name));
-      if (!defaultTasks?.length) continue;
-      update.run(JSON.stringify(defaultTasks), row.id);
-    }
-  });
-};
-
-dbInitLog('backfillDefaultProjectStageTasks start');
-backfillDefaultProjectStageTasks();
-dbInitLog('backfillDefaultProjectStageTasks done');
 
 const migrateTenantCreditManagersToCentral = () => {
   safeDbWrite(centralDb, 'migrate tenant credit_managers to central', () => {
@@ -422,6 +413,11 @@ safeDbWrite(centralDb, 'project indexes', () => {
     CREATE INDEX IF NOT EXISTS idx_project_members_project_id ON project_members(project_id);
     CREATE INDEX IF NOT EXISTS idx_project_stages_project_id ON project_stages(project_id);
     CREATE INDEX IF NOT EXISTS idx_project_finance_entries_project_id ON project_finance_entries(project_id);
+    CREATE INDEX IF NOT EXISTS idx_project_tasks_project_id ON project_tasks(project_id);
+    CREATE INDEX IF NOT EXISTS idx_project_tasks_assigned_user_id ON project_tasks(assigned_user_id);
+    CREATE INDEX IF NOT EXISTS idx_project_notes_project_id ON project_notes(project_id);
+    CREATE INDEX IF NOT EXISTS idx_project_notifications_user_id ON project_notifications(user_id, is_read, created_at);
+    CREATE INDEX IF NOT EXISTS idx_project_notifications_project_id ON project_notifications(project_id);
   `);
 });
 dbInitLog('project indexes ensured');

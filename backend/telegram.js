@@ -1,5 +1,23 @@
-const { TelegramClient } = require('telegram');
-const { StringSession } = require('telegram/sessions');
+const loadTelegramDependencies = () => {
+    const Module = require('module');
+    const originalLoad = Module._load;
+    Module._load = function patchedTelegramDependencyLoad(request, parent, isMain) {
+        if (request === 'bufferutil') {
+            return require('bufferutil/fallback');
+        }
+        return originalLoad.apply(this, arguments);
+    };
+    try {
+        return {
+            TelegramClient: require('telegram').TelegramClient,
+            StringSession: require('telegram/sessions').StringSession
+        };
+    } finally {
+        Module._load = originalLoad;
+    }
+};
+
+const { TelegramClient, StringSession } = loadTelegramDependencies();
 const db = require('./db');
 const context = require('./context');
 const runtimePaths = require('./runtime-paths');

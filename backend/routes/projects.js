@@ -51,6 +51,57 @@ const STAGE_FIELD_MAP = {
   stageTasks: 'stage_tasks_json'
 };
 
+const PROJECT_TASK_STATUS_VALUES = new Set(['new', 'in_progress', 'done']);
+
+const normalizeProjectTaskStatus = (value) => {
+  const status = String(value || '').trim();
+  return PROJECT_TASK_STATUS_VALUES.has(status) ? status : 'new';
+};
+
+const getProjectMemberIds = (projectId) => (
+  db.central.prepare('SELECT user_id FROM project_members WHERE project_id = ?').all(projectId)
+    .map((row) => Number(row.user_id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+);
+
+const createProjectNotification = ({ projectId, userId, actorUserId, eventType, title, body = '', taskId = null, stageId = null }) => {
+  if (!Number.isFinite(Number(projectId)) || !Number.isFinite(Number(userId))) return;
+  db.central.prepare(`
+    INSERT INTO project_notifications (
+      project_id, user_id, actor_user_id, event_type, title, body, related_task_id, related_stage_id, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(
+    Number(projectId),
+    Number(userId),
+    Number.isFinite(Number(actorUserId)) ? Number(actorUserId) : null,
+    String(eventType || 'project').trim() || 'project',
+    String(title || '').trim() || 'Сповіщення по проєкту',
+    String(body || '').trim() || null,
+    Number.isFinite(Number(taskId)) ? Number(taskId) : null,
+    Number.isFinite(Number(stageId)) ? Number(stageId) : null
+  );
+};
+
+const notifyProjectMembers = (projectId, actorUserId, payload, options = {}) => {
+  const onlyUserId = Number(options.onlyUserId || 0);
+  const includeActor = options.includeActor === true;
+  const recipients = onlyUserId ? [onlyUserId] : getProjectMemberIds(projectId);
+  for (const userId of recipients) {
+    if (!includeActor && Number(userId) === Number(actorUserId)) continue;
+    createProjectNotification({
+      projectId,
+      userId,
+      actorUserId,
+      eventType: payload.eventType,
+      title: payload.title,
+      body: payload.body,
+      taskId: payload.taskId,
+      stageId: payload.stageId
+    });
+  }
+};
+
 const getProjectFinanceEntries = (projectId) => (
   db.central.prepare(`
     SELECT id, project_id, entry_type, amount, currency, usd_rate, payment_date, note, created_by_user_id, created_at, updated_at
@@ -72,7 +123,90 @@ const getProjectFinanceEntries = (projectId) => (
   }))
 );
 
-const toProjectDto = (row, stages, members, financeEntries) => ({
+const getProjectTasks = (projectId) => (
+  db.central.prepare(`
+    SELECT
+      pt.id, pt.project_id, pt.title, pt.description, pt.status, pt.due_at, pt.remind_at,
+      pt.assigned_user_id, au.username AS assigned_username,
+      pt.created_by_user_id, cu.username AS created_by_username,
+      pt.completed_at, pt.reminder_sent_at, pt.created_at, pt.updated_at
+    FROM project_tasks pt
+    LEFT JOIN users au ON au.id = pt.assigned_user_id
+    LEFT JOIN users cu ON cu.id = pt.created_by_user_id
+    WHERE pt.project_id = ?
+    ORDER BY
+      CASE pt.status WHEN 'new' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'done' THEN 2 ELSE 3 END ASC,
+      COALESCE(pt.due_at, '') ASC,
+      pt.id DESC
+  `).all(projectId).map((row) => ({
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title || '',
+    description: row.description || '',
+    status: normalizeProjectTaskStatus(row.status),
+    dueAt: row.due_at || '',
+    remindAt: row.remind_at || '',
+    assignedUserId: row.assigned_user_id || null,
+    assignedUsername: row.assigned_username || '',
+    createdByUserId: row.created_by_user_id || null,
+    createdByUsername: row.created_by_username || '',
+    completedAt: row.completed_at || '',
+    reminderSentAt: row.reminder_sent_at || '',
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }))
+);
+
+const getProjectNotes = (projectId) => (
+  db.central.prepare(`
+    SELECT pn.id, pn.project_id, pn.body, pn.created_by_user_id, u.username AS created_by_username, pn.created_at, pn.updated_at
+    FROM project_notes pn
+    LEFT JOIN users u ON u.id = pn.created_by_user_id
+    WHERE pn.project_id = ?
+    ORDER BY pn.created_at DESC, pn.id DESC
+  `).all(projectId).map((row) => ({
+    id: row.id,
+    projectId: row.project_id,
+    body: row.body || '',
+    createdByUserId: row.created_by_user_id || null,
+    createdByUsername: row.created_by_username || '',
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }))
+);
+
+const getProjectNotificationRows = (userId, limit = 80) => (
+  db.central.prepare(`
+    SELECT pn.id, pn.project_id, p.number AS project_number, p.title AS project_title,
+           pn.user_id, pn.actor_user_id, au.username AS actor_username,
+           pn.event_type, pn.title, pn.body, pn.related_task_id, pn.related_stage_id,
+           pn.is_read, pn.created_at, pn.read_at
+    FROM project_notifications pn
+    LEFT JOIN projects p ON p.id = pn.project_id
+    LEFT JOIN users au ON au.id = pn.actor_user_id
+    WHERE pn.user_id = ?
+    ORDER BY pn.is_read ASC, pn.created_at DESC, pn.id DESC
+    LIMIT ?
+  `).all(userId, limit).map((row) => ({
+    id: row.id,
+    projectId: row.project_id,
+    projectNumber: row.project_number || '',
+    projectTitle: row.project_title || '',
+    userId: row.user_id,
+    actorUserId: row.actor_user_id || null,
+    actorUsername: row.actor_username || '',
+    eventType: row.event_type || 'project',
+    title: row.title || '',
+    body: row.body || '',
+    relatedTaskId: row.related_task_id || null,
+    relatedStageId: row.related_stage_id || null,
+    isRead: Number(row.is_read || 0) === 1,
+    createdAt: row.created_at || null,
+    readAt: row.read_at || null
+  }))
+);
+
+const toProjectDto = (row, stages, members, financeEntries, tasks, notes) => ({
   id: row.id,
   number: row.number || '',
   title: row.title || '',
@@ -92,6 +226,8 @@ const toProjectDto = (row, stages, members, financeEntries) => ({
   paidAmount: row.paid_amount || '',
   expensesFact: row.expenses_fact || '',
   financeEntries: Array.isArray(financeEntries) ? financeEntries : [],
+  tasks: Array.isArray(tasks) ? tasks : [],
+  notes: Array.isArray(notes) ? notes : [],
   createdByUserId: row.created_by_user_id,
   createdAt: row.created_at || null,
   updatedAt: row.updated_at || null,
@@ -161,7 +297,14 @@ const getProjectMembers = (projectId) => (
 const loadProjectForUser = (projectId, userId) => {
   const row = getAccessibleProjectRow(projectId, userId);
   if (!row) return null;
-  return toProjectDto(row, getProjectStages(projectId), getProjectMembers(projectId), getProjectFinanceEntries(projectId));
+  return toProjectDto(
+    row,
+    getProjectStages(projectId),
+    getProjectMembers(projectId),
+    getProjectFinanceEntries(projectId),
+    getProjectTasks(projectId),
+    getProjectNotes(projectId)
+  );
 };
 
 router.get('/users', (req, res) => {
@@ -194,6 +337,38 @@ router.get('/users', (req, res) => {
   }
 });
 
+router.get('/notifications', (req, res) => {
+  try {
+    const notifications = getProjectNotificationRows(req.userId, 80);
+    const unreadCount = db.central.prepare('SELECT COUNT(*) AS count FROM project_notifications WHERE user_id = ? AND is_read = 0')
+      .get(req.userId)?.count || 0;
+    return res.json({ notifications, unreadCount: Number(unreadCount || 0) });
+  } catch (error) {
+    console.error('projects notifications list error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/notifications/read', (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0) : [];
+    if (ids.length) {
+      const update = db.central.prepare('UPDATE project_notifications SET is_read = 1, read_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?');
+      for (const id of ids) update.run(id, req.userId);
+    } else {
+      db.central.prepare('UPDATE project_notifications SET is_read = 1, read_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_read = 0')
+        .run(req.userId);
+    }
+    const notifications = getProjectNotificationRows(req.userId, 80);
+    const unreadCount = db.central.prepare('SELECT COUNT(*) AS count FROM project_notifications WHERE user_id = ? AND is_read = 0')
+      .get(req.userId)?.count || 0;
+    return res.json({ notifications, unreadCount: Number(unreadCount || 0) });
+  } catch (error) {
+    console.error('projects notifications read error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 router.get('/', (req, res) => {
   try {
     const rows = db.central.prepare(`
@@ -204,7 +379,14 @@ router.get('/', (req, res) => {
       WHERE pm.user_id = ?
       ORDER BY p.updated_at DESC, p.id DESC
     `).all(req.userId);
-    const projects = rows.map((row) => toProjectDto(row, getProjectStages(row.id), getProjectMembers(row.id), getProjectFinanceEntries(row.id)));
+    const projects = rows.map((row) => toProjectDto(
+      row,
+      getProjectStages(row.id),
+      getProjectMembers(row.id),
+      getProjectFinanceEntries(row.id),
+      getProjectTasks(row.id),
+      getProjectNotes(row.id)
+    ));
     return res.json({ projects });
   } catch (error) {
     console.error('projects list error:', error);
@@ -260,10 +442,7 @@ router.post('/', (req, res) => {
       VALUES (?, ?, ?, ?)
     `).run(projectId, req.userId, req.userId, now);
 
-    const incomingStages = Array.isArray(req.body?.stages) ? req.body.stages : [];
-    const stagesToInsert = incomingStages.length > 0
-      ? incomingStages
-      : DEFAULT_PROJECT_STAGE_TEMPLATES.map((stageTemplate, index) => ({
+    const stagesToInsert = DEFAULT_PROJECT_STAGE_TEMPLATES.map((stageTemplate, index) => ({
         name: stageTemplate.name,
         orderIndex: index,
         status: 'pending',
@@ -465,6 +644,16 @@ router.post('/:id/finance', (req, res) => {
       now,
       now
     );
+    const taskId = Number(taskInfo.lastInsertRowid);
+    if (assignedUserId) {
+      notifyProjectMembers(projectId, req.userId, {
+        eventType: 'task_assigned',
+        title: 'Вам призначено задачу',
+        body: `Проєкт: ${current.title || current.number || projectId}
+Задача: ${title}`,
+        taskId
+      }, { onlyUserId: assignedUserId, includeActor: Number(assignedUserId) === Number(req.userId) });
+    }
     db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
     const project = loadProjectForUser(projectId, req.userId);
     return res.status(201).json({ project });
@@ -490,6 +679,232 @@ router.delete('/:projectId/finance/:financeId', (req, res) => {
     return res.json({ project });
   } catch (error) {
     console.error('projects finance delete error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/:id/tasks', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(projectId)) return res.status(400).json({ error: 'Некоректний ID проєкту' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    const title = String(req.body?.title || '').trim();
+    if (!title) return res.status(400).json({ error: 'Назва задачі обовʼязкова' });
+
+    const assignedUserIdRaw = req.body?.assignedUserId == null || req.body.assignedUserId === ''
+      ? null
+      : Number.parseInt(String(req.body.assignedUserId), 10);
+    const assignedUserId = Number.isFinite(assignedUserIdRaw) && assignedUserIdRaw > 0 ? assignedUserIdRaw : null;
+    if (assignedUserId) {
+      const member = db.central.prepare('SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?').get(projectId, assignedUserId);
+      if (!member) return res.status(400).json({ error: 'Відповідальний має бути учасником проєкту' });
+    }
+
+    const status = normalizeProjectTaskStatus(req.body?.status);
+    const now = new Date().toISOString();
+    const completedAt = status === 'done' ? now : null;
+
+    const taskInfo = db.central.prepare(`
+      INSERT INTO project_tasks (
+        project_id, title, description, status, due_at, remind_at,
+        assigned_user_id, created_by_user_id, completed_at, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      projectId,
+      title,
+      String(req.body?.description || '').trim() || null,
+      status,
+      String(req.body?.dueAt || '').trim() || null,
+      String(req.body?.remindAt || '').trim() || null,
+      assignedUserId,
+      req.userId,
+      completedAt,
+      now,
+      now
+    );
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    return res.status(201).json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects task create error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.patch('/:projectId/tasks/:taskId', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.projectId, 10);
+    const taskId = Number.parseInt(req.params.taskId, 10);
+    if (!Number.isFinite(projectId) || !Number.isFinite(taskId)) return res.status(400).json({ error: 'Некоректні параметри' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    const existing = db.central.prepare('SELECT * FROM project_tasks WHERE id = ? AND project_id = ?').get(taskId, projectId);
+    if (!existing) return res.status(404).json({ error: 'Задачу не знайдено' });
+
+    const sets = [];
+    const values = [];
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'title')) {
+      const title = String(req.body?.title || '').trim();
+      if (!title) return res.status(400).json({ error: 'Назва задачі обовʼязкова' });
+      sets.push('title = ?');
+      values.push(title);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'description')) {
+      sets.push('description = ?');
+      values.push(String(req.body?.description || '').trim() || null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
+      const nextStatus = normalizeProjectTaskStatus(req.body?.status);
+      sets.push('status = ?');
+      values.push(nextStatus);
+      sets.push('completed_at = ?');
+      values.push(nextStatus === 'done' ? (existing.completed_at || new Date().toISOString()) : null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'dueAt')) {
+      sets.push('due_at = ?');
+      values.push(String(req.body?.dueAt || '').trim() || null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'remindAt')) {
+      sets.push('remind_at = ?');
+      values.push(String(req.body?.remindAt || '').trim() || null);
+      sets.push('reminder_sent_at = NULL');
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'assignedUserId')) {
+      const assignedUserIdRaw = req.body?.assignedUserId == null || req.body.assignedUserId === ''
+        ? null
+        : Number.parseInt(String(req.body.assignedUserId), 10);
+      const assignedUserId = Number.isFinite(assignedUserIdRaw) && assignedUserIdRaw > 0 ? assignedUserIdRaw : null;
+      if (assignedUserId) {
+        const member = db.central.prepare('SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?').get(projectId, assignedUserId);
+        if (!member) return res.status(400).json({ error: 'Відповідальний має бути учасником проєкту' });
+      }
+      sets.push('assigned_user_id = ?');
+      values.push(assignedUserId);
+    }
+
+    if (!sets.length) return res.json({ project: loadProjectForUser(projectId, req.userId) });
+    sets.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(taskId, projectId);
+    db.central.prepare(`UPDATE project_tasks SET ${sets.join(', ')} WHERE id = ? AND project_id = ?`).run(...values);
+    const nextAssignedUserId = Object.prototype.hasOwnProperty.call(req.body || {}, 'assignedUserId')
+      ? values[sets.findIndex((set) => set === 'assigned_user_id = ?')]
+      : existing.assigned_user_id;
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'assignedUserId') && nextAssignedUserId && Number(nextAssignedUserId) !== Number(existing.assigned_user_id)) {
+      notifyProjectMembers(projectId, req.userId, {
+        eventType: 'task_assigned',
+        title: 'Вам призначено задачу',
+        body: `Проєкт: ${current.title || current.number || projectId}
+Задача: ${existing.title || 'Без назви'}`,
+        taskId
+      }, { onlyUserId: nextAssignedUserId, includeActor: Number(nextAssignedUserId) === Number(req.userId) });
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
+      notifyProjectMembers(projectId, req.userId, {
+        eventType: 'task_status_changed',
+        title: 'Змінено статус задачі',
+        body: `Проєкт: ${current.title || current.number || projectId}
+Задача: ${existing.title || 'Без назви'}
+Статус: ${normalizeProjectTaskStatus(req.body?.status)}`,
+        taskId
+      });
+    }
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    return res.json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects task patch error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.delete('/:projectId/tasks/:taskId', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.projectId, 10);
+    const taskId = Number.parseInt(req.params.taskId, 10);
+    if (!Number.isFinite(projectId) || !Number.isFinite(taskId)) return res.status(400).json({ error: 'Некоректні параметри' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    db.central.prepare('DELETE FROM project_tasks WHERE id = ? AND project_id = ?').run(taskId, projectId);
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    return res.json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects task delete error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/:id/notes', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(projectId)) return res.status(400).json({ error: 'Некоректний ID проєкту' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    const body = String(req.body?.body || '').trim();
+    if (!body) return res.status(400).json({ error: 'Текст нотатки обовʼязковий' });
+    const now = new Date().toISOString();
+
+    db.central.prepare(`
+      INSERT INTO project_notes (project_id, body, created_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(projectId, body, req.userId, now, now);
+    notifyProjectMembers(projectId, req.userId, {
+      eventType: 'note_created',
+      title: 'Нова нотатка по проєкту',
+      body: `Проєкт: ${current.title || current.number || projectId}
+${body.slice(0, 180)}`,
+    });
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    return res.status(201).json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects note create error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.patch('/:projectId/notes/:noteId', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.projectId, 10);
+    const noteId = Number.parseInt(req.params.noteId, 10);
+    if (!Number.isFinite(projectId) || !Number.isFinite(noteId)) return res.status(400).json({ error: 'Некоректні параметри' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    const body = String(req.body?.body || '').trim();
+    if (!body) return res.status(400).json({ error: 'Текст нотатки обовʼязковий' });
+
+    db.central.prepare('UPDATE project_notes SET body = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND project_id = ?')
+      .run(body, noteId, projectId);
+    notifyProjectMembers(projectId, req.userId, {
+      eventType: 'note_updated',
+      title: 'Оновлено нотатку по проєкту',
+      body: `Проєкт: ${current.title || current.number || projectId}`,
+    });
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    return res.json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects note patch error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.delete('/:projectId/notes/:noteId', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.projectId, 10);
+    const noteId = Number.parseInt(req.params.noteId, 10);
+    if (!Number.isFinite(projectId) || !Number.isFinite(noteId)) return res.status(400).json({ error: 'Некоректні параметри' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    db.central.prepare('DELETE FROM project_notes WHERE id = ? AND project_id = ?').run(noteId, projectId);
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    return res.json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects note delete error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

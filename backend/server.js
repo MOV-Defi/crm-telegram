@@ -367,8 +367,8 @@ app.post('/api/auth/start', async (req, res) => {
       const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
       const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
 
-      const API_ID = String(idRow?.value || '').trim();
-      const API_HASH = String(hashRow?.value || '').trim();
+      const API_ID = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
+      const API_HASH = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
 
       if (!API_ID || !API_HASH) {
         return res.status(500).json({ success: false, error: 'Налаштування API відсутні. Будь ласка, вкажіть API ID та API HASH в налаштуваннях.' });
@@ -553,6 +553,43 @@ setInterval(async () => {
           db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('task_reminder_settings_v2', ?)").run(JSON.stringify(reminder));
         }
       });
+    }
+
+    const dueProjectTasks = db.central.prepare(`
+      SELECT pt.id, pt.project_id, pt.title, pt.remind_at, pt.assigned_user_id,
+             p.number AS project_number, p.title AS project_title
+      FROM project_tasks pt
+      INNER JOIN projects p ON p.id = pt.project_id
+      WHERE pt.remind_at IS NOT NULL
+        AND TRIM(pt.remind_at) != ''
+        AND pt.reminder_sent_at IS NULL
+        AND pt.assigned_user_id IS NOT NULL
+        AND pt.status != 'done'
+    `).all();
+    const nowTs = Date.now();
+    for (const task of dueProjectTasks) {
+      const remindTs = new Date(task.remind_at).getTime();
+      if (!Number.isFinite(remindTs) || remindTs > nowTs) continue;
+      const text = [
+        'Нагадування по проєкту',
+        `Проєкт: ${task.project_title || task.project_number || task.project_id}`,
+        `Задача: ${task.title || 'Без назви'}`
+      ].join('\n');
+      const ok = await sendBotMessageForUser(task.assigned_user_id, text);
+      if (ok) {
+        db.central.prepare('UPDATE project_tasks SET reminder_sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(new Date().toISOString(), task.id);
+        db.central.prepare(`
+          INSERT INTO project_notifications (project_id, user_id, actor_user_id, event_type, title, body, related_task_id, created_at)
+          VALUES (?, ?, NULL, 'task_reminder', ?, ?, ?, CURRENT_TIMESTAMP)
+        `).run(
+          task.project_id,
+          task.assigned_user_id,
+          'Нагадування по задачі',
+          `Проєкт: ${task.project_title || task.project_number || task.project_id}\nЗадача: ${task.title || 'Без назви'}`,
+          task.id
+        );
+      }
     }
   } catch (e) {
     console.error('Task scheduler error:', e.message);

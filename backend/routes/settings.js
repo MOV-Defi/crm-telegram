@@ -48,8 +48,8 @@ router.get('/telegram', (req, res) => {
     try {
         const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
         const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
-        const apiId = String(idRow?.value || '').trim();
-        const apiHash = String(hashRow?.value || '').trim();
+        const apiId = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
+        const apiHash = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
         res.json({ 
             configured: !!(apiId && apiHash),
             apiId,
@@ -84,11 +84,15 @@ router.post('/telegram', async (req, res) => {
         db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('api_id', finalApiId);
         db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('api_hash', finalApiHash);
 
+        // Update locals
+        req.app.locals.API_ID = finalApiId;
+        req.app.locals.API_HASH = finalApiHash;
+
         // Re-init client in the current user's tenant context
         await new Promise((resolve, reject) => {
             context.runWithContext({ userId: req.userId }, async () => {
                 try {
-                    await initTelegramClient(finalApiId, finalApiHash);
+                    await initTelegramClient(req.app.locals.API_ID, req.app.locals.API_HASH);
                     resolve();
                 } catch (error) {
                     reject(error);

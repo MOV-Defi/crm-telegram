@@ -10,6 +10,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const crypto = require('crypto');
 const AdmZip = require('adm-zip');
+const sharp = require('sharp');
 const { parseWarehouseItemsFromFile } = require('../warehouse-file-items');
 
 const router = express.Router();
@@ -53,6 +54,35 @@ const upload = multer({ dest: runtimePaths.mediaDir });
 const MAX_FILE_BASENAME = 80;
 const EMERGENCY_PRUNE_TARGET_BYTES = 350 * 1024 * 1024;
 const EMERGENCY_PRUNE_MAX_FILES = 800;
+const IMAGE_UPLOAD_MAX_WIDTH = Math.max(800, Number.parseInt(String(process.env.IMAGE_UPLOAD_MAX_WIDTH || '1600'), 10) || 1600);
+const IMAGE_UPLOAD_JPEG_QUALITY = Math.min(95, Math.max(45, Number.parseInt(String(process.env.IMAGE_UPLOAD_JPEG_QUALITY || '75'), 10) || 75));
+
+const isCompressibleImageUpload = (file) => {
+  const mime = String(file?.mimetype || '').toLowerCase();
+  const name = String(file?.originalname || '').toLowerCase();
+  return (
+    mime === 'image/jpeg' ||
+    mime === 'image/png' ||
+    mime === 'image/webp' ||
+    /\.(jpe?g|png|webp)$/i.test(name)
+  );
+};
+
+const optimizeUploadedImage = async (sourcePath, targetPath) => {
+  await sharp(sourcePath, { failOn: 'none' })
+    .rotate()
+    .resize({
+      width: IMAGE_UPLOAD_MAX_WIDTH,
+      height: IMAGE_UPLOAD_MAX_WIDTH,
+      fit: 'inside',
+      withoutEnlargement: true
+    })
+    .jpeg({
+      quality: IMAGE_UPLOAD_JPEG_QUALITY,
+      mozjpeg: true
+    })
+    .toFile(targetPath);
+};
 
 const isDiskFullError = (error) => (
   String(error?.code || '').toUpperCase() === 'SQLITE_FULL' ||
@@ -1432,7 +1462,11 @@ router.post('/send', upload.single('file'), (req, res, next) => {
     if (req.file) {
       uploadedOriginalName = decodeMultipartFileName(req.file.originalname || '');
       const ext = path.extname(uploadedOriginalName) || '';
-      const nameParts = splitNameAndExt(uploadedOriginalName, ext || '.bin');
+      const shouldOptimizeImage = isCompressibleImageUpload(req.file);
+      const nameParts = splitNameAndExt(uploadedOriginalName, shouldOptimizeImage ? '.jpg' : (ext || '.bin'));
+      if (shouldOptimizeImage) {
+        nameParts.ext = '.jpg';
+      }
       let storedName = `${nameParts.base}${nameParts.ext}`;
       const candidatePath = path.join(runtimePaths.mediaDir, storedName);
       if (fs.existsSync(candidatePath)) {
@@ -1440,7 +1474,20 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       }
       uploadedFilePath = path.join(runtimePaths.mediaDir, storedName);
       uploadedMediaPublicPath = `/uploads/media/${storedName}`;
-      fs.renameSync(req.file.path, uploadedFilePath);
+      if (shouldOptimizeImage) {
+        try {
+          const beforeBytes = fs.statSync(req.file.path).size;
+          await optimizeUploadedImage(req.file.path, uploadedFilePath);
+          const afterBytes = fs.statSync(uploadedFilePath).size;
+          try { fs.unlinkSync(req.file.path); } catch (_) {}
+          console.log(`[requests] optimized image upload ${uploadedOriginalName}: ${(beforeBytes / 1024 / 1024).toFixed(2)} MB -> ${(afterBytes / 1024 / 1024).toFixed(2)} MB`);
+        } catch (error) {
+          console.warn('[requests] image optimization failed, keeping original:', error.message);
+          fs.renameSync(req.file.path, uploadedFilePath);
+        }
+      } else {
+        fs.renameSync(req.file.path, uploadedFilePath);
+      }
     }
 
     const message = cleanupRenderedMessage(renderTemplate(templateWithFields, values)).trim();
