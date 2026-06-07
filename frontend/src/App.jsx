@@ -5416,27 +5416,27 @@ function App({ currentUser: initialUser }) {
                 <div className={`${(isNavCollapsed || isCompactLayout) ? 'hidden' : 'hidden md:block'} text-sm font-semibold text-slate-400 uppercase tracking-wider`}>Навігація</div>
                 <div className="relative" ref={(node) => { notificationCenterRef.current = node; directNotificationCenterRef.current = node; }}>
                     {!compactNavControls && (
-                        <div className="hidden md:grid grid-cols-2 gap-2">
+                        <div className="hidden md:grid grid-cols-3 gap-1">
                             <button
                                 onClick={() => setIsNavCollapsed((prev) => !prev)}
-                                className="w-8 h-8 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
+                                className="w-7 h-7 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
                                 title={isNavCollapsed ? 'Розгорнути меню' : 'Згорнути меню'}
                             >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isNavCollapsed ? 'M13 5l7 7-7 7M5 5v14' : 'M11 19l-7-7 7-7M19 5v14'} />
                                 </svg>
                             </button>
                             <button
                                 onClick={() => setAppTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-                                className="w-8 h-8 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
+                                className="w-7 h-7 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
                                 title={appTheme === 'dark' ? 'Світла тема' : 'Темна тема'}
                             >
                                 {appTheme === 'dark' ? (
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v2.2m0 13.6V21m9-9h-2.2M5.2 12H3m14.6 6.6l-1.6-1.6M8 8l-1.6-1.6m11.2 0L16 8M8 16l-1.6 1.6M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                     </svg>
                                 ) : (
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M20.354 15.354A9 9 0 018.646 3.646 9 9 0 1012 21a8.96 8.96 0 008.354-5.646z" />
                                     </svg>
                                 )}
@@ -5448,10 +5448,10 @@ function App({ currentUser: initialUser }) {
                                     setShowProjectNotificationCenter(false);
                                     setShowNotificationCenter((prev) => !prev);
                                 }}
-                                className="relative w-8 h-8 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
+                                className="relative w-7 h-7 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
                                 title="Сповіщення"
                             >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 17h5l-1.4-1.4A2 2 0 0118 14.17V11a6 6 0 10-12 0v3.17a2 2 0 01-.6 1.43L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                                 </svg>
                                 {notificationUnreadTotal > 0 && (
@@ -5467,10 +5467,10 @@ function App({ currentUser: initialUser }) {
                                     setShowDirectNotificationCenter(false);
                                     setShowProjectNotificationCenter((prev) => !prev);
                                 }}
-                                className="relative w-8 h-8 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
+                                className="relative w-7 h-7 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
                                 title="Проєктні сповіщення"
                             >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v14l-4-2-4 2-4-2-4 2V6a2 2 0 012-2z" />
                                 </svg>
                                 {projectNotificationsUnreadTotal > 0 && (
@@ -5486,10 +5486,10 @@ function App({ currentUser: initialUser }) {
                                     setShowProjectNotificationCenter(false);
                                     setShowDirectNotificationCenter((prev) => !prev);
                                 }}
-                                className="relative w-8 h-8 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
+                                className="relative w-7 h-7 inline-flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition border border-slate-700"
                                 title="Відповіді та згадки"
                             >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 8h10M7 12h7m-7 4h5m8-10a2 2 0 00-2-2H6a2 2 0 00-2 2v12l4-3h10a2 2 0 002-2V6z" />
                                 </svg>
                                 {directNotificationUnreadTotal > 0 && (
