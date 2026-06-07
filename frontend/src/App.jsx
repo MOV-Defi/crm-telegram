@@ -9258,72 +9258,94 @@ function App({ currentUser: initialUser }) {
                   <div className="space-y-3">
                     <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
                       <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Нова задача по проєкту</div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <input
-                          type="text"
-                          value={projectTaskDraft.title}
-                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, title: e.target.value }))}
-                          placeholder="Назва задачі"
-                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                        />
-                        <select
-                          value={projectTaskDraft.assignedUserId}
-                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, assignedUserId: e.target.value }))}
-                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                        >
-                          <option value="">Без відповідального</option>
-                          {selectedProjectMembers.map((member) => (
-                            <option key={`task-assignee-${member.userId}`} value={member.userId}>
-                              {member.username || `user-${member.userId}`}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          value={projectTaskDraft.status}
-                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, status: e.target.value }))}
-                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                          title="Статус задачі"
-                        >
-                          <option value="new">В плані</option>
-                          <option value="in_progress">В роботі</option>
-                          <option value="done">Виконана</option>
-                        </select>
-                        <input
-                          type="datetime-local"
-                          value={projectTaskDraft.startAt}
-                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, startAt: e.target.value }))}
-                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                          title="Початок задачі"
-                        />
-                        <input
-                          type="datetime-local"
-                          value={projectTaskDraft.dueAt}
-                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, dueAt: e.target.value }))}
-                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                          title="Кінець / дедлайн"
-                        />
-                        <div className="flex flex-col gap-2">
-                          <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${projectInputClass}`}>
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-3">
+                          <label className="flex flex-col gap-1">
+                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Назва задачі</span>
                             <input
-                              type="checkbox"
-                              checked={!!projectTaskDraft.telegramReminder}
-                              onChange={(e) => setProjectTaskDraft((prev) => ({
-                                ...prev,
-                                telegramReminder: e.target.checked,
-                                remindAt: e.target.checked ? prev.remindAt : ''
-                              }))}
-                              className="accent-blue-600"
+                              type="text"
+                              value={projectTaskDraft.title}
+                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, title: e.target.value }))}
+                              placeholder="Наприклад: Узгодити дату монтажу"
+                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
                             />
-                            <span>Нагадати в Telegram ботом</span>
                           </label>
-                          <input
-                            type="datetime-local"
-                            value={projectTaskDraft.remindAt}
-                            onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, remindAt: e.target.value, telegramReminder: true }))}
-                            disabled={!projectTaskDraft.telegramReminder}
-                            className={`border rounded-lg px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed ${projectInputClass}`}
-                            title="Дата і час Telegram-нагадування"
-                          />
+                          <label className="flex flex-col gap-1">
+                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Відповідальний</span>
+                            <select
+                              value={projectTaskDraft.assignedUserId}
+                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, assignedUserId: e.target.value }))}
+                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            >
+                              <option value="">Без відповідального</option>
+                              {selectedProjectMembers.map((member) => (
+                                <option key={`task-assignee-${member.userId}`} value={member.userId}>
+                                  {member.username || `user-${member.userId}`}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <label className="flex flex-col gap-1">
+                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Статус</span>
+                            <select
+                              value={projectTaskDraft.status}
+                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, status: e.target.value }))}
+                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            >
+                              <option value="new">В плані</option>
+                              <option value="in_progress">В роботі</option>
+                              <option value="done">Виконана</option>
+                            </select>
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Початок задачі</span>
+                            <input
+                              type="datetime-local"
+                              value={projectTaskDraft.startAt}
+                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, startAt: e.target.value }))}
+                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Кінець / дедлайн</span>
+                            <input
+                              type="datetime-local"
+                              value={projectTaskDraft.dueAt}
+                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, dueAt: e.target.value }))}
+                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            />
+                          </label>
+                        </div>
+
+                        <div className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-slate-50' : 'border-slate-700 bg-slate-800/40'}`}>
+                          <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-3 items-end">
+                            <label className={`flex items-center gap-2 text-sm ${isLightTheme ? 'text-slate-700' : 'text-slate-200'}`}>
+                              <input
+                                type="checkbox"
+                                checked={!!projectTaskDraft.telegramReminder}
+                                onChange={(e) => setProjectTaskDraft((prev) => ({
+                                  ...prev,
+                                  telegramReminder: e.target.checked,
+                                  remindAt: e.target.checked ? prev.remindAt : ''
+                                }))}
+                                className="accent-blue-600"
+                              />
+                              <span>Нагадати в Telegram</span>
+                            </label>
+                            <label className="flex flex-col gap-1">
+                              <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Коли нагадати</span>
+                              <input
+                                type="datetime-local"
+                                value={projectTaskDraft.remindAt}
+                                onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, remindAt: e.target.value, telegramReminder: true }))}
+                                disabled={!projectTaskDraft.telegramReminder}
+                                className={`w-full border rounded-lg px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed ${projectInputClass}`}
+                              />
+                            </label>
+                          </div>
                         </div>
                       </div>
                       <textarea
