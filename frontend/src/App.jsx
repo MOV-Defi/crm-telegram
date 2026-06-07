@@ -311,7 +311,7 @@ function App({ currentUser: initialUser }) {
   const [projectFinanceDraft, setProjectFinanceDraft] = useState({ type: 'income', amount: '', currency: 'UAH', usdRate: '', paymentDate: '', note: '' });
   const [projectFinanceSaving, setProjectFinanceSaving] = useState(false);
   const [showFinanceStatsExpanded, setShowFinanceStatsExpanded] = useState(false);
-  const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', dueAt: '', remindAt: '', assignedUserId: '' });
+  const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', dueAt: '', assignedUserId: '', telegramReminder: false });
   const [projectTaskSaving, setProjectTaskSaving] = useState(false);
   const [projectNoteDraft, setProjectNoteDraft] = useState('');
   const [projectNoteSaving, setProjectNoteSaving] = useState(false);
@@ -2416,6 +2416,14 @@ function App({ currentUser: initialUser }) {
           alert('Вкажіть назву задачі');
           return;
       }
+      if (projectTaskDraft.telegramReminder && !projectTaskDraft.assignedUserId) {
+          alert('Щоб бот надіслав нагадування, виберіть відповідального за задачу');
+          return;
+      }
+      if (projectTaskDraft.telegramReminder && !projectTaskDraft.remindAt) {
+          alert('Вкажіть дату і час Telegram-нагадування');
+          return;
+      }
       setProjectTaskSaving(true);
       try {
           const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/tasks`), {
@@ -2426,7 +2434,7 @@ function App({ currentUser: initialUser }) {
                   description: projectTaskDraft.description,
                   status: projectTaskDraft.status || 'new',
                   dueAt: projectTaskDraft.dueAt,
-                  remindAt: projectTaskDraft.remindAt,
+                  remindAt: projectTaskDraft.telegramReminder ? projectTaskDraft.remindAt : '',
                   assignedUserId: projectTaskDraft.assignedUserId || null
               })
           });
@@ -2436,7 +2444,7 @@ function App({ currentUser: initialUser }) {
           } else {
               await loadProjects();
           }
-          setProjectTaskDraft({ title: '', description: '', status: 'new', dueAt: '', remindAt: '', assignedUserId: '' });
+          setProjectTaskDraft({ title: '', description: '', status: 'new', dueAt: '', assignedUserId: '', telegramReminder: false });
           await loadProjectNotifications();
       } catch (error) {
           alert(error?.message || 'Не вдалося додати задачу');
@@ -9255,13 +9263,29 @@ function App({ currentUser: initialUser }) {
                           className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
                           title="Дедлайн"
                         />
-                        <input
-                          type="datetime-local"
-                          value={projectTaskDraft.remindAt}
-                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, remindAt: e.target.value }))}
-                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                          title="Нагадати"
-                        />
+                        <div className="flex flex-col gap-2">
+                          <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${projectInputClass}`}>
+                            <input
+                              type="checkbox"
+                              checked={!!projectTaskDraft.telegramReminder}
+                              onChange={(e) => setProjectTaskDraft((prev) => ({
+                                ...prev,
+                                telegramReminder: e.target.checked,
+                                remindAt: e.target.checked ? prev.remindAt : ''
+                              }))}
+                              className="accent-blue-600"
+                            />
+                            <span>Нагадати в Telegram ботом</span>
+                          </label>
+                          <input
+                            type="datetime-local"
+                            value={projectTaskDraft.remindAt}
+                            onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, remindAt: e.target.value, telegramReminder: true }))}
+                            disabled={!projectTaskDraft.telegramReminder}
+                            className={`border rounded-lg px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed ${projectInputClass}`}
+                            title="Дата і час Telegram-нагадування"
+                          />
+                        </div>
                       </div>
                       <textarea
                         value={projectTaskDraft.description}
@@ -9270,6 +9294,9 @@ function App({ currentUser: initialUser }) {
                         rows={3}
                         className={`mt-2 w-full border rounded-lg px-3 py-2 text-sm resize-y ${projectInputClass}`}
                       />
+                      <div className={`mt-2 text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
+                        Telegram-нагадування піде відповідальному користувачу, якщо в нього підключений бот у налаштуваннях.
+                      </div>
                       <button
                         type="button"
                         onClick={handleAddProjectTask}
@@ -9295,7 +9322,7 @@ function App({ currentUser: initialUser }) {
                                 <div className={`mt-2 flex flex-wrap gap-2 text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
                                   <span>Відповідальний: {task.assignedUsername || '—'}</span>
                                   <span>Дедлайн: {task.dueAt ? new Date(task.dueAt).toLocaleString('uk-UA') : '—'}</span>
-                                  <span>Нагадати: {task.remindAt ? new Date(task.remindAt).toLocaleString('uk-UA') : '—'}</span>
+                                  <span>Telegram-нагадування: {task.remindAt ? new Date(task.remindAt).toLocaleString('uk-UA') : '—'}</span>
                                   <span>Автор: {task.createdByUsername || '—'}</span>
                                 </div>
                               </div>
