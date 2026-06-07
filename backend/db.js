@@ -222,6 +222,7 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     title TEXT NOT NULL,
     description TEXT,
     status TEXT NOT NULL DEFAULT 'new',
+    start_at TEXT,
     due_at TEXT,
     remind_at TEXT,
     assigned_user_id INTEGER,
@@ -311,6 +312,7 @@ ensureCentralColumn('project_finance_entries', 'note', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'created_by_user_id', 'INTEGER');
 ensureCentralColumn('project_tasks', 'description', 'TEXT');
 ensureCentralColumn('project_tasks', 'status', "TEXT NOT NULL DEFAULT 'new'");
+ensureCentralColumn('project_tasks', 'start_at', 'TEXT');
 ensureCentralColumn('project_tasks', 'due_at', 'TEXT');
 ensureCentralColumn('project_tasks', 'remind_at', 'TEXT');
 ensureCentralColumn('project_tasks', 'assigned_user_id', 'INTEGER');

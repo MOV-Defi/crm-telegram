@@ -311,7 +311,7 @@ function App({ currentUser: initialUser }) {
   const [projectFinanceDraft, setProjectFinanceDraft] = useState({ type: 'income', amount: '', currency: 'UAH', usdRate: '', paymentDate: '', note: '' });
   const [projectFinanceSaving, setProjectFinanceSaving] = useState(false);
   const [showFinanceStatsExpanded, setShowFinanceStatsExpanded] = useState(false);
-  const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', dueAt: '', assignedUserId: '', telegramReminder: false });
+  const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', startAt: '', dueAt: '', assignedUserId: '', telegramReminder: false });
   const [projectTaskSaving, setProjectTaskSaving] = useState(false);
   const [projectNoteDraft, setProjectNoteDraft] = useState('');
   const [projectNoteSaving, setProjectNoteSaving] = useState(false);
@@ -2433,6 +2433,7 @@ function App({ currentUser: initialUser }) {
                   title,
                   description: projectTaskDraft.description,
                   status: projectTaskDraft.status || 'new',
+                  startAt: projectTaskDraft.startAt,
                   dueAt: projectTaskDraft.dueAt,
                   remindAt: projectTaskDraft.telegramReminder ? projectTaskDraft.remindAt : '',
                   assignedUserId: projectTaskDraft.assignedUserId || null
@@ -2444,7 +2445,7 @@ function App({ currentUser: initialUser }) {
           } else {
               await loadProjects();
           }
-          setProjectTaskDraft({ title: '', description: '', status: 'new', dueAt: '', assignedUserId: '', telegramReminder: false });
+          setProjectTaskDraft({ title: '', description: '', status: 'new', startAt: '', dueAt: '', assignedUserId: '', telegramReminder: false });
           await loadProjectNotifications();
       } catch (error) {
           alert(error?.message || 'Не вдалося додати задачу');
@@ -5353,6 +5354,21 @@ function App({ currentUser: initialUser }) {
       if (dmY) return `${dmY[3]}-${dmY[2]}-${dmY[1]}`;
       return '';
   }
+  const projectTaskStatusMeta = {
+      new: { label: 'В плані', className: 'border-slate-500/40 text-slate-300 bg-slate-700/30' },
+      in_progress: { label: 'В роботі', className: 'border-blue-500/40 text-blue-300 bg-blue-500/10' },
+      done: { label: 'Виконана', className: 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' }
+  };
+  const getProjectTaskStatusLabel = (status) => projectTaskStatusMeta[String(status || 'new')]?.label || 'В плані';
+  const getProjectTaskOverdueDays = (task) => {
+      if (!task?.dueAt || String(task.status || '') === 'done') return 0;
+      const due = new Date(task.dueAt);
+      if (!Number.isFinite(due.getTime())) return 0;
+      const today = new Date();
+      due.setHours(0, 0, 0, 0);
+      today.setHours(0, 0, 0, 0);
+      return Math.max(0, Math.floor((today.getTime() - due.getTime()) / 86400000));
+  };
   const orderStatusMeta = {
       new: { label: 'Нова', className: 'bg-slate-700/60 text-slate-200 border-slate-600' },
       in_progress: { label: 'В роботі', className: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
@@ -5411,6 +5427,12 @@ function App({ currentUser: initialUser }) {
       if (warehouseOrdersFilter === 'all') return true;
       return String(order.status || '') === warehouseOrdersFilter;
   });
+  const selectedProjectTaskStatusCounts = selectedProjectTasks.reduce((acc, task) => {
+      const key = String(task.status || 'new');
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+  }, { new: 0, in_progress: 0, done: 0 });
+  const selectedProjectOverdueTaskCount = selectedProjectTasks.filter((task) => getProjectTaskOverdueDays(task) > 0).length;
 
   return (
     <div className="fixed inset-0 flex bg-background text-slate-200 overflow-hidden">
@@ -9256,12 +9278,29 @@ function App({ currentUser: initialUser }) {
                             </option>
                           ))}
                         </select>
+                        <select
+                          value={projectTaskDraft.status}
+                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, status: e.target.value }))}
+                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                          title="Статус задачі"
+                        >
+                          <option value="new">В плані</option>
+                          <option value="in_progress">В роботі</option>
+                          <option value="done">Виконана</option>
+                        </select>
+                        <input
+                          type="datetime-local"
+                          value={projectTaskDraft.startAt}
+                          onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, startAt: e.target.value }))}
+                          className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                          title="Початок задачі"
+                        />
                         <input
                           type="datetime-local"
                           value={projectTaskDraft.dueAt}
                           onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, dueAt: e.target.value }))}
                           className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                          title="Дедлайн"
+                          title="Кінець / дедлайн"
                         />
                         <div className="flex flex-col gap-2">
                           <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${projectInputClass}`}>
@@ -9309,6 +9348,14 @@ function App({ currentUser: initialUser }) {
 
                     <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
                       <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Задачі проєкту</div>
+                      <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                        <span className="px-2 py-1 rounded-full border border-slate-500/40 text-slate-300 bg-slate-700/30">В плані: {selectedProjectTaskStatusCounts.new || 0}</span>
+                        <span className="px-2 py-1 rounded-full border border-blue-500/40 text-blue-300 bg-blue-500/10">В роботі: {selectedProjectTaskStatusCounts.in_progress || 0}</span>
+                        <span className="px-2 py-1 rounded-full border border-emerald-500/40 text-emerald-300 bg-emerald-500/10">Виконані: {selectedProjectTaskStatusCounts.done || 0}</span>
+                        {selectedProjectOverdueTaskCount > 0 && (
+                          <span className="px-2 py-1 rounded-full border border-red-500/40 text-red-300 bg-red-500/10">Прострочені: {selectedProjectOverdueTaskCount}</span>
+                        )}
+                      </div>
                       {!selectedProjectTasks.length && (
                         <div className={`text-sm ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Поки немає задач</div>
                       )}
@@ -9319,11 +9366,16 @@ function App({ currentUser: initialUser }) {
                               <div className="min-w-0">
                                 <div className={`font-semibold ${task.status === 'done' ? 'line-through text-emerald-500' : (isLightTheme ? 'text-slate-900' : 'text-slate-100')}`}>{task.title}</div>
                                 {task.description && <div className={`mt-1 text-sm whitespace-pre-wrap ${isLightTheme ? 'text-slate-600' : 'text-slate-400'}`}>{task.description}</div>}
-                                <div className={`mt-2 flex flex-wrap gap-2 text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
-                                  <span>Відповідальний: {task.assignedUsername || '—'}</span>
-                                  <span>Дедлайн: {task.dueAt ? new Date(task.dueAt).toLocaleString('uk-UA') : '—'}</span>
-                                  <span>Telegram-нагадування: {task.remindAt ? new Date(task.remindAt).toLocaleString('uk-UA') : '—'}</span>
-                                  <span>Автор: {task.createdByUsername || '—'}</span>
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                  <span className={`px-2 py-0.5 rounded-full border ${projectTaskStatusMeta[task.status || 'new']?.className || projectTaskStatusMeta.new.className}`}>{getProjectTaskStatusLabel(task.status)}</span>
+                                  {getProjectTaskOverdueDays(task) > 0 && (
+                                    <span className="px-2 py-0.5 rounded-full border border-red-500/40 text-red-300 bg-red-500/10">Прострочено на {getProjectTaskOverdueDays(task)} дн.</span>
+                                  )}
+                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Відповідальний: {task.assignedUsername || '—'}</span>
+                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Початок: {task.startAt ? new Date(task.startAt).toLocaleString('uk-UA') : '—'}</span>
+                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Кінець: {task.dueAt ? new Date(task.dueAt).toLocaleString('uk-UA') : '—'}</span>
+                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Telegram-нагадування: {task.remindAt ? new Date(task.remindAt).toLocaleString('uk-UA') : '—'}</span>
+                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Автор: {task.createdByUsername || '—'}</span>
                                 </div>
                               </div>
                               <div className="flex flex-col gap-2 shrink-0">
@@ -9332,7 +9384,7 @@ function App({ currentUser: initialUser }) {
                                   onChange={(e) => handleUpdateProjectTask(task.id, { status: e.target.value })}
                                   className={`border rounded-lg px-2 py-1 text-xs ${projectInputClass}`}
                                 >
-                                  <option value="new">Нова</option>
+                                  <option value="new">В плані</option>
                                   <option value="in_progress">В роботі</option>
                                   <option value="done">Виконана</option>
                                 </select>

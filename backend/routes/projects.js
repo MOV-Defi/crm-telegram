@@ -126,7 +126,7 @@ const getProjectFinanceEntries = (projectId) => (
 const getProjectTasks = (projectId) => (
   db.central.prepare(`
     SELECT
-      pt.id, pt.project_id, pt.title, pt.description, pt.status, pt.due_at, pt.remind_at,
+      pt.id, pt.project_id, pt.title, pt.description, pt.status, pt.start_at, pt.due_at, pt.remind_at,
       pt.assigned_user_id, au.username AS assigned_username,
       pt.created_by_user_id, cu.username AS created_by_username,
       pt.completed_at, pt.reminder_sent_at, pt.created_at, pt.updated_at
@@ -144,6 +144,7 @@ const getProjectTasks = (projectId) => (
     title: row.title || '',
     description: row.description || '',
     status: normalizeProjectTaskStatus(row.status),
+    startAt: row.start_at || '',
     dueAt: row.due_at || '',
     remindAt: row.remind_at || '',
     assignedUserId: row.assigned_user_id || null,
@@ -708,15 +709,16 @@ router.post('/:id/tasks', (req, res) => {
 
     const taskInfo = db.central.prepare(`
       INSERT INTO project_tasks (
-        project_id, title, description, status, due_at, remind_at,
+        project_id, title, description, status, start_at, due_at, remind_at,
         assigned_user_id, created_by_user_id, completed_at, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       projectId,
       title,
       String(req.body?.description || '').trim() || null,
       status,
+      String(req.body?.startAt || '').trim() || null,
       String(req.body?.dueAt || '').trim() || null,
       String(req.body?.remindAt || '').trim() || null,
       assignedUserId,
@@ -763,6 +765,10 @@ router.patch('/:projectId/tasks/:taskId', (req, res) => {
       values.push(nextStatus);
       sets.push('completed_at = ?');
       values.push(nextStatus === 'done' ? (existing.completed_at || new Date().toISOString()) : null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'startAt')) {
+      sets.push('start_at = ?');
+      values.push(String(req.body?.startAt || '').trim() || null);
     }
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'dueAt')) {
       sets.push('due_at = ?');
