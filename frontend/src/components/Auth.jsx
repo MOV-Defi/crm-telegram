@@ -236,6 +236,23 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
     }
   };
 
+  const resendCode = async () => {
+      setLoading(true);
+      try {
+          const { response, data } = await requestJson(`${API_URL}/auth/resend-code`, { method: 'POST' });
+          if (!response.ok || !data?.success) {
+              throw new Error(data?.error || 'Не вдалося надіслати код повторно.');
+          }
+          setCodeInfo(data?.codeInfo || null);
+          setInputValue('');
+      } catch (e) {
+          console.error(e);
+          alert(e.message || 'Не вдалося надіслати код повторно.');
+      } finally {
+          setLoading(false);
+      }
+  };
+
   const sendPassword = async () => {
       setLoading(true);
       try {
@@ -311,18 +328,30 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
               </div>
               
               {step !== 'waiting' && (
-              <button 
-                  onClick={handleNext}
-                  disabled={loading || !inputValue}
-                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-xl px-4 py-3 transition shadow-lg shadow-blue-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                  {loading ? (
-                    <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                  ) : 'Продовжити'}
-              </button>
+              <div className="space-y-3">
+                <button 
+                    onClick={handleNext}
+                    disabled={loading || !inputValue}
+                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-xl px-4 py-3 transition shadow-lg shadow-blue-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                    {loading ? (
+                      <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    ) : 'Продовжити'}
+                </button>
+                {step === 'code' && (
+                  <button
+                    type="button"
+                    onClick={resendCode}
+                    disabled={loading}
+                    className="w-full text-sm text-slate-300 hover:text-white border border-slate-700/60 hover:border-slate-500 rounded-xl px-4 py-2 transition disabled:opacity-50"
+                  >
+                    Надіслати код ще раз у Telegram
+                  </button>
+                )}
+              </div>
               )}
           </div>
       </div>

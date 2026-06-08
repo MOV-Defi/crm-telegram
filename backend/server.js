@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
-const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, getClient, getAuthStep } = require('./telegram');
+const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, resendAuthCode, getClient, getAuthStep } = require('./telegram');
 
 const app = express();
 
@@ -422,6 +422,19 @@ app.post('/api/auth/code', async (req, res) => {
     return res.status(result.success ? 200 : 400).json(result);
   }
   res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Code accepted' : 'No active code request' });
+});
+
+app.post('/api/auth/resend-code', async (req, res) => {
+  try {
+    const result = await resendAuthCode();
+    if (result && typeof result === 'object') {
+      return res.status(result.success ? 200 : 400).json(result);
+    }
+    res.status(400).json({ success: false, error: 'Не вдалося повторно надіслати код Telegram' });
+  } catch (error) {
+    console.error('auth/resend-code error:', error);
+    res.status(400).json({ success: false, error: error.message || 'Не вдалося повторно надіслати код Telegram' });
+  }
 });
 
 app.post('/api/auth/password', async (req, res) => {

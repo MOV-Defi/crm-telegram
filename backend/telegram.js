@@ -305,6 +305,38 @@ const requestAuthCode = async (state, phone) => {
     return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp, codeInfo };
 };
 
+const resendAuthCode = async () => {
+    const state = getTenantState();
+    if (!state.authFlowActive || !state.phoneNumber || !state.phoneCodeHash) {
+        return { success: false, error: 'Немає активного запиту коду. Введіть номер ще раз.' };
+    }
+    await ensureConnected(state);
+    try {
+        await withTimeout(
+            state.client.invoke(new Api.auth.CancelCode({
+                phoneNumber: state.phoneNumber,
+                phoneCodeHash: state.phoneCodeHash
+            })),
+            15000,
+            'Telegram cancelCode timeout'
+        );
+    } catch (error) {
+        console.warn(`[User ${context.getUserId()}] Telegram cancel code warning:`, error?.message || error);
+    }
+    const result = await sendTelegramCode(state, state.phoneNumber);
+    if (!result?.phoneCodeHash) {
+        throw new Error('Telegram не повернув phoneCodeHash після повторної відправки коду');
+    }
+    const codeInfo = buildCodeInfo(result, 'repeat');
+    state.phoneCodeHash = result.phoneCodeHash;
+    state.isCodeViaApp = Boolean(codeInfo.isCodeViaApp);
+    state.authCodeInfo = codeInfo;
+    state.authStep = 'code';
+    state.authError = null;
+    console.log(`[User ${context.getUserId()}] Telegram code re-requested for ${maskPhone(state.phoneNumber)} (delivery=${codeInfo.delivery || 'unknown'}, next=${codeInfo.nextType || 'none'}, timeout=${codeInfo.timeout ?? 'none'}, requested=${codeInfo.requested}).`);
+    return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp, codeInfo };
+};
+
 const signInWithCode = async (state, codeValue) => {
     const code = String(codeValue || '').trim();
     if (!code) throw new Error('Введіть код Telegram');
@@ -459,6 +491,7 @@ module.exports = {
     startAuthFlow,
     resolveAuthStep,
     resolvePhoneNumber,
+    resendAuthCode,
     getClient,
     getAuthStep,
     disconnectTelegramClient,
