@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
-const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, resendAuthCode, requestQrLogin, checkQrLogin, getClient, getAuthStep } = require('./telegram');
+const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, getClient, getAuthStep } = require('./telegram');
 
 const app = express();
 
@@ -390,20 +390,15 @@ app.post('/api/auth/start', async (req, res) => {
     if (!userId) {
       throw new Error('Database access outside of user context (SaaS isolation error)');
     }
-    const result = await new Promise((resolve, reject) => {
-      context.runWithContext({ userId }, async () => {
-        try {
-          const authResult = await startAuthFlow();
-          console.log(`[User ${userId}] Auth flow ready:`, authResult);
-          resolve(authResult);
-        } catch (error) {
-          console.error(`[User ${userId}] Auth flow error:`, error);
-          reject(error);
-        }
+    context.runWithContext({ userId }, () => {
+      startAuthFlow().then((result) => {
+        console.log(`[User ${userId}] Auth flow finished:`, result);
+      }).catch((error) => {
+        console.error(`[User ${userId}] Auth flow error:`, error);
       });
     });
 
-    res.status(result?.success ? 200 : 400).json(result || { success: false, error: 'Не вдалося запустити авторизацію Telegram' });
+    res.json({ success: true, message: 'Auth flow started. Please provide phone number next.' });
   } catch (error) {
     console.error('auth/start error:', error);
     sendServerError(res, 'Не вдалося запустити авторизацію Telegram');
@@ -429,40 +424,6 @@ app.post('/api/auth/code', async (req, res) => {
   res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Code accepted' : 'No active code request' });
 });
 
-app.post('/api/auth/resend-code', async (req, res) => {
-  try {
-    const result = await resendAuthCode();
-    if (result && typeof result === 'object') {
-      return res.status(result.success ? 200 : 400).json(result);
-    }
-    res.status(400).json({ success: false, error: 'Не вдалося повторно надіслати код Telegram' });
-  } catch (error) {
-    console.error('auth/resend-code error:', error);
-    res.status(400).json({ success: false, error: error.message || 'Не вдалося повторно надіслати код Telegram' });
-  }
-});
-
-app.post('/api/auth/qr', async (req, res) => {
-  try {
-    let client = getClient();
-    if (!client || !client.connected) {
-      const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
-      const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
-      const apiId = String(idRow?.value || '').trim();
-      const apiHash = String(hashRow?.value || '').trim();
-      if (!apiId || !apiHash) {
-        return res.status(400).json({ success: false, error: 'Налаштування API відсутні. Вкажіть API ID та API HASH.' });
-      }
-      client = await initTelegramClient(apiId, apiHash);
-    }
-    const result = await requestQrLogin();
-    return res.status(result?.success ? 200 : 400).json(result || { success: false, error: 'Не вдалося створити Telegram login link' });
-  } catch (error) {
-    console.error('auth/qr error:', error);
-    res.status(400).json({ success: false, error: error.message || 'Не вдалося створити Telegram login link' });
-  }
-});
-
 app.post('/api/auth/password', async (req, res) => {
   const { password } = req.body;
   const result = await resolveAuthStep('password', password);
@@ -485,25 +446,11 @@ app.get('/api/auth/status', async (req, res) => {
     }
   }
   const step = getAuthStep();
-  if (!connected && step && typeof step === 'object' && step.step === 'qr') {
-    const qrResult = await checkQrLogin();
-    if (qrResult?.connected) {
-      return res.json({ connected: true, waitingFor: null });
-    }
-    if (qrResult?.waitingFor === 'password') {
-      return res.json({ connected: false, waitingFor: 'password' });
-    }
-    if (qrResult?.success === false) {
-      return res.json({ connected: false, waitingFor: 'phone', error: qrResult.error || null });
-    }
-  }
   if (step && typeof step === 'object') {
     return res.json({
       connected,
       waitingFor: step.step || null,
-      error: step.error || null,
-      codeInfo: step.codeInfo || null,
-      qrLogin: step.qrLogin || null
+      error: step.error || null
     });
   }
   res.json({ connected, waitingFor: step });

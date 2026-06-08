@@ -12,8 +12,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
   const [step, setStep] = useState('phone'); // phone, code, password
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
-  const [codeInfo, setCodeInfo] = useState(null);
-  const [telegramLoginUrl, setTelegramLoginUrl] = useState('');
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const logoSrc = useMemo(() => (
@@ -39,16 +37,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
     }
     return { response, data: data || {} };
   };
-
-  const describeCodeDelivery = () => {
-    const delivery = String(codeInfo?.delivery || '').toLowerCase();
-    if (delivery.includes('app')) {
-      return 'Telegram відправив код у застосунок Telegram.';
-    }
-    return 'Введіть код підтвердження з офіційного застосунку Telegram.';
-  };
-
-  const telegramAppConfirmText = 'Відкриється офіційний Telegram app для підтвердження входу на телефоні.';
 
   const waitForAuthStep = async (expectedSteps, timeoutMs = 12000) => {
     const acceptedSteps = Array.isArray(expectedSteps) ? expectedSteps : [expectedSteps];
@@ -79,8 +67,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
 
   const startAuth = async (phone) => {
     setLoading(true);
-    setCodeInfo(null);
-    setTelegramLoginUrl('');
     try {
         const { response: statusRes, data: statusData } = await requestJson(`${API_URL}/auth/status`);
         if (statusData.connected) {
@@ -121,7 +107,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             return;
         }
         if (statusAfterStart?.waitingFor === 'code') {
-            setCodeInfo(statusAfterStart?.codeInfo || null);
             setStep('code');
             setInputValue('');
             return;
@@ -139,7 +124,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             const phoneRes = phoneReq.response;
             const phoneData = phoneReq.data;
             if (phoneRes.ok && phoneData?.success) {
-                setCodeInfo(phoneData?.codeInfo || null);
                 phoneAccepted = true;
                 break;
             }
@@ -175,7 +159,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             throw new Error('Telegram не підтвердив відправку коду. Перевірте API ID/API HASH, формат номера з +380 та спробуйте ще раз.');
         }
         
-        setCodeInfo(statusAfterPhone?.codeInfo || null);
         setStep('code');
         setInputValue('');
     } catch (e) {
@@ -233,58 +216,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
     }
   };
 
-  const pollConnected = async () => {
-      try {
-          const { data } = await requestJson(`${API_URL}/auth/status`);
-          if (data.connected) {
-              onAuthenticated();
-              return;
-          }
-      } catch (_) {}
-      setTimeout(pollConnected, 1500);
-  };
-
-  const loginWithTelegramApp = async () => {
-      setLoading(true);
-      try {
-          const { response, data } = await requestJson(`${API_URL}/auth/qr`, { method: 'POST' });
-          if (!response.ok || !data?.success) {
-              throw new Error(data?.error || 'Не вдалося створити вхід через Telegram app.');
-          }
-          if (data.connected) {
-              onAuthenticated();
-              return;
-          }
-          const url = data?.qrLogin?.url || '';
-          if (!url) throw new Error('Telegram не повернув посилання для входу.');
-          setTelegramLoginUrl(url);
-          window.location.href = url;
-          pollConnected();
-      } catch (e) {
-          console.error(e);
-          alert(e.message || 'Не вдалося відкрити Telegram app для входу.');
-      } finally {
-          setLoading(false);
-      }
-  };
-
-  const resendCode = async () => {
-      setLoading(true);
-      try {
-          const { response, data } = await requestJson(`${API_URL}/auth/resend-code`, { method: 'POST' });
-          if (!response.ok || !data?.success) {
-              throw new Error(data?.error || 'Не вдалося надіслати код повторно.');
-          }
-          setCodeInfo(data?.codeInfo || null);
-          setInputValue('');
-      } catch (e) {
-          console.error(e);
-          alert(e.message || 'Не вдалося надіслати код повторно.');
-      } finally {
-          setLoading(false);
-      }
-  };
-
   const sendPassword = async () => {
       setLoading(true);
       try {
@@ -337,14 +268,9 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
               <h1 className="text-2xl font-bold mb-2 text-center">Вхід до системи</h1>
               <p className="text-slate-400 text-center mb-6 text-sm">
                   {step === 'phone' && 'Введіть номер телефону від вашого облікового запису Telegram'}
-                  {step === 'code' && describeCodeDelivery()}
+                  {step === 'code' && 'Введіть код підтвердження, який надіслав вам Telegram в офіційний додаток'}
                   {step === 'password' && 'На акаунті увімкнено безпеку 2FA. Введіть хмарний пароль, щоб завершити вхід'}
               </p>
-              {(step === 'phone' || step === 'code') && (
-                <p className="text-slate-500 text-center mb-5 text-xs">
-                  {telegramAppConfirmText}
-                </p>
-              )}
               
               <div className="mb-6">
                 {step === 'waiting' ? (
@@ -378,34 +304,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                       </svg>
                     ) : 'Продовжити'}
                 </button>
-                {step === 'code' && (
-                  <button
-                    type="button"
-                    onClick={resendCode}
-                    disabled={loading}
-                    className="w-full text-sm text-slate-300 hover:text-white border border-slate-700/60 hover:border-slate-500 rounded-xl px-4 py-2 transition disabled:opacity-50"
-                  >
-                    Надіслати код ще раз у Telegram
-                  </button>
-                )}
-                {(step === 'phone' || step === 'code') && (
-                  <button
-                    type="button"
-                    onClick={loginWithTelegramApp}
-                    disabled={loading}
-                    className="w-full text-sm text-slate-300 hover:text-white border border-slate-700/60 hover:border-slate-500 rounded-xl px-4 py-2 transition disabled:opacity-50"
-                  >
-                    Підтвердити на телефоні в Telegram
-                  </button>
-                )}
-                {telegramLoginUrl && (
-                  <a
-                    href={telegramLoginUrl}
-                    className="block text-center text-xs text-blue-300 hover:text-blue-200"
-                  >
-                    Відкрити Telegram ще раз
-                  </a>
-                )}
               </div>
               )}
           </div>
