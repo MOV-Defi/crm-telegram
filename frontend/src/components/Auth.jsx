@@ -82,22 +82,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
 
         await tryStartFlow();
 
-        const statusAfterStart = await waitForAuthStep(['phone', 'code', 'password'], 12000);
-        if (statusAfterStart?.connected) {
-            onAuthenticated();
-            return;
-        }
-        if (statusAfterStart?.waitingFor === 'password') {
-            setStep('password');
-            setInputValue('');
-            return;
-        }
-        if (statusAfterStart?.waitingFor === 'code') {
-            setStep('code');
-            setInputValue('');
-            return;
-        }
-
         // Відправляємо номер з повторними спробами
         let phoneAccepted = false;
         let lastPhoneError = null;
@@ -117,7 +101,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             lastPhoneError = phoneData?.error || phoneData?.message || 'Номер не прийнято. Спробуйте ще раз.';
             if (maybeRace) {
                 await tryStartFlow();
-                await waitForAuthStep('phone', 4000);
                 await sleep(350);
                 continue;
             }
