@@ -419,17 +419,17 @@ app.post('/api/auth/password', (req, res) => {
 
 app.get('/api/auth/status', async (req, res) => {
   const client = getClient();
+  const step = getAuthStep();
   let connected = false;
-  if (client && client.connected) {
+  if (client && client.connected && !step) {
     try {
       const checkAuthPromise = client.checkAuthorization().catch((e) => { throw e; });
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000));
       connected = await Promise.race([checkAuthPromise, timeoutPromise]);
     } catch (e) {
-      if (e.message === 'timeout') { connected = true; } else { connected = false; }
+      connected = false;
     }
   }
-  const step = getAuthStep();
   res.json({ connected, waitingFor: step });
 });
 
