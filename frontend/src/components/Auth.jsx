@@ -12,6 +12,8 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
   const [step, setStep] = useState('phone'); // phone, code, password
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [statusMessage, setStatusMessage] = useState('');
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const logoSrc = useMemo(() => (
@@ -58,7 +60,13 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
   };
 
   const startAuth = async (phone) => {
+    const normalizedPhone = String(phone || '').trim();
+    if (!normalizedPhone) {
+        alert('Введіть номер телефону Telegram');
+        return;
+    }
     setLoading(true);
+    setStatusMessage('Запускаємо Telegram-вхід...');
     try {
         const { response: statusRes, data: statusData } = await requestJson(`${API_URL}/auth/status`);
         if (statusData.connected) {
@@ -96,7 +104,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             const phoneReq = await requestJson(`${API_URL}/auth/phone`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone })
+                body: JSON.stringify({ phone: normalizedPhone })
             });
             const phoneRes = phoneReq.response;
             const phoneData = phoneReq.data;
@@ -117,9 +125,11 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             throw new Error(lastPhoneError || 'Номер не прийнято. Спробуйте ще раз.');
         }
 
+        setPhoneNumber(normalizedPhone);
         setStep('code');
         setInputValue('');
         setLoading(false);
+        setStatusMessage('Telegram прийняв номер. Введіть код із офіційного додатку Telegram.');
 
         const pollAuthStep = async () => {
             try {
@@ -131,7 +141,16 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                 if (data.waitingFor === 'password') {
                     setStep('password');
                     setInputValue('');
+                    setStatusMessage('Telegram просить хмарний пароль 2FA.');
                     return;
+                }
+                if (data.waitingFor === 'code') {
+                    setStep('code');
+                    setStatusMessage('Telegram чекає код. Перевірте офіційний додаток Telegram.');
+                    return;
+                }
+                if (data.error) {
+                    setStatusMessage(data.error);
                 }
             } catch (_) {}
             setTimeout(pollAuthStep, 1500);
@@ -145,9 +164,20 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
         } else {
           alert(msg || "Помилка підключення до сервера бекенду");
         }
+        setStatusMessage('');
     } finally {
         setLoading(false);
     }
+  };
+
+  const restartAuth = () => {
+      const phone = phoneNumber || inputValue;
+      setStep('phone');
+      setInputValue(phone || '');
+      setStatusMessage('');
+      if (phone) {
+          setTimeout(() => startAuth(phone), 0);
+      }
   };
 
   const sendCode = async () => {
@@ -205,6 +235,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
           }
           setStep('waiting');
           setInputValue('');
+          setStatusMessage('Перевіряємо пароль Telegram...');
           
           const pollStatus = async () => {
               try {
@@ -247,6 +278,11 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                   {step === 'code' && 'Введіть код підтвердження, який надіслав вам Telegram в офіційний додаток'}
                   {step === 'password' && 'На акаунті увімкнено безпеку 2FA. Введіть хмарний пароль, щоб завершити вхід'}
               </p>
+              {statusMessage && (
+                <div className="mb-4 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">
+                    {statusMessage}
+                </div>
+              )}
               
               <div className="mb-6">
                 {step === 'waiting' ? (
@@ -279,6 +315,16 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                     </svg>
                   ) : 'Продовжити'}
               </button>
+              )}
+              {step === 'code' && (
+                <button
+                    type="button"
+                    onClick={restartAuth}
+                    disabled={loading}
+                    className="mt-3 w-full border border-slate-600 hover:border-blue-500 text-slate-200 hover:text-white font-medium rounded-xl px-4 py-3 transition disabled:opacity-50"
+                >
+                    Надіслати код ще раз
+                </button>
               )}
           </div>
       </div>

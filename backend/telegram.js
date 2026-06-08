@@ -161,12 +161,12 @@ const recreateAuthClient = async (state) => {
             await state.client.disconnect();
         } catch (error) {}
     }
-    const apiId = state.apiId
-        || String(db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get()?.value || '').trim()
-        || String(process.env.API_ID || '').trim();
-    const apiHash = state.apiHash
-        || String(db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get()?.value || '').trim()
-        || String(process.env.API_HASH || '').trim();
+    const apiId = String(process.env.API_ID || '').trim()
+        || state.apiId
+        || String(db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get()?.value || '').trim();
+    const apiHash = String(process.env.API_HASH || '').trim()
+        || state.apiHash
+        || String(db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get()?.value || '').trim();
     if (!apiId || !apiHash) {
         throw new Error('Налаштування API відсутні. Будь ласка, вкажіть API ID та API HASH в налаштуваннях.');
     }

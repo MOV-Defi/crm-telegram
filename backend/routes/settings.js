@@ -48,8 +48,8 @@ router.get('/telegram', (req, res) => {
     try {
         const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
         const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
-        const apiId = String(idRow?.value || '').trim();
-        const apiHash = String(hashRow?.value || '').trim();
+        const apiId = String(process.env.API_ID || idRow?.value || '').trim();
+        const apiHash = String(process.env.API_HASH || hashRow?.value || '').trim();
         res.json({ 
             configured: !!(apiId && apiHash),
             apiId,
@@ -69,8 +69,8 @@ router.post('/telegram', async (req, res) => {
         const currentIdRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
         const currentHashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
         
-        let finalApiId = apiIdInput || String(currentIdRow?.value || '').trim();
-        let finalApiHash = apiHashInput || String(currentHashRow?.value || '').trim();
+        let finalApiId = apiIdInput || String(process.env.API_ID || currentIdRow?.value || '').trim();
+        let finalApiHash = apiHashInput || String(process.env.API_HASH || currentHashRow?.value || '').trim();
 
         // Захист: якщо прийшов маскований хеш (з крапками), не перезаписуємо ним існуючий
         if (apiHashInput.includes('...')) {
