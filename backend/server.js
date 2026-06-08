@@ -355,6 +355,11 @@ app.patch('/api/system/users/:id/permissions', verifyAuthToken, requireAdmin, (r
 });
 
 app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth/')) {
+    const hasHeaderToken = Boolean(req.headers.authorization && String(req.headers.authorization).startsWith('Bearer '));
+    const hasQueryToken = Boolean(String(req.query?.token || '').trim());
+    console.log(`[auth:req] ${req.method} ${req.path} token=${hasHeaderToken || hasQueryToken ? 'yes' : 'no'}`);
+  }
   if (req.path.startsWith('/system/')) return next();
   return verifyAuthToken(req, res, next);
 });
@@ -362,6 +367,7 @@ app.use('/api', (req, res, next) => {
 // --- TELEGRAM API AUTH FLOW ---
 app.post('/api/auth/start', async (req, res) => {
   try {
+    console.log(`[auth:start] user=${req.userId || 'unknown'}`);
     let client = getClient();
     if (!client || !client.connected) {
       const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
@@ -401,6 +407,7 @@ app.post('/api/auth/start', async (req, res) => {
 
 app.post('/api/auth/phone', async (req, res) => {
   const { phone } = req.body;
+  console.log(`[auth:phone] user=${req.userId || 'unknown'} phone=${String(phone || '').trim() ? 'present' : 'empty'}`);
   const result = await resolvePhoneNumber(phone);
   if (result && typeof result === 'object') {
     return res.status(result.success ? 200 : 400).json(result);
