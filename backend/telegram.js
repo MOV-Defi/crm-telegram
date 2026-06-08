@@ -10,6 +10,8 @@ const loadTelegramDependencies = () => {
     try {
         return {
             TelegramClient: require('telegram').TelegramClient,
+            Api: require('telegram').Api,
+            computeCheck: require('telegram/Password').computeCheck,
             StringSession: require('telegram/sessions').StringSession
         };
     } finally {
@@ -17,7 +19,7 @@ const loadTelegramDependencies = () => {
     }
 };
 
-const { TelegramClient, StringSession } = loadTelegramDependencies();
+const { TelegramClient, Api, computeCheck, StringSession } = loadTelegramDependencies();
 const db = require('./db');
 const context = require('./context');
 const runtimePaths = require('./runtime-paths');
@@ -40,8 +42,13 @@ const getTenantState = () => {
             userId,
             client: null,
             clientOwnerUserId: null,
+            apiId: null,
+            apiHash: null,
             authResolvers: { phoneNumber: null, phoneCode: null, password: null },
             authCache: { phoneNumber: null, phoneCode: null, password: null },
+            phoneNumber: null,
+            phoneCodeHash: null,
+            isCodeViaApp: false,
             authStep: null,
             authError: null,
             authFlowActive: false,
@@ -54,6 +61,9 @@ const getTenantState = () => {
 const resetAuthState = (state) => {
     state.authCache = { phoneNumber: null, phoneCode: null, password: null };
     state.authResolvers = { phoneNumber: null, phoneCode: null, password: null };
+    state.phoneNumber = null;
+    state.phoneCodeHash = null;
+    state.isCodeViaApp = false;
     state.authStep = null;
     state.authError = null;
 };
@@ -76,6 +86,21 @@ const waitForAuthResolver = async (state, step, timeoutMs = 12000) => {
         await sleep(250);
     }
     return Boolean(state.authResolvers[resolverKey]);
+};
+
+const withTimeout = (promise, timeoutMs, message) => {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+};
+
+const ensureConnected = async (state) => {
+    if (!state.client) throw new Error('Telegram клієнт не ініціалізовано');
+    if (!state.client.connected) {
+        await withTimeout(state.client.connect(), 25000, 'Telegram connection timeout');
+    }
 };
 
 const sessionsDir = path.join(runtimePaths.dataRoot, 'telegram_sessions');
@@ -144,8 +169,10 @@ const initTelegramClient = async (apiId, apiHash) => {
     } catch (_) {}
   }
   resetAuthState(state);
+  state.apiId = String(apiId || '').trim();
+  state.apiHash = String(apiHash || '').trim();
   
-  state.client = new TelegramClient(stringSession, parseInt(apiId), apiHash, {
+  state.client = new TelegramClient(stringSession, parseInt(state.apiId, 10), state.apiHash, {
     connectionRetries: 5,
   });
   state.clientOwnerUserId = userId;
@@ -158,7 +185,7 @@ const initTelegramClient = async (apiId, apiHash) => {
     } catch (e) {
       console.error(`[User ${context.getUserId()}] Не вдалося підключитися (сесія невірна або застаріла):`, e);
       clearSession();
-      state.client = new TelegramClient(new StringSession(''), parseInt(apiId), apiHash, {
+      state.client = new TelegramClient(new StringSession(''), parseInt(state.apiId, 10), state.apiHash, {
         connectionRetries: 5,
       });
       state.clientOwnerUserId = userId;
@@ -187,97 +214,159 @@ const startAuthFlow = async () => {
     if (!state.client) {
         return { success: false, error: 'Telegram клієнт не ініціалізовано' };
     }
-    if (state.authFlowActive && state.authFlowPromise) {
-        return state.authFlowPromise;
-    }
     resetAuthState(state);
     state.authFlowActive = true;
-    
-    state.authFlowPromise = (async () => {
-        try {
-            console.log(`[User ${context.getUserId()}] Починаємо client.start()...`);
-            await state.client.start({
-                phoneNumber: async () => {
-                    if (state.authCache.phoneNumber) return state.authCache.phoneNumber;
-                    state.authStep = 'phone';
-                    console.log(`[User ${context.getUserId()}] Telegram auth waiting for phone number`);
-                    return new Promise(resolve => state.authResolvers.phoneNumber = resolve);
-                },
-                password: async () => {
-                    if (state.authCache.password) return state.authCache.password;
-                    state.authStep = 'password';
-                    console.log(`[User ${context.getUserId()}] Telegram auth waiting for 2FA password`);
-                    return new Promise(resolve => state.authResolvers.password = resolve);
-                },
-                phoneCode: async () => {
-                    if (state.authCache.phoneCode) return state.authCache.phoneCode;
-                    state.authStep = 'code';
-                    console.log(`[User ${context.getUserId()}] Telegram auth waiting for code`);
-                    return new Promise(resolve => state.authResolvers.phoneCode = resolve);
-                },
-                onError: (err) => console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err),
-            });
-            
-            console.log(`[User ${context.getUserId()}] Ви успішно авторизовані!`);
+
+    try {
+        console.log(`[User ${context.getUserId()}] Починаємо ручний Telegram auth flow...`);
+        await ensureConnected(state);
+        if (await state.client.checkAuthorization()) {
+            console.log(`[User ${context.getUserId()}] Telegram вже авторизований.`);
             saveSession(state.client.session.save());
+            state.authFlowActive = false;
             state.authStep = null;
             state.authError = null;
-            return { success: true };
-        } catch (error) {
-            console.error(`[User ${context.getUserId()}] Помилка авторизації:`, error);
-            state.authError = error.message;
-            return { success: false, error: error.message };
-        } finally {
-            state.authFlowActive = false;
-            state.authFlowPromise = null;
+            return { success: true, connected: true };
         }
-    })();
-    return state.authFlowPromise;
+        state.authStep = 'phone';
+        console.log(`[User ${context.getUserId()}] Telegram auth waiting for phone number`);
+        return { success: true, waitingFor: 'phone' };
+    } catch (error) {
+        console.error(`[User ${context.getUserId()}] Помилка старту Telegram auth:`, error);
+        state.authError = error.message;
+        state.authStep = 'error';
+        state.authFlowActive = false;
+        return { success: false, error: error.message };
+    }
 };
 
-const resolveAuthStep = (step, value) => {
+const requestAuthCode = async (state, phone) => {
+    const phoneNumber = String(phone || '').trim();
+    if (!phoneNumber) throw new Error('Введіть номер телефону');
+    if (!state.apiId || !state.apiHash) {
+        const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
+        const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
+        state.apiId = String(idRow?.value || '').trim();
+        state.apiHash = String(hashRow?.value || '').trim();
+    }
+    if (!state.apiId || !state.apiHash) {
+        throw new Error('Налаштування API відсутні. Будь ласка, вкажіть API ID та API HASH в налаштуваннях.');
+    }
+
+    await ensureConnected(state);
+    state.authStep = 'sending_code';
+    state.authError = null;
+    state.phoneNumber = phoneNumber;
+    const result = await withTimeout(
+        state.client.sendCode({ apiId: parseInt(state.apiId, 10), apiHash: state.apiHash }, phoneNumber, false),
+        35000,
+        'Telegram sendCode timeout'
+    );
+    if (!result?.phoneCodeHash) {
+        throw new Error('Telegram не повернув phoneCodeHash після відправки коду');
+    }
+    state.phoneCodeHash = result.phoneCodeHash;
+    state.isCodeViaApp = Boolean(result.isCodeViaApp);
+    state.authStep = 'code';
+    console.log(`[User ${context.getUserId()}] Telegram code requested for ${maskPhone(phoneNumber)} (${state.isCodeViaApp ? 'app' : 'sms/other'}).`);
+    return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp };
+};
+
+const signInWithCode = async (state, codeValue) => {
+    const code = String(codeValue || '').trim();
+    if (!code) throw new Error('Введіть код Telegram');
+    if (!state.phoneNumber || !state.phoneCodeHash) {
+        throw new Error('Немає активного Telegram-коду. Введіть номер ще раз.');
+    }
+
+    await ensureConnected(state);
+    try {
+        const result = await withTimeout(
+            state.client.invoke(new Api.auth.SignIn({
+                phoneNumber: state.phoneNumber,
+                phoneCodeHash: state.phoneCodeHash,
+                phoneCode: code,
+            })),
+            30000,
+            'Telegram signIn timeout'
+        );
+        if (result instanceof Api.auth.AuthorizationSignUpRequired) {
+            throw new Error('Цей номер не зареєстрований у Telegram або потрібна окрема реєстрація Telegram.');
+        }
+        saveSession(state.client.session.save());
+        resetAuthState(state);
+        state.authFlowActive = false;
+        console.log(`[User ${context.getUserId()}] Telegram авторизований через код.`);
+        return { success: true, connected: true };
+    } catch (error) {
+        const text = String(error?.errorMessage || error?.message || '');
+        if (text.includes('SESSION_PASSWORD_NEEDED')) {
+            state.authStep = 'password';
+            state.authError = null;
+            return { success: true, waitingFor: 'password' };
+        }
+        throw error;
+    }
+};
+
+const signInWithPassword = async (state, passwordValue) => {
+    const password = String(passwordValue || '').trim();
+    if (!password) throw new Error('Введіть пароль 2FA Telegram');
+    await ensureConnected(state);
+    const passwordInfo = await withTimeout(
+        state.client.invoke(new Api.account.GetPassword()),
+        30000,
+        'Telegram getPassword timeout'
+    );
+    const passwordCheck = await computeCheck(passwordInfo, password);
+    await withTimeout(
+        state.client.invoke(new Api.auth.CheckPassword({ password: passwordCheck })),
+        30000,
+        'Telegram checkPassword timeout'
+    );
+    saveSession(state.client.session.save());
+    resetAuthState(state);
+    state.authFlowActive = false;
+    console.log(`[User ${context.getUserId()}] Telegram авторизований через 2FA пароль.`);
+    return { success: true, connected: true };
+};
+
+const resolveAuthStep = async (step, value) => {
     try {
         const state = getTenantState();
         if (!String(value || '').trim()) return false;
-        if (state.authResolvers[step]) {
-            if (step === 'phoneNumber') {
-                console.log(`[User ${context.getUserId()}] Telegram auth phone accepted: ${maskPhone(value)}`);
-            } else {
-                console.log(`[User ${context.getUserId()}] Telegram auth ${step} accepted`);
-            }
-            state.authResolvers[step](value);
-            state.authResolvers[step] = null;
-            state.authStep = null;
-            return true;
-        }
         if (!state.authFlowActive) {
             return false;
         }
-        state.authCache[step] = value;
-        return true;
-    } catch(e) {
+        if (step === 'phoneNumber') return requestAuthCode(state, value);
+        if (step === 'phoneCode') return signInWithCode(state, value);
+        if (step === 'password') return signInWithPassword(state, value);
         return false;
+    } catch(error) {
+        const state = getTenantState();
+        state.authError = error.message || String(error);
+        state.authStep = 'error';
+        console.error(`[User ${context.getUserId()}] Telegram auth step error:`, error);
+        return { success: false, error: error.message || String(error) };
     }
 };
 
 const resolvePhoneNumber = async (phone) => {
-    const state = getTenantState();
-    if (!String(phone || '').trim()) {
-        return { success: false, error: 'Введіть номер телефону' };
+    try {
+        const state = getTenantState();
+        if (!String(phone || '').trim()) {
+            return { success: false, error: 'Введіть номер телефону' };
+        }
+        if (!state.authFlowActive) {
+            const started = await startAuthFlow();
+            if (!started?.success) return started;
+            if (started?.connected) return started;
+        }
+        console.log(`[User ${context.getUserId()}] Telegram auth phone accepted: ${maskPhone(phone)}`);
+        return requestAuthCode(state, phone);
+    } catch(e) {
+        return { success: false, error: e.message || String(e) };
     }
-    if (!state.authFlowActive && !state.authResolvers.phoneNumber) {
-        startAuthFlow().catch((error) => {
-            console.error(`[User ${context.getUserId()}] Auth flow error after phone request:`, error);
-        });
-    }
-    const ready = state.authResolvers.phoneNumber || await waitForAuthResolver(state, 'phone', 12000);
-    if (!ready) {
-        return {
-            success: false,
-            error: state.authError || 'Telegram auth flow не готовий прийняти номер. Оновіть сторінку і спробуйте ще раз.'
-        };
-    }
-    return { success: resolveAuthStep('phoneNumber', phone) };
 };
 
 const getClient = () => {
