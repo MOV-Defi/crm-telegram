@@ -43,6 +43,9 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
         if (statusData?.connected) {
           return { connected: true, waitingFor: null };
         }
+        if (statusData?.error) {
+          return { connected: false, waitingFor: statusData?.waitingFor || null, error: statusData.error };
+        }
         if (acceptedSteps.includes(statusData?.waitingFor)) {
           return statusData;
         }
@@ -83,6 +86,9 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
         await tryStartFlow();
 
         const statusAfterStart = await waitForAuthStep(['phone', 'code', 'password'], 12000);
+        if (statusAfterStart?.error) {
+            throw new Error(statusAfterStart.error);
+        }
         if (statusAfterStart?.connected) {
             onAuthenticated();
             return;
@@ -125,6 +131,23 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
         }
         if (!phoneAccepted) {
             throw new Error(lastPhoneError || 'Номер не прийнято. Спробуйте ще раз.');
+        }
+
+        const statusAfterPhone = await waitForAuthStep(['code', 'password'], 25000);
+        if (statusAfterPhone?.error) {
+            throw new Error(statusAfterPhone.error);
+        }
+        if (statusAfterPhone?.connected) {
+            onAuthenticated();
+            return;
+        }
+        if (statusAfterPhone?.waitingFor === 'password') {
+            setStep('password');
+            setInputValue('');
+            return;
+        }
+        if (!statusAfterPhone || statusAfterPhone?.waitingFor !== 'code') {
+            throw new Error('Telegram не підтвердив відправку коду. Перевірте API ID/API HASH, формат номера з +380 та спробуйте ще раз.');
         }
         
         setStep('code');
