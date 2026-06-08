@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
-const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, resendAuthCode, requestQrLogin, getClient, getAuthStep } = require('./telegram');
+const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, resendAuthCode, requestQrLogin, checkQrLogin, getClient, getAuthStep } = require('./telegram');
 
 const app = express();
 
@@ -485,6 +485,18 @@ app.get('/api/auth/status', async (req, res) => {
     }
   }
   const step = getAuthStep();
+  if (!connected && step && typeof step === 'object' && step.step === 'qr') {
+    const qrResult = await checkQrLogin();
+    if (qrResult?.connected) {
+      return res.json({ connected: true, waitingFor: null });
+    }
+    if (qrResult?.waitingFor === 'password') {
+      return res.json({ connected: false, waitingFor: 'password' });
+    }
+    if (qrResult?.success === false) {
+      return res.json({ connected: false, waitingFor: 'phone', error: qrResult.error || null });
+    }
+  }
   if (step && typeof step === 'object') {
     return res.json({
       connected,

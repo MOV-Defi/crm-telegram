@@ -197,6 +197,42 @@ const requestQrLogin = async () => {
     return normalizeLoginTokenResult(state, result);
 };
 
+const checkQrLogin = async () => {
+    const state = getTenantState();
+    if (!state.authFlowActive || state.authStep !== 'qr' || !state.qrLogin?.token) {
+        return null;
+    }
+    await ensureConnected(state);
+    try {
+        const result = await withTimeout(
+            state.client.invoke(new Api.auth.ImportLoginToken({ token: state.qrLogin.token })),
+            12000,
+            'Telegram importLoginToken timeout'
+        );
+        return normalizeLoginTokenResult(state, result);
+    } catch (error) {
+        const text = String(error?.errorMessage || error?.message || '');
+        if (/SESSION_PASSWORD_NEEDED/.test(text)) {
+            state.authStep = 'password';
+            state.authError = null;
+            return { success: true, waitingFor: 'password' };
+        }
+        if (/AUTH_TOKEN_INVALID|AUTH_TOKEN_EXPIRED|TOKEN_INVALID|TOKEN_EXPIRED/i.test(text)) {
+            state.qrLogin = null;
+            state.authStep = 'phone';
+            return { success: false, error: 'Посилання Telegram app застаріло. Спробуйте увійти через Telegram app ще раз.' };
+        }
+        return {
+            success: true,
+            waitingFor: 'qr',
+            qrLogin: {
+                url: state.qrLogin.url,
+                expires: state.qrLogin.expires
+            }
+        };
+    }
+};
+
 const ensureConnected = async (state) => {
     if (!state.client) throw new Error('Telegram клієнт не ініціалізовано');
     if (!state.client.connected) {
@@ -594,6 +630,7 @@ module.exports = {
     resolvePhoneNumber,
     resendAuthCode,
     requestQrLogin,
+    checkQrLogin,
     getClient,
     getAuthStep,
     isAuthFlowActive,
