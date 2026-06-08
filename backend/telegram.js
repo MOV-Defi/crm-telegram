@@ -58,6 +58,26 @@ const resetAuthState = (state) => {
     state.authError = null;
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const maskPhone = (value) => {
+    const raw = String(value || '').trim();
+    if (raw.length <= 5) return raw ? '***' : '';
+    return `${raw.slice(0, 4)}***${raw.slice(-2)}`;
+};
+
+const waitForAuthResolver = async (state, step, timeoutMs = 12000) => {
+    const resolverKey = step === 'phone' ? 'phoneNumber' : step === 'code' ? 'phoneCode' : step;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (state.authResolvers[resolverKey]) return true;
+        if (state.authError) return false;
+        if (!state.authFlowActive && !state.authFlowPromise) return false;
+        await sleep(250);
+    }
+    return Boolean(state.authResolvers[resolverKey]);
+};
+
 const sessionsDir = path.join(runtimePaths.dataRoot, 'telegram_sessions');
 if (!fs.existsSync(sessionsDir)) {
   fs.mkdirSync(sessionsDir, { recursive: true });
@@ -180,16 +200,19 @@ const startAuthFlow = async () => {
                 phoneNumber: async () => {
                     if (state.authCache.phoneNumber) return state.authCache.phoneNumber;
                     state.authStep = 'phone';
+                    console.log(`[User ${context.getUserId()}] Telegram auth waiting for phone number`);
                     return new Promise(resolve => state.authResolvers.phoneNumber = resolve);
                 },
                 password: async () => {
                     if (state.authCache.password) return state.authCache.password;
                     state.authStep = 'password';
+                    console.log(`[User ${context.getUserId()}] Telegram auth waiting for 2FA password`);
                     return new Promise(resolve => state.authResolvers.password = resolve);
                 },
                 phoneCode: async () => {
                     if (state.authCache.phoneCode) return state.authCache.phoneCode;
                     state.authStep = 'code';
+                    console.log(`[User ${context.getUserId()}] Telegram auth waiting for code`);
                     return new Promise(resolve => state.authResolvers.phoneCode = resolve);
                 },
                 onError: (err) => console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err),
@@ -217,6 +240,11 @@ const resolveAuthStep = (step, value) => {
         const state = getTenantState();
         if (!String(value || '').trim()) return false;
         if (state.authResolvers[step]) {
+            if (step === 'phoneNumber') {
+                console.log(`[User ${context.getUserId()}] Telegram auth phone accepted: ${maskPhone(value)}`);
+            } else {
+                console.log(`[User ${context.getUserId()}] Telegram auth ${step} accepted`);
+            }
             state.authResolvers[step](value);
             state.authResolvers[step] = null;
             state.authStep = null;
@@ -230,6 +258,26 @@ const resolveAuthStep = (step, value) => {
     } catch(e) {
         return false;
     }
+};
+
+const resolvePhoneNumber = async (phone) => {
+    const state = getTenantState();
+    if (!String(phone || '').trim()) {
+        return { success: false, error: 'Введіть номер телефону' };
+    }
+    if (!state.authFlowActive && !state.authResolvers.phoneNumber) {
+        startAuthFlow().catch((error) => {
+            console.error(`[User ${context.getUserId()}] Auth flow error after phone request:`, error);
+        });
+    }
+    const ready = state.authResolvers.phoneNumber || await waitForAuthResolver(state, 'phone', 12000);
+    if (!ready) {
+        return {
+            success: false,
+            error: state.authError || 'Telegram auth flow не готовий прийняти номер. Оновіть сторінку і спробуйте ще раз.'
+        };
+    }
+    return { success: resolveAuthStep('phoneNumber', phone) };
 };
 
 const getClient = () => {
@@ -288,6 +336,7 @@ module.exports = {
     initTelegramClient,
     startAuthFlow,
     resolveAuthStep,
+    resolvePhoneNumber,
     getClient,
     getAuthStep,
     disconnectTelegramClient,

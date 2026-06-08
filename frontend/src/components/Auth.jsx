@@ -129,6 +129,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             }
             const maybeRace = String(phoneData?.message || phoneData?.error || '').toLowerCase().includes('no active phone request');
             lastPhoneError = phoneData?.error || phoneData?.message || 'Номер не прийнято. Спробуйте ще раз.';
+            console.warn('auth/phone rejected:', lastPhoneError);
             if (maybeRace) {
                 await tryStartFlow();
                 await waitForAuthStep('phone', 4000);

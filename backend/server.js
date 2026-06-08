@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
-const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthStep } = require('./telegram');
+const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, getClient, getAuthStep } = require('./telegram');
 
 const app = express();
 
@@ -401,7 +401,7 @@ app.post('/api/auth/start', async (req, res) => {
 
 app.post('/api/auth/phone', async (req, res) => {
   const { phone } = req.body;
-  const result = await resolveAuthStep('phoneNumber', phone);
+  const result = await resolvePhoneNumber(phone);
   if (result && typeof result === 'object') {
     return res.status(result.success ? 200 : 400).json(result);
   }
