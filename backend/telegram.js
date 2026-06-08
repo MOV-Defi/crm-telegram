@@ -40,6 +40,8 @@ const getTenantState = () => {
             userId,
             client: null,
             clientOwnerUserId: null,
+            apiId: null,
+            apiHash: null,
             authResolvers: { phoneNumber: null, phoneCode: null, password: null },
             authCache: { phoneNumber: null, phoneCode: null, password: null },
             authFlowActive: false,
@@ -99,6 +101,8 @@ const initTelegramClient = async (apiId, apiHash) => {
   const sessionString = getSession();
   const stringSession = new StringSession(sessionString);
   
+  state.apiId = apiId;
+  state.apiHash = apiHash;
   state.client = new TelegramClient(stringSession, parseInt(apiId), apiHash, {
     connectionRetries: 5,
   });
@@ -139,6 +143,59 @@ const getAuthStep = () => {
     }
 };
 
+const createFreshAuthClient = async (state) => {
+    if (state.client) {
+        try {
+            await state.client.disconnect();
+        } catch(e) {}
+    }
+    const apiId = state.apiId || String(process.env.API_ID || '').trim()
+        || String(db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get()?.value || '').trim();
+    const apiHash = state.apiHash || String(process.env.API_HASH || '').trim()
+        || String(db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get()?.value || '').trim();
+    if (!apiId || !apiHash) {
+        throw new Error('Налаштування API відсутні. Будь ласка, вкажіть API ID та API HASH в налаштуваннях.');
+    }
+    state.apiId = apiId;
+    state.apiHash = apiHash;
+    state.client = new TelegramClient(new StringSession(''), parseInt(apiId), apiHash, {
+        connectionRetries: 5,
+    });
+    state.clientOwnerUserId = context.getUserId();
+    state.authResolvers = { phoneNumber: null, phoneCode: null, password: null };
+};
+
+const startClientOnce = async (state) => {
+    await state.client.start({
+        phoneNumber: async () => {
+            if (state.authCache.phoneNumber) return state.authCache.phoneNumber;
+            return new Promise(resolve => state.authResolvers.phoneNumber = resolve);
+        },
+        password: async () => {
+            if (state.authCache.password) return state.authCache.password;
+            return new Promise(resolve => state.authResolvers.password = resolve);
+        },
+        phoneCode: async () => {
+            if (state.authCache.phoneCode) return state.authCache.phoneCode;
+            return new Promise(resolve => state.authResolvers.phoneCode = resolve);
+        },
+        onError: (err) => console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err),
+    });
+};
+
+const waitForCodeRequestOrFailure = async (state, startPromise, timeoutMs = 12000) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+        if (state.authResolvers.phoneCode || state.authResolvers.password) return 'waiting';
+        const result = await Promise.race([
+            startPromise.then(() => 'done', () => 'failed'),
+            new Promise(resolve => setTimeout(() => resolve('pending'), 250))
+        ]);
+        if (result !== 'pending') return result;
+    }
+    return 'timeout';
+};
+
 const startAuthFlow = async () => {
     const state = getTenantState();
     if (!state.client) {
@@ -153,21 +210,16 @@ const startAuthFlow = async () => {
     state.authFlowPromise = (async () => {
         try {
             console.log(`[User ${context.getUserId()}] Починаємо client.start()...`);
-            await state.client.start({
-                phoneNumber: async () => {
-                    if (state.authCache.phoneNumber) return state.authCache.phoneNumber;
-                    return new Promise(resolve => state.authResolvers.phoneNumber = resolve);
-                },
-                password: async () => {
-                    if (state.authCache.password) return state.authCache.password;
-                    return new Promise(resolve => state.authResolvers.password = resolve);
-                },
-                phoneCode: async () => {
-                    if (state.authCache.phoneCode) return state.authCache.phoneCode;
-                    return new Promise(resolve => state.authResolvers.phoneCode = resolve);
-                },
-                onError: (err) => console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err),
-            });
+            let startPromise = startClientOnce(state);
+            let checkpoint = await waitForCodeRequestOrFailure(state, startPromise);
+            if (checkpoint === 'timeout' && state.authCache.phoneNumber) {
+                console.warn(`[User ${context.getUserId()}] Telegram auth stalled before code request; retrying once with fresh client.`);
+                startPromise.catch(() => {});
+                await createFreshAuthClient(state);
+                startPromise = startClientOnce(state);
+                checkpoint = await waitForCodeRequestOrFailure(state, startPromise);
+            }
+            await startPromise;
             
             console.log(`[User ${context.getUserId()}] Ви успішно авторизовані!`);
             saveSession(state.client.session.save());
