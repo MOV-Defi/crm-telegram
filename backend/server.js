@@ -399,22 +399,31 @@ app.post('/api/auth/start', async (req, res) => {
   }
 });
 
-app.post('/api/auth/phone', (req, res) => {
+app.post('/api/auth/phone', async (req, res) => {
   const { phone } = req.body;
-  const resolved = resolveAuthStep('phoneNumber', phone);
-  res.json({ success: resolved, message: resolved ? 'Phone accepted' : 'No active phone request' });
+  const result = await resolveAuthStep('phoneNumber', phone);
+  if (result && typeof result === 'object') {
+    return res.status(result.success ? 200 : 400).json(result);
+  }
+  res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Phone accepted' : 'No active phone request' });
 });
 
-app.post('/api/auth/code', (req, res) => {
+app.post('/api/auth/code', async (req, res) => {
   const { code } = req.body;
-  const resolved = resolveAuthStep('phoneCode', code);
-  res.json({ success: resolved, message: resolved ? 'Code accepted' : 'No active code request' });
+  const result = await resolveAuthStep('phoneCode', code);
+  if (result && typeof result === 'object') {
+    return res.status(result.success ? 200 : 400).json(result);
+  }
+  res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Code accepted' : 'No active code request' });
 });
 
-app.post('/api/auth/password', (req, res) => {
+app.post('/api/auth/password', async (req, res) => {
   const { password } = req.body;
-  const resolved = resolveAuthStep('password', password);
-  res.json({ success: resolved, message: resolved ? 'Password accepted' : 'No active password request' });
+  const result = await resolveAuthStep('password', password);
+  if (result && typeof result === 'object') {
+    return res.status(result.success ? 200 : 400).json(result);
+  }
+  res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Password accepted' : 'No active password request' });
 });
 
 app.get('/api/auth/status', async (req, res) => {
