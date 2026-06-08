@@ -43,7 +43,8 @@ const getTenantState = () => {
             authResolvers: { phoneNumber: null, phoneCode: null, password: null },
             authCache: { phoneNumber: null, phoneCode: null, password: null },
             authFlowActive: false,
-            authFlowPromise: null
+            authFlowPromise: null,
+            authError: null
         });
     }
     return clientsData.get(userId);
@@ -52,6 +53,22 @@ const getTenantState = () => {
 const resetAuthState = (state) => {
     state.authCache = { phoneNumber: null, phoneCode: null, password: null };
     state.authResolvers = { phoneNumber: null, phoneCode: null, password: null };
+    state.authError = null;
+};
+
+const formatAuthError = (error) => {
+    const rawSeconds = Number(error?.seconds || 0);
+    let seconds = Number.isFinite(rawSeconds) ? rawSeconds : 0;
+    const rawMessage = String(error?.message || error || 'Telegram auth failed');
+    if (!seconds) {
+        const match = rawMessage.match(/wait of (\d+) seconds/i);
+        if (match) seconds = Number(match[1]);
+    }
+    if (seconds > 0) {
+        const minutes = Math.ceil(seconds / 60);
+        return `Telegram тимчасово обмежив вхід через багато спроб. Зачекайте ${seconds} секунд (приблизно ${minutes} хв) і спробуйте знову.`;
+    }
+    return rawMessage;
 };
 
 const sessionsDir = path.join(runtimePaths.dataRoot, 'telegram_sessions');
@@ -166,7 +183,10 @@ const startAuthFlow = async () => {
                     if (state.authCache.phoneCode) return state.authCache.phoneCode;
                     return new Promise(resolve => state.authResolvers.phoneCode = resolve);
                 },
-                onError: (err) => console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err),
+                onError: (err) => {
+                    state.authError = formatAuthError(err);
+                    console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err);
+                },
             });
             
             console.log(`[User ${context.getUserId()}] Ви успішно авторизовані!`);
@@ -174,7 +194,8 @@ const startAuthFlow = async () => {
             return { success: true };
         } catch (error) {
             console.error(`[User ${context.getUserId()}] Помилка авторизації:`, error);
-            return { success: false, error: error.message };
+            state.authError = formatAuthError(error);
+            return { success: false, error: state.authError };
         } finally {
             state.authFlowActive = false;
             state.authFlowPromise = null;
@@ -212,6 +233,15 @@ const getClient = () => {
             return null;
         }
         return state.client;
+    } catch (e) {
+        return null;
+    }
+};
+
+const getAuthError = () => {
+    try {
+        const state = getTenantState();
+        return state.authError || null;
     } catch (e) {
         return null;
     }
@@ -265,6 +295,7 @@ module.exports = {
     resolveAuthStep,
     getClient,
     getAuthStep,
+    getAuthError,
     disconnectTelegramClient,
     logoutTelegramClient
 };

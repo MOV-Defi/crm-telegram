@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
-const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthStep } = require('./telegram');
+const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthStep, getAuthError } = require('./telegram');
 
 const app = express();
 
@@ -420,6 +420,7 @@ app.post('/api/auth/password', (req, res) => {
 app.get('/api/auth/status', async (req, res) => {
   const client = getClient();
   const step = getAuthStep();
+  const error = getAuthError();
   let connected = false;
   if (client && client.connected && !step) {
     try {
@@ -430,7 +431,7 @@ app.get('/api/auth/status', async (req, res) => {
       connected = false;
     }
   }
-  res.json({ connected, waitingFor: step });
+  res.json({ connected, waitingFor: step, error });
 });
 
 // --- API CRM ---

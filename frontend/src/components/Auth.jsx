@@ -146,6 +146,11 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                 const { data } = await requestJson(`${API_URL}/auth/status`);
                 if (data.connected) {
                     onAuthenticated();
+                } else if (data.error) {
+                    alert(data.error);
+                    setStep('phone');
+                    setInputValue('');
+                    setLoading(false);
                 } else if (data.waitingFor === 'password') {
                     setStep('password');
                     setLoading(false);
@@ -186,6 +191,11 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                   const { data } = await requestJson(`${API_URL}/auth/status`);
                   if (data.connected) {
                       onAuthenticated();
+                  } else if (data.error) {
+                      alert(data.error);
+                      setStep('phone');
+                      setInputValue('');
+                      setLoading(false);
                   } else {
                       setTimeout(pollStatus, 1500);
                   }
