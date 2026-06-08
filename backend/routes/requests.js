@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const context = require('../context');
 const runtimePaths = require('../runtime-paths');
-const { getClient, isAuthFlowActive } = require('../telegram');
+const { getClient, isAnyAuthFlowActive } = require('../telegram');
 const multer = require('multer');
 const fs = require('fs');
 const os = require('os');
@@ -15,7 +15,7 @@ const { parseWarehouseItemsFromFile } = require('../warehouse-file-items');
 
 const router = express.Router();
 router.use((req, res, next) => {
-  if (!isAuthFlowActive()) return next();
+  if (!isAnyAuthFlowActive()) return next();
   return res.status(423).json({ error: 'Триває авторизація Telegram. Завершіть вхід кодом з Telegram app.' });
 });
 

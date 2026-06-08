@@ -50,6 +50,7 @@ const getTenantState = () => {
             phoneCodeHash: null,
             isCodeViaApp: false,
             authCodeInfo: null,
+            qrLogin: null,
             authStep: null,
             authError: null,
             authFlowActive: false,
@@ -66,6 +67,7 @@ const resetAuthState = (state) => {
     state.phoneCodeHash = null;
     state.isCodeViaApp = false;
     state.authCodeInfo = null;
+    state.qrLogin = null;
     state.authStep = null;
     state.authError = null;
 };
@@ -130,6 +132,69 @@ const sendTelegramCode = async (state, phoneNumber) => {
         throw new Error('Telegram авторизувався одразу після відправки коду');
     }
     return sentCode;
+};
+
+const buildLoginUrl = (token) => `tg://login?token=${Buffer.from(token).toString('base64url')}`;
+
+const normalizeLoginTokenResult = async (state, result) => {
+    if (result instanceof Api.auth.LoginTokenSuccess) {
+        saveSession(state.client.session.save());
+        resetAuthState(state);
+        state.authFlowActive = false;
+        console.log(`[User ${context.getUserId()}] Telegram авторизований через QR/login token.`);
+        return { success: true, connected: true };
+    }
+    if (result instanceof Api.auth.LoginTokenMigrateTo) {
+        const migrated = await withTimeout(
+            state.client.invoke(new Api.auth.ImportLoginToken({ token: result.token }), result.dcId),
+            30000,
+            'Telegram importLoginToken timeout'
+        );
+        return normalizeLoginTokenResult(state, migrated);
+    }
+    if (result instanceof Api.auth.LoginToken) {
+        state.qrLogin = {
+            token: Buffer.from(result.token),
+            expires: Number(result.expires || 0),
+            url: buildLoginUrl(result.token)
+        };
+        state.authStep = 'qr';
+        state.authError = null;
+        return {
+            success: true,
+            waitingFor: 'qr',
+            qrLogin: {
+                url: state.qrLogin.url,
+                expires: state.qrLogin.expires
+            }
+        };
+    }
+    throw new Error('Telegram повернув невідомий QR login result');
+};
+
+const requestQrLogin = async () => {
+    const state = getTenantState();
+    if (!state.client) {
+        return { success: false, error: 'Telegram клієнт не ініціалізовано' };
+    }
+    state.authFlowActive = true;
+    await ensureConnected(state);
+    if (await state.client.checkAuthorization()) {
+        saveSession(state.client.session.save());
+        resetAuthState(state);
+        state.authFlowActive = false;
+        return { success: true, connected: true };
+    }
+    const result = await withTimeout(
+        state.client.invoke(new Api.auth.ExportLoginToken({
+            apiId: parseInt(state.apiId, 10),
+            apiHash: state.apiHash,
+            exceptIds: []
+        })),
+        30000,
+        'Telegram exportLoginToken timeout'
+    );
+    return normalizeLoginTokenResult(state, result);
 };
 
 const ensureConnected = async (state) => {
@@ -236,6 +301,15 @@ const getAuthStep = () => {
         const state = getTenantState();
         if (state.authError) return { step: 'error', error: state.authError };
         if (state.authStep === 'code') return { step: 'code', codeInfo: state.authCodeInfo || null };
+        if (state.authStep === 'qr') {
+            return {
+                step: 'qr',
+                qrLogin: state.qrLogin ? {
+                    url: state.qrLogin.url,
+                    expires: state.qrLogin.expires
+                } : null
+            };
+        }
         if (state.authStep) return state.authStep;
         if (state.authResolvers.password) return 'password';
         if (state.authResolvers.phoneCode) return 'code';
@@ -253,6 +327,13 @@ const isAuthFlowActive = () => {
     } catch (_) {
         return false;
     }
+};
+
+const isAnyAuthFlowActive = () => {
+    for (const state of clientsData.values()) {
+        if (state?.authFlowActive) return true;
+    }
+    return false;
 };
 
 const startAuthFlow = async () => {
@@ -512,9 +593,11 @@ module.exports = {
     resolveAuthStep,
     resolvePhoneNumber,
     resendAuthCode,
+    requestQrLogin,
     getClient,
     getAuthStep,
     isAuthFlowActive,
+    isAnyAuthFlowActive,
     disconnectTelegramClient,
     logoutTelegramClient
 };

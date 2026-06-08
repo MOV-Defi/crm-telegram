@@ -1,5 +1,5 @@
 const express = require('express');
-const { getClient, initTelegramClient, isAuthFlowActive } = require('../telegram');
+const { getClient, initTelegramClient, isAnyAuthFlowActive } = require('../telegram');
 const { Api } = require('telegram');
 const db = require('../db');
 const context = require('../context');
@@ -25,7 +25,7 @@ const MEDIA_BATCH_LIMIT = 4;
 const MEDIA_REQUEST_DELAY_MS = 1300;
 
 router.use((req, res, next) => {
-  if (!isAuthFlowActive()) return next();
+  if (!isAnyAuthFlowActive()) return next();
   return res.status(423).json({
     error: 'Триває авторизація Telegram. Завершіть вхід кодом з Telegram app, після цього чати завантажаться автоматично.'
   });
@@ -250,6 +250,9 @@ const ensureMessageMediaCached = async ({ client, chatId, messageId }) => {
     buffer = Buffer.from(buildContactVcard(contact), 'utf8');
     mediaMeta.originalName = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || `contact_${chatId}_${messageId}`;
   } else {
+    if (isAnyAuthFlowActive()) {
+      throw new Error('Telegram auth flow active; media download paused');
+    }
     buffer = await client.downloadMedia(message);
   }
   if (!buffer || buffer.length === 0) {
@@ -374,6 +377,7 @@ router.get('/dialogs', async (req, res) => {
             // Ліниве завантаження: обмежений батч, щоб не навантажувати Telegram API.
             let processed = 0;
             for (const dialog of dialogs) {
+                if (isAnyAuthFlowActive()) break;
                 if (processed >= AVATAR_BATCH_LIMIT) break;
                 const id = dialog.entity?.id ? dialog.entity.id.toString() : null;
                 if (id && dialog.entity && !avatarMap.has(id)) {
@@ -900,6 +904,7 @@ router.get('/messages/:id', async (req, res) => {
 
             let processedSenders = 0;
             for (const sid of senderIds) {
+                if (isAnyAuthFlowActive()) break;
                 if (processedSenders >= AVATAR_BATCH_LIMIT) break;
                 const entity = senderEntities[sid];
                 if (!entity || avatarMap.has(sid)) continue;
@@ -938,6 +943,7 @@ router.get('/messages/:id', async (req, res) => {
             
             let processedMedia = 0;
             for (const m of messages) {
+                if (isAnyAuthFlowActive()) break;
                 if (m.media && !mediaMap.has(m.id)) {
                     if (processedMedia >= MEDIA_BATCH_LIMIT) break;
                     const retryKey = `${rawPeerId}:${m.id}`;

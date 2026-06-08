@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
-const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, resendAuthCode, getClient, getAuthStep } = require('./telegram');
+const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, resendAuthCode, requestQrLogin, getClient, getAuthStep } = require('./telegram');
 
 const app = express();
 
@@ -442,6 +442,27 @@ app.post('/api/auth/resend-code', async (req, res) => {
   }
 });
 
+app.post('/api/auth/qr', async (req, res) => {
+  try {
+    let client = getClient();
+    if (!client || !client.connected) {
+      const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
+      const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
+      const apiId = String(idRow?.value || '').trim();
+      const apiHash = String(hashRow?.value || '').trim();
+      if (!apiId || !apiHash) {
+        return res.status(400).json({ success: false, error: 'Налаштування API відсутні. Вкажіть API ID та API HASH.' });
+      }
+      client = await initTelegramClient(apiId, apiHash);
+    }
+    const result = await requestQrLogin();
+    return res.status(result?.success ? 200 : 400).json(result || { success: false, error: 'Не вдалося створити Telegram login link' });
+  } catch (error) {
+    console.error('auth/qr error:', error);
+    res.status(400).json({ success: false, error: error.message || 'Не вдалося створити Telegram login link' });
+  }
+});
+
 app.post('/api/auth/password', async (req, res) => {
   const { password } = req.body;
   const result = await resolveAuthStep('password', password);
@@ -469,7 +490,8 @@ app.get('/api/auth/status', async (req, res) => {
       connected,
       waitingFor: step.step || null,
       error: step.error || null,
-      codeInfo: step.codeInfo || null
+      codeInfo: step.codeInfo || null,
+      qrLogin: step.qrLogin || null
     });
   }
   res.json({ connected, waitingFor: step });
