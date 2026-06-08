@@ -520,7 +520,10 @@ router.patch('/:id', upload.single('file'), (req, res) => {
     }
 
     const currentItems = normalizeOrderItems(normalizeOrderRow(current).items);
-    const nextItems = mergeOrderItems(currentItems, buildItemsFromTextOrFile(messageText, mediaPath, mediaName));
+    const parsedItems = buildItemsFromTextOrFile(messageText, mediaPath, mediaName);
+    const nextItems = req.file
+      ? parsedItems
+      : (currentItems.length > 0 ? mergeOrderItems(currentItems, parsedItems) : parsedItems);
 
     db.central.prepare(`
       UPDATE warehouse_orders
@@ -552,6 +555,46 @@ router.patch('/:id', upload.single('file'), (req, res) => {
     res.json(normalizeOrderRow(updated));
   } catch (_) {
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.patch('/:id/items/:itemId', (req, res) => {
+  try {
+    if (!canEditOrders(req)) return res.status(403).json({ error: 'Недостатньо прав' });
+    const id = Number.parseInt(req.params.id, 10);
+    const itemId = String(req.params.itemId || '').trim();
+    if (!Number.isFinite(id) || !itemId) return res.status(400).json({ error: 'Некоректні параметри' });
+    const current = db.central.prepare(`SELECT * FROM warehouse_orders WHERE id = ?`).get(id);
+    if (!current) return res.status(404).json({ error: 'Замовлення не знайдено' });
+
+    let found = false;
+    const currentItems = normalizeOrderItems(normalizeOrderRow(current).items);
+    const nextItems = currentItems.map((item) => {
+      if (String(item.id) !== itemId) return item;
+      found = true;
+      const patch = {};
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
+        const status = String(req.body.status || '').trim();
+        if (!ITEM_STATUS_SET.has(status)) throw new Error('Некоректний статус позиції');
+        patch.status = status;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, 'comment')) {
+        patch.comment = String(req.body.comment || '').trim();
+      }
+      return { ...item, ...patch };
+    });
+    if (!found) return res.status(404).json({ error: 'Позицію не знайдено' });
+
+    db.central.prepare(`
+      UPDATE warehouse_orders
+      SET items_json = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(JSON.stringify(nextItems), id);
+    const updated = db.central.prepare(`SELECT * FROM warehouse_orders WHERE id = ?`).get(id);
+    res.json(normalizeOrderRow(updated));
+  } catch (error) {
+    res.status(400).json({ error: error?.message || 'Не вдалося зберегти позицію' });
   }
 });
 

@@ -3271,11 +3271,33 @@ function App({ currentUser: initialUser }) {
       }
   };
 
-  const updateWarehouseOrderItem = (order, itemId, patch) => {
-      const nextItems = getWarehouseOrderItems(order).map((item) => (
-          String(item.id) === String(itemId) ? { ...item, ...patch } : item
-      ));
-      updateWarehouseOrderItems(order.id, nextItems);
+  const updateWarehouseOrderItem = async (order, itemId, patch) => {
+      const orderId = Number(order?.id);
+      if (!Number.isFinite(orderId) || !itemId) return;
+      const applyLocalPatch = (currentOrder) => ({
+          ...currentOrder,
+          items: getWarehouseOrderItems(currentOrder).map((item) => (
+              String(item.id) === String(itemId) ? { ...item, ...patch } : item
+          ))
+      });
+      setWarehouseOrders((prev) => prev.map((currentOrder) => (
+          Number(currentOrder.id) === orderId ? applyLocalPatch(currentOrder) : currentOrder
+      )));
+      setExpandedOrder((prev) => (prev && Number(prev.id) === orderId ? applyLocalPatch(prev) : prev));
+
+      try {
+          const res = await fetch(`${API_URL}/orders/${orderId}/items/${encodeURIComponent(String(itemId))}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(patch)
+          });
+          const updated = await parseApiJson(res, 'Не вдалося зберегти позицію');
+          setWarehouseOrders((prev) => prev.map((currentOrder) => (Number(currentOrder.id) === orderId ? updated : currentOrder)));
+          setExpandedOrder((prev) => (prev && Number(prev.id) === orderId ? updated : prev));
+      } catch (error) {
+          alert(error.message || 'Помилка збереження позиції');
+          loadWarehouseOrders();
+      }
   };
 
   const getDownloadFileNameFromHeaders = (res, fallback) => {
