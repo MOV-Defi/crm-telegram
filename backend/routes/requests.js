@@ -1681,6 +1681,7 @@ router.get('/history', (req, res) => {
             created_by_username,
             created_at
           FROM request_history
+          WHERE created_by_user_id = ?
           ORDER BY datetime(created_at) DESC, id DESC
           LIMIT ? OFFSET ?
         `
@@ -1698,15 +1699,16 @@ router.get('/history', (req, res) => {
             created_by_username,
             created_at
           FROM request_history
+          WHERE created_by_user_id = ?
           ORDER BY datetime(created_at) DESC, id DESC
           LIMIT ? OFFSET ?
         `
-    ).all(limit, offset).map((row) => ({
+    ).all(req.userId, limit, offset).map((row) => ({
       ...row,
       project_name: row.project_name || extractProjectNameFromMessageText(row.message_text)
     }));
 
-    const totalRow = db.central.prepare(`SELECT COUNT(*) AS total FROM request_history`).get();
+    const totalRow = db.central.prepare(`SELECT COUNT(*) AS total FROM request_history WHERE created_by_user_id = ?`).get(req.userId);
     const total = Number(totalRow?.total || 0);
     return res.json({
       items: rows,
