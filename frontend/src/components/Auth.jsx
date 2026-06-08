@@ -41,17 +41,10 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
 
   const describeCodeDelivery = () => {
     const delivery = String(codeInfo?.delivery || '').toLowerCase();
-    const nextType = codeInfo?.nextType ? String(codeInfo.nextType).replace(/^CodeType/, '') : '';
     if (delivery.includes('app')) {
-      const retryText = nextType && codeInfo?.timeout
-        ? ` Інший спосіб (${nextType}) Telegram дозволить приблизно через ${codeInfo.timeout} сек.`
-        : '';
-      return `Telegram відправив код у застосунок Telegram.${retryText}`;
+      return 'Telegram відправив код у застосунок Telegram.';
     }
-    if (delivery.includes('sms')) return 'Telegram відправив код через SMS.';
-    if (delivery.includes('call')) return 'Telegram відправив код через дзвінок.';
-    if (delivery) return `Telegram відправив код способом: ${codeInfo.delivery}.`;
-    return 'Введіть код підтвердження, який надіслав Telegram.';
+    return 'Введіть код підтвердження з офіційного застосунку Telegram.';
   };
 
   const waitForAuthStep = async (expectedSteps, timeoutMs = 12000) => {
