@@ -188,6 +188,7 @@ const resolveAuthStep = (step, value) => {
         const state = getTenantState();
         if (!String(value || '').trim()) return false;
         if (state.authResolvers[step]) {
+            state.authCache[step] = value;
             state.authResolvers[step](value);
             state.authResolvers[step] = null;
             return true;
