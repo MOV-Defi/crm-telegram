@@ -102,15 +102,17 @@ const codeClassName = (value) => String(value?.className || value?.constructor?.
 
 const buildCodeInfo = (sentCode, requested = 'normal') => {
     const delivery = codeClassName(sentCode?.type);
-    const nextType = codeClassName(sentCode?.nextType);
-    const timeout = Number.isFinite(Number(sentCode?.timeout)) ? Number(sentCode.timeout) : null;
     return {
         requested,
         delivery,
-        nextType: nextType || null,
-        timeout,
         isCodeViaApp: sentCode?.type instanceof Api.auth.SentCodeTypeApp
     };
+};
+
+const assertTelegramAppCode = (codeInfo) => {
+    if (!codeInfo?.isCodeViaApp) {
+        throw new Error('Telegram не відправив код у застосунок Telegram. Перевірте, що цей номер уже відкритий в офіційному Telegram app.');
+    }
 };
 
 const sendTelegramCode = async (state, phoneNumber) => {
@@ -298,10 +300,11 @@ const requestAuthCode = async (state, phone) => {
         throw new Error('Telegram не повернув phoneCodeHash після відправки коду');
     }
     state.phoneCodeHash = result.phoneCodeHash;
+    assertTelegramAppCode(codeInfo);
     state.isCodeViaApp = Boolean(codeInfo.isCodeViaApp);
     state.authCodeInfo = codeInfo;
     state.authStep = 'code';
-    console.log(`[User ${context.getUserId()}] Telegram code requested for ${maskPhone(phoneNumber)} (delivery=${codeInfo.delivery || 'unknown'}, next=${codeInfo.nextType || 'none'}, timeout=${codeInfo.timeout ?? 'none'}, requested=${codeInfo.requested}).`);
+    console.log(`[User ${context.getUserId()}] Telegram app code requested for ${maskPhone(phoneNumber)} (delivery=${codeInfo.delivery || 'unknown'}, requested=${codeInfo.requested}).`);
     return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp, codeInfo };
 };
 
@@ -329,11 +332,12 @@ const resendAuthCode = async () => {
     }
     const codeInfo = buildCodeInfo(result, 'repeat');
     state.phoneCodeHash = result.phoneCodeHash;
+    assertTelegramAppCode(codeInfo);
     state.isCodeViaApp = Boolean(codeInfo.isCodeViaApp);
     state.authCodeInfo = codeInfo;
     state.authStep = 'code';
     state.authError = null;
-    console.log(`[User ${context.getUserId()}] Telegram code re-requested for ${maskPhone(state.phoneNumber)} (delivery=${codeInfo.delivery || 'unknown'}, next=${codeInfo.nextType || 'none'}, timeout=${codeInfo.timeout ?? 'none'}, requested=${codeInfo.requested}).`);
+    console.log(`[User ${context.getUserId()}] Telegram app code re-requested for ${maskPhone(state.phoneNumber)} (delivery=${codeInfo.delivery || 'unknown'}, requested=${codeInfo.requested}).`);
     return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp, codeInfo };
 };
 
