@@ -155,15 +155,24 @@ const startAuthFlow = async () => {
             console.log(`[User ${context.getUserId()}] Починаємо client.start()...`);
             await state.client.start({
                 phoneNumber: async () => {
-                    if (state.authCache.phoneNumber) return state.authCache.phoneNumber;
+                    console.log(`[User ${context.getUserId()}] Telegram auth waiting for phone number`);
+                    if (state.authCache.phoneNumber) {
+                        console.log(`[User ${context.getUserId()}] Telegram auth using cached phone number`);
+                        return state.authCache.phoneNumber;
+                    }
                     return new Promise(resolve => state.authResolvers.phoneNumber = resolve);
                 },
                 password: async () => {
+                    console.log(`[User ${context.getUserId()}] Telegram auth waiting for 2FA password`);
                     if (state.authCache.password) return state.authCache.password;
                     return new Promise(resolve => state.authResolvers.password = resolve);
                 },
                 phoneCode: async () => {
-                    if (state.authCache.phoneCode) return state.authCache.phoneCode;
+                    console.log(`[User ${context.getUserId()}] Telegram auth waiting for code`);
+                    if (state.authCache.phoneCode) {
+                        console.log(`[User ${context.getUserId()}] Telegram auth using cached code`);
+                        return state.authCache.phoneCode;
+                    }
                     return new Promise(resolve => state.authResolvers.phoneCode = resolve);
                 },
                 onError: (err) => console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err),
@@ -190,12 +199,18 @@ const resolveAuthStep = (step, value) => {
         if (state.authResolvers[step]) {
             state.authResolvers[step](value);
             state.authResolvers[step] = null;
+            if (step === 'phoneNumber') {
+                console.log(`[User ${context.getUserId()}] Telegram auth phone accepted`);
+            }
             return true;
         }
         if (!state.authFlowActive) {
             return false;
         }
         state.authCache[step] = value;
+        if (step === 'phoneNumber') {
+            console.log(`[User ${context.getUserId()}] Telegram auth phone cached`);
+        }
         return true;
     } catch(e) {
         return false;
