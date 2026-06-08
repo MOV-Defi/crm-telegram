@@ -439,6 +439,9 @@ app.get('/api/auth/status', async (req, res) => {
     }
   }
   const step = getAuthStep();
+  if (step && typeof step === 'object') {
+    return res.json({ connected, waitingFor: step.step || null, error: step.error || null });
+  }
   res.json({ connected, waitingFor: step });
 });
 

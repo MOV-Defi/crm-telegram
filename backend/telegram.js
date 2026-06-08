@@ -42,6 +42,8 @@ const getTenantState = () => {
             clientOwnerUserId: null,
             authResolvers: { phoneNumber: null, phoneCode: null, password: null },
             authCache: { phoneNumber: null, phoneCode: null, password: null },
+            authStep: null,
+            authError: null,
             authFlowActive: false,
             authFlowPromise: null
         });
@@ -52,6 +54,8 @@ const getTenantState = () => {
 const resetAuthState = (state) => {
     state.authCache = { phoneNumber: null, phoneCode: null, password: null };
     state.authResolvers = { phoneNumber: null, phoneCode: null, password: null };
+    state.authStep = null;
+    state.authError = null;
 };
 
 const sessionsDir = path.join(runtimePaths.dataRoot, 'telegram_sessions');
@@ -73,9 +77,24 @@ const getSession = () => {
     }
   } catch (_) {}
 
-  // Intentional: do not fallback to legacy DB session key.
-  // This prevents accidental cross-account reuse when old data exists.
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'tg_session'").get();
+    const value = String(row?.value || '').trim();
+    if (value) return value;
+  } catch (_) {}
+
   return '';
+};
+
+const clearSession = () => {
+  const userId = context.getUserId();
+  try {
+    db.prepare("DELETE FROM settings WHERE key = 'tg_session'").run();
+  } catch (_) {}
+  try {
+    const filePath = getSessionFilePath(userId);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch (_) {}
 };
 
 const saveSession = (sessionString) => {
@@ -98,6 +117,13 @@ const initTelegramClient = async (apiId, apiHash) => {
   const userId = context.getUserId();
   const sessionString = getSession();
   const stringSession = new StringSession(sessionString);
+
+  if (state.client) {
+    try {
+      await state.client.disconnect();
+    } catch (_) {}
+  }
+  resetAuthState(state);
   
   state.client = new TelegramClient(stringSession, parseInt(apiId), apiHash, {
     connectionRetries: 5,
@@ -111,6 +137,11 @@ const initTelegramClient = async (apiId, apiHash) => {
       return state.client;
     } catch (e) {
       console.error(`[User ${context.getUserId()}] Не вдалося підключитися (сесія невірна або застаріла):`, e);
+      clearSession();
+      state.client = new TelegramClient(new StringSession(''), parseInt(apiId), apiHash, {
+        connectionRetries: 5,
+      });
+      state.clientOwnerUserId = userId;
     }
   }
 
@@ -120,22 +151,14 @@ const initTelegramClient = async (apiId, apiHash) => {
 const getAuthStep = () => {
     try {
         const state = getTenantState();
+        if (state.authError) return { step: 'error', error: state.authError };
+        if (state.authStep) return state.authStep;
         if (state.authResolvers.password) return 'password';
         if (state.authResolvers.phoneCode) return 'code';
         if (state.authResolvers.phoneNumber) return 'phone';
         return null;
-    } catch(e) {
-        const userId = context.getUserId();
-        // Start the background auth flow, preserving the user context
-        context.runWithContext({ userId }, () => {
-            startAuthFlow().catch(err => {
-                console.error(`[User ${userId}] Auth flow error:`, err);
-                const state = getTenantState();
-                state.currentAuthStep = { step: 'error', error: err.message };
-            });
-        });
-        
-        return { success: true };
+    } catch(_) {
+        return null;
     }
 };
 
@@ -156,14 +179,17 @@ const startAuthFlow = async () => {
             await state.client.start({
                 phoneNumber: async () => {
                     if (state.authCache.phoneNumber) return state.authCache.phoneNumber;
+                    state.authStep = 'phone';
                     return new Promise(resolve => state.authResolvers.phoneNumber = resolve);
                 },
                 password: async () => {
                     if (state.authCache.password) return state.authCache.password;
+                    state.authStep = 'password';
                     return new Promise(resolve => state.authResolvers.password = resolve);
                 },
                 phoneCode: async () => {
                     if (state.authCache.phoneCode) return state.authCache.phoneCode;
+                    state.authStep = 'code';
                     return new Promise(resolve => state.authResolvers.phoneCode = resolve);
                 },
                 onError: (err) => console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err),
@@ -171,9 +197,12 @@ const startAuthFlow = async () => {
             
             console.log(`[User ${context.getUserId()}] Ви успішно авторизовані!`);
             saveSession(state.client.session.save());
+            state.authStep = null;
+            state.authError = null;
             return { success: true };
         } catch (error) {
             console.error(`[User ${context.getUserId()}] Помилка авторизації:`, error);
+            state.authError = error.message;
             return { success: false, error: error.message };
         } finally {
             state.authFlowActive = false;
@@ -190,6 +219,7 @@ const resolveAuthStep = (step, value) => {
         if (state.authResolvers[step]) {
             state.authResolvers[step](value);
             state.authResolvers[step] = null;
+            state.authStep = null;
             return true;
         }
         if (!state.authFlowActive) {
@@ -250,11 +280,7 @@ const logoutTelegramClient = async () => {
         resetAuthState(state);
         state.authFlowPromise = null;
         state.authFlowActive = false;
-        db.prepare("DELETE FROM settings WHERE key = 'tg_session'").run();
-        try {
-          const filePath = getSessionFilePath(userId);
-          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        } catch (_) {}
+        clearSession();
     } catch(e) {}
 };
 

@@ -84,15 +84,11 @@ router.post('/telegram', async (req, res) => {
         db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('api_id', finalApiId);
         db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('api_hash', finalApiHash);
 
-        // Update locals
-        req.app.locals.API_ID = finalApiId;
-        req.app.locals.API_HASH = finalApiHash;
-
         // Re-init client in the current user's tenant context
         await new Promise((resolve, reject) => {
             context.runWithContext({ userId: req.userId }, async () => {
                 try {
-                    await initTelegramClient(req.app.locals.API_ID, req.app.locals.API_HASH);
+                    await initTelegramClient(finalApiId, finalApiHash);
                     resolve();
                 } catch (error) {
                     reject(error);

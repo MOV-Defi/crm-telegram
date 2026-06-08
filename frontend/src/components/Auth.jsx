@@ -19,7 +19,12 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
   ), [appTheme]);
 
   const requestJson = async (url, options) => {
-    const response = await fetch(url, options);
+    const token = String(localStorage.getItem('saas_token') || '').trim();
+    const headers = {
+      ...(options?.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    };
+    const response = await fetch(url, { ...(options || {}), headers });
     const raw = await response.text();
     let data = null;
     if (raw) {
@@ -38,7 +43,10 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       try {
-        const statusRes = await fetch(`${API_URL}/auth/status`);
+        const token = String(localStorage.getItem('saas_token') || '').trim();
+        const statusRes = await fetch(`${API_URL}/auth/status`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
         const statusData = await statusRes.json();
         if (statusData?.connected) {
           return { connected: true, waitingFor: null };

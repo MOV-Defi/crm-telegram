@@ -48,7 +48,12 @@ const fetchJsonWithTimeout = async (url, options = {}, timeoutMs = 7000) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
+    const token = String(localStorage.getItem('saas_token') || '').trim();
+    const headers = {
+      ...(options?.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    };
+    const res = await fetch(url, { ...options, headers, signal: controller.signal });
     const data = await res.json();
     return { res, data };
   } finally {
@@ -958,9 +963,13 @@ function App({ currentUser: initialUser }) {
       setLoading(true);
       try {
           console.log("Saving API settings...");
+          const token = String(localStorage.getItem('saas_token') || '').trim();
           const res = await fetch(`${API_URL}/settings/telegram`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                  'Content-Type': 'application/json',
+                  ...(token ? { Authorization: `Bearer ${token}` } : {})
+              },
               body: JSON.stringify({ apiId: settingsApiId, apiHash: settingsApiHash })
           });
           const data = await res.json();
@@ -972,7 +981,9 @@ function App({ currentUser: initialUser }) {
               setApiConfigured(true);
               setShowSettingsModal(false);
               
-              const statusRes = await fetch(`${API_URL}/auth/status`);
+              const statusRes = await fetch(`${API_URL}/auth/status`, {
+                  headers: token ? { Authorization: `Bearer ${token}` } : {}
+              });
               const statusData = await statusRes.json();
               console.log("Auth status data:", statusData);
               if (statusData?.connected) {
@@ -5749,7 +5760,10 @@ function App({ currentUser: initialUser }) {
             
             <div className="mt-auto pt-4 flex flex-col gap-2">
                 <button onClick={() => {
-                    fetch(`${API_URL}/settings/telegram`).then(r=>r.json()).then(d=>{
+                    const token = String(localStorage.getItem('saas_token') || '').trim();
+                    fetch(`${API_URL}/settings/telegram`, {
+                        headers: token ? { Authorization: `Bearer ${token}` } : {}
+                    }).then(r=>r.json()).then(d=>{
                         setSettingsApiId(d.apiId || '');
                         setSettingsApiHash(''); // do not show hash fully
                         loadMediaStorageStats();
