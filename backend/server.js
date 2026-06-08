@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
-const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthStep } = require('./telegram');
+const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthStep, getAuthError } = require('./telegram');
 
 const app = express();
 
@@ -367,8 +367,8 @@ app.post('/api/auth/start', async (req, res) => {
       const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
       const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
 
-      const API_ID = String(idRow?.value || '').trim();
-      const API_HASH = String(hashRow?.value || '').trim();
+      const API_ID = String(idRow?.value || process.env.API_ID || '').trim();
+      const API_HASH = String(hashRow?.value || process.env.API_HASH || '').trim();
 
       if (!API_ID || !API_HASH) {
         return res.status(500).json({ success: false, error: 'Налаштування API відсутні. Будь ласка, вкажіть API ID та API HASH в налаштуваннях.' });
@@ -439,7 +439,8 @@ app.get('/api/auth/status', async (req, res) => {
     }
   }
   const step = getAuthStep();
-  res.json({ connected, waitingFor: step });
+  const error = getAuthError();
+  res.json({ connected, waitingFor: step, error });
 });
 
 // --- API CRM ---
