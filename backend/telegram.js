@@ -246,10 +246,26 @@ const getAuthStep = () => {
     }
 };
 
+const isAuthFlowActive = () => {
+    try {
+        const state = getTenantState();
+        return Boolean(state.authFlowActive);
+    } catch (_) {
+        return false;
+    }
+};
+
 const startAuthFlow = async () => {
     const state = getTenantState();
     if (!state.client) {
         return { success: false, error: 'Telegram клієнт не ініціалізовано' };
+    }
+    if (state.authFlowActive && state.authStep) {
+        return {
+            success: true,
+            waitingFor: state.authStep,
+            codeInfo: state.authCodeInfo || null
+        };
     }
     resetAuthState(state);
     state.authFlowActive = true;
@@ -498,6 +514,7 @@ module.exports = {
     resendAuthCode,
     getClient,
     getAuthStep,
+    isAuthFlowActive,
     disconnectTelegramClient,
     logoutTelegramClient
 };

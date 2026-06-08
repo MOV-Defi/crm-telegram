@@ -390,15 +390,20 @@ app.post('/api/auth/start', async (req, res) => {
     if (!userId) {
       throw new Error('Database access outside of user context (SaaS isolation error)');
     }
-    context.runWithContext({ userId }, () => {
-      startAuthFlow().then((result) => {
-        console.log(`[User ${userId}] Auth flow finished:`, result);
-      }).catch((error) => {
-        console.error(`[User ${userId}] Auth flow error:`, error);
+    const result = await new Promise((resolve, reject) => {
+      context.runWithContext({ userId }, async () => {
+        try {
+          const authResult = await startAuthFlow();
+          console.log(`[User ${userId}] Auth flow ready:`, authResult);
+          resolve(authResult);
+        } catch (error) {
+          console.error(`[User ${userId}] Auth flow error:`, error);
+          reject(error);
+        }
       });
     });
 
-    res.json({ success: true, message: 'Auth flow started. Please provide phone number next.' });
+    res.status(result?.success ? 200 : 400).json(result || { success: false, error: 'Не вдалося запустити авторизацію Telegram' });
   } catch (error) {
     console.error('auth/start error:', error);
     sendServerError(res, 'Не вдалося запустити авторизацію Telegram');

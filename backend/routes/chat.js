@@ -1,5 +1,5 @@
 const express = require('express');
-const { getClient, initTelegramClient } = require('../telegram');
+const { getClient, initTelegramClient, isAuthFlowActive } = require('../telegram');
 const { Api } = require('telegram');
 const db = require('../db');
 const context = require('../context');
@@ -23,6 +23,13 @@ const mediaRetryAfterByMessage = new Map();
 const MEDIA_RETRY_MS = 15 * 60 * 1000;
 const MEDIA_BATCH_LIMIT = 4;
 const MEDIA_REQUEST_DELAY_MS = 1300;
+
+router.use((req, res, next) => {
+  if (!isAuthFlowActive()) return next();
+  return res.status(423).json({
+    error: 'Триває авторизація Telegram. Завершіть вхід кодом з Telegram app, після цього чати завантажаться автоматично.'
+  });
+});
 
 const canRequestForumTopics = (entity) => {
   if (!entity) return false;
