@@ -221,7 +221,10 @@ const startAuthFlow = async () => {
         return { success: false, error: 'Telegram клієнт не ініціалізовано' };
     }
     if (state.authFlowActive && state.authFlowPromise) {
-        return state.authFlowPromise;
+        console.warn(`[User ${context.getUserId()}] Restarting stale Telegram auth flow.`);
+        await recreateAuthClient(state);
+        state.authFlowActive = false;
+        state.authFlowPromise = null;
     }
     resetAuthState(state);
     state.authFlowActive = true;
