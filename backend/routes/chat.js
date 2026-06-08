@@ -1,5 +1,5 @@
 const express = require('express');
-const { getClient, initTelegramClient, isAnyAuthFlowActive } = require('../telegram');
+const { getClient, initTelegramClient } = require('../telegram');
 const { Api } = require('telegram');
 const db = require('../db');
 const context = require('../context');
@@ -23,23 +23,6 @@ const mediaRetryAfterByMessage = new Map();
 const MEDIA_RETRY_MS = 15 * 60 * 1000;
 const MEDIA_BATCH_LIMIT = 4;
 const MEDIA_REQUEST_DELAY_MS = 1300;
-
-router.use((req, res, next) => {
-  if (!isAnyAuthFlowActive()) return next();
-  return res.status(423).json({
-    error: 'Триває авторизація Telegram. Завершіть вхід кодом з Telegram app, після цього чати завантажаться автоматично.'
-  });
-});
-
-const canRequestForumTopics = (entity) => {
-  if (!entity) return false;
-  return Boolean(entity.forum) && String(entity.className || entity._ || '').toLowerCase().includes('channel');
-};
-
-const isNonForumTopicsError = (error) => {
-  const message = String(error?.message || error || '');
-  return /Cannot cast .*InputPeerChat.*InputChannel|INPUTCHANNEL|TOPIC|FORUM|CHANNEL_INVALID|CHANNEL_PRIVATE|PEER_ID_INVALID|CHAT_ID_INVALID/i.test(message);
-};
 
 const isAvatarTransientError = (error) => {
   const text = String(error?.message || error || '').toLowerCase();
@@ -250,9 +233,6 @@ const ensureMessageMediaCached = async ({ client, chatId, messageId }) => {
     buffer = Buffer.from(buildContactVcard(contact), 'utf8');
     mediaMeta.originalName = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || `contact_${chatId}_${messageId}`;
   } else {
-    if (isAnyAuthFlowActive()) {
-      throw new Error('Telegram auth flow active; media download paused');
-    }
     buffer = await client.downloadMedia(message);
   }
   if (!buffer || buffer.length === 0) {
@@ -361,7 +341,6 @@ router.get('/dialogs', async (req, res) => {
             date: d.message?.date,
             isIgnored: ignoredSet.has(id),
             isMuted: muteUntil > currentUnix,
-            canLoadTopics: canRequestForumTopics(d.entity),
             avatarPath: id ? avatarMap.get(id) : null
         };
     }).filter(d => d.id !== null && !(d.isChannel && !d.isGroup));
@@ -377,7 +356,6 @@ router.get('/dialogs', async (req, res) => {
             // Ліниве завантаження: обмежений батч, щоб не навантажувати Telegram API.
             let processed = 0;
             for (const dialog of dialogs) {
-                if (isAnyAuthFlowActive()) break;
                 if (processed >= AVATAR_BATCH_LIMIT) break;
                 const id = dialog.entity?.id ? dialog.entity.id.toString() : null;
                 if (id && dialog.entity && !avatarMap.has(id)) {
@@ -439,11 +417,6 @@ router.get('/:id/topics', async (req, res) => {
       peerCandidate = BigInt(rawPeerId);
     }
 
-    const entity = await client.getEntity(peerCandidate).catch(() => null);
-    if (!canRequestForumTopics(entity)) {
-      return res.json({ topics: [] });
-    }
-
     const channel = await client.getInputEntity(peerCandidate);
     const result = await client.invoke(new Api.channels.GetForumTopics({
       channel,
@@ -469,7 +442,8 @@ router.get('/:id/topics', async (req, res) => {
 
     return res.json({ topics: mapped });
   } catch (error) {
-    if (isNonForumTopicsError(error)) {
+    const message = String(error?.message || '');
+    if (/TOPIC|FORUM|CHANNEL_INVALID|CHANNEL_PRIVATE|PEER_ID_INVALID|CHAT_ID_INVALID/i.test(message)) {
       return res.json({ topics: [] });
     }
     console.error('topics GET error:', error);
@@ -904,7 +878,6 @@ router.get('/messages/:id', async (req, res) => {
 
             let processedSenders = 0;
             for (const sid of senderIds) {
-                if (isAnyAuthFlowActive()) break;
                 if (processedSenders >= AVATAR_BATCH_LIMIT) break;
                 const entity = senderEntities[sid];
                 if (!entity || avatarMap.has(sid)) continue;
@@ -943,7 +916,6 @@ router.get('/messages/:id', async (req, res) => {
             
             let processedMedia = 0;
             for (const m of messages) {
-                if (isAnyAuthFlowActive()) break;
                 if (m.media && !mediaMap.has(m.id)) {
                     if (processedMedia >= MEDIA_BATCH_LIMIT) break;
                     const retryKey = `${rawPeerId}:${m.id}`;

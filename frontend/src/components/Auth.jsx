@@ -19,12 +19,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
   ), [appTheme]);
 
   const requestJson = async (url, options) => {
-    const token = String(localStorage.getItem('saas_token') || '').trim();
-    const headers = {
-      ...(options?.headers || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    };
-    const response = await fetch(url, { ...(options || {}), headers });
+    const response = await fetch(url, options);
     const raw = await response.text();
     let data = null;
     if (raw) {
@@ -43,10 +38,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       try {
-        const token = String(localStorage.getItem('saas_token') || '').trim();
-        const statusRes = await fetch(`${API_URL}/auth/status`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
+        const statusRes = await fetch(`${API_URL}/auth/status`);
         const statusData = await statusRes.json();
         if (statusData?.connected) {
           return { connected: true, waitingFor: null };
@@ -91,16 +83,31 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             return false;
         };
 
-        const started = await tryStartFlow();
-        if (!started) {
-            throw new Error('Не вдалося запустити авторизацію Telegram. Оновіть сторінку і спробуйте ще раз.');
+        await tryStartFlow();
+
+        const statusAfterStart = await waitForAuthStep(['phone', 'code', 'password'], 12000);
+        if (statusAfterStart?.error) {
+            throw new Error(statusAfterStart.error);
+        }
+        if (statusAfterStart?.connected) {
+            onAuthenticated();
+            return;
+        }
+        if (statusAfterStart?.waitingFor === 'password') {
+            setStep('password');
+            setInputValue('');
+            return;
+        }
+        if (statusAfterStart?.waitingFor === 'code') {
+            setStep('code');
+            setInputValue('');
+            return;
         }
 
-        // Старий client.start() може попросити номер із затримкою, тому передаємо його одразу.
-        // Backend збереже номер у cache, якщо callback phoneNumber ще не готовий.
+        // Відправляємо номер з повторними спробами
         let phoneAccepted = false;
         let lastPhoneError = null;
-        for (let attempt = 0; attempt < 6; attempt += 1) {
+        for (let attempt = 0; attempt < 4; attempt += 1) {
             const phoneReq = await requestJson(`${API_URL}/auth/phone`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -114,9 +121,9 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             }
             const maybeRace = String(phoneData?.message || phoneData?.error || '').toLowerCase().includes('no active phone request');
             lastPhoneError = phoneData?.error || phoneData?.message || 'Номер не прийнято. Спробуйте ще раз.';
-            console.warn('auth/phone rejected:', lastPhoneError);
             if (maybeRace) {
                 await tryStartFlow();
+                await waitForAuthStep('phone', 4000);
                 await sleep(350);
                 continue;
             }
@@ -275,20 +282,18 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
               </div>
               
               {step !== 'waiting' && (
-              <div className="space-y-3">
-                <button 
-                    onClick={handleNext}
-                    disabled={loading || !inputValue}
-                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-xl px-4 py-3 transition shadow-lg shadow-blue-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                    {loading ? (
-                      <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                    ) : 'Продовжити'}
-                </button>
-              </div>
+              <button 
+                  onClick={handleNext}
+                  disabled={loading || !inputValue}
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-xl px-4 py-3 transition shadow-lg shadow-blue-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                  {loading ? (
+                    <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : 'Продовжити'}
+              </button>
               )}
           </div>
       </div>

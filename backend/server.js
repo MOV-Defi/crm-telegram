@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
-const { initTelegramClient, startAuthFlow, resolveAuthStep, resolvePhoneNumber, getClient, getAuthStep } = require('./telegram');
+const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthStep } = require('./telegram');
 
 const app = express();
 
@@ -355,11 +355,6 @@ app.patch('/api/system/users/:id/permissions', verifyAuthToken, requireAdmin, (r
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth/')) {
-    const hasHeaderToken = Boolean(req.headers.authorization && String(req.headers.authorization).startsWith('Bearer '));
-    const hasQueryToken = Boolean(String(req.query?.token || '').trim());
-    console.log(`[auth:req] ${req.method} ${req.path} token=${hasHeaderToken || hasQueryToken ? 'yes' : 'no'}`);
-  }
   if (req.path.startsWith('/system/')) return next();
   return verifyAuthToken(req, res, next);
 });
@@ -367,9 +362,8 @@ app.use('/api', (req, res, next) => {
 // --- TELEGRAM API AUTH FLOW ---
 app.post('/api/auth/start', async (req, res) => {
   try {
-    console.log(`[auth:start] user=${req.userId || 'unknown'}`);
     let client = getClient();
-    if (!client || !client.connected) {
+    if (!client) {
       const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
       const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
 
@@ -407,8 +401,7 @@ app.post('/api/auth/start', async (req, res) => {
 
 app.post('/api/auth/phone', async (req, res) => {
   const { phone } = req.body;
-  console.log(`[auth:phone] user=${req.userId || 'unknown'} phone=${String(phone || '').trim() ? 'present' : 'empty'}`);
-  const result = await resolvePhoneNumber(phone);
+  const result = await resolveAuthStep('phoneNumber', phone);
   if (result && typeof result === 'object') {
     return res.status(result.success ? 200 : 400).json(result);
   }
@@ -446,13 +439,6 @@ app.get('/api/auth/status', async (req, res) => {
     }
   }
   const step = getAuthStep();
-  if (step && typeof step === 'object') {
-    return res.json({
-      connected,
-      waitingFor: step.step || null,
-      error: step.error || null
-    });
-  }
   res.json({ connected, waitingFor: step });
 });
 

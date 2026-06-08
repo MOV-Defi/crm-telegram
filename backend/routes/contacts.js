@@ -1,13 +1,8 @@
 const express = require('express');
-const { getClient, isAnyAuthFlowActive } = require('../telegram');
+const { getClient } = require('../telegram');
 const { Api } = require('telegram');
 
 const router = express.Router();
-
-router.use((req, res, next) => {
-  if (!isAnyAuthFlowActive()) return next();
-  return res.status(423).json({ error: 'Триває авторизація Telegram. Завершіть вхід кодом з Telegram app.' });
-});
 
 router.get('/', async (req, res) => {
   try {

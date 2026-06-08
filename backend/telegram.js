@@ -73,12 +73,8 @@ const getSession = () => {
     }
   } catch (_) {}
 
-  try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'tg_session'").get();
-    const value = String(row?.value || '').trim();
-    if (value) return value;
-  } catch (_) {}
-
+  // Intentional: do not fallback to legacy DB session key.
+  // This prevents accidental cross-account reuse when old data exists.
   return '';
 };
 
@@ -143,22 +139,6 @@ const getAuthStep = () => {
     }
 };
 
-const isAuthFlowActive = () => {
-    try {
-        const state = getTenantState();
-        return Boolean(state.authFlowActive);
-    } catch (_) {
-        return false;
-    }
-};
-
-const isAnyAuthFlowActive = () => {
-    for (const state of clientsData.values()) {
-        if (state?.authFlowActive) return true;
-    }
-    return false;
-};
-
 const startAuthFlow = async () => {
     const state = getTenantState();
     if (!state.client) {
@@ -202,8 +182,6 @@ const startAuthFlow = async () => {
     })();
     return state.authFlowPromise;
 };
-
-const resolvePhoneNumber = (phone) => resolveAuthStep('phoneNumber', phone);
 
 const resolveAuthStep = (step, value) => {
     try {
@@ -284,11 +262,8 @@ module.exports = {
     initTelegramClient,
     startAuthFlow,
     resolveAuthStep,
-    resolvePhoneNumber,
     getClient,
     getAuthStep,
-    isAuthFlowActive,
-    isAnyAuthFlowActive,
     disconnectTelegramClient,
     logoutTelegramClient
 };
