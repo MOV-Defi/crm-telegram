@@ -219,7 +219,9 @@ const runAuthStartOnce = async (state) => {
         },
         onError: (error) => {
             state.currentAuthError = error?.message || String(error || 'Telegram auth error');
+            state.currentAuthStep = 'error';
             console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, error);
+            return true;
         },
     }), waitForCodeStepAfterPhone(state)]);
 };
@@ -243,9 +245,9 @@ const startAuthFlow = async () => {
                     await runAuthStartOnce(state);
                     break;
                 } catch (error) {
-                    const canRetry = attempt === 1 && isRetryableAuthTransportError(error) && state.authCache.phoneNumber;
+                    const canRetry = attempt === 1 && (isRetryableAuthTransportError(error) || isRetryableAuthTransportError(state.currentAuthError)) && state.authCache.phoneNumber;
                     if (!canRetry) throw error;
-                    console.warn(`[User ${context.getUserId()}] Telegram auth transport failed, retrying with fresh client:`, error?.message || error);
+                    console.warn(`[User ${context.getUserId()}] Telegram auth transport failed, retrying with fresh client:`, state.currentAuthError || error?.message || error);
                     await recreateAuthClient(state);
                 }
             }
