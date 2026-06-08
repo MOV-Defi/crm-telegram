@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
-const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthStep, getAuthError } = require('./telegram');
+const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthStep } = require('./telegram');
 
 const app = express();
 
@@ -399,31 +399,22 @@ app.post('/api/auth/start', async (req, res) => {
   }
 });
 
-app.post('/api/auth/phone', async (req, res) => {
+app.post('/api/auth/phone', (req, res) => {
   const { phone } = req.body;
-  const result = await resolveAuthStep('phoneNumber', phone);
-  if (result && typeof result === 'object') {
-    return res.status(result.success ? 200 : 400).json(result);
-  }
-  res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Phone accepted' : 'No active phone request' });
+  const resolved = resolveAuthStep('phoneNumber', phone);
+  res.json({ success: resolved, message: resolved ? 'Phone accepted' : 'No active phone request' });
 });
 
-app.post('/api/auth/code', async (req, res) => {
+app.post('/api/auth/code', (req, res) => {
   const { code } = req.body;
-  const result = await resolveAuthStep('phoneCode', code);
-  if (result && typeof result === 'object') {
-    return res.status(result.success ? 200 : 400).json(result);
-  }
-  res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Code accepted' : 'No active code request' });
+  const resolved = resolveAuthStep('phoneCode', code);
+  res.json({ success: resolved, message: resolved ? 'Code accepted' : 'No active code request' });
 });
 
-app.post('/api/auth/password', async (req, res) => {
+app.post('/api/auth/password', (req, res) => {
   const { password } = req.body;
-  const result = await resolveAuthStep('password', password);
-  if (result && typeof result === 'object') {
-    return res.status(result.success ? 200 : 400).json(result);
-  }
-  res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Password accepted' : 'No active password request' });
+  const resolved = resolveAuthStep('password', password);
+  res.json({ success: resolved, message: resolved ? 'Password accepted' : 'No active password request' });
 });
 
 app.get('/api/auth/status', async (req, res) => {
@@ -439,8 +430,7 @@ app.get('/api/auth/status', async (req, res) => {
     }
   }
   const step = getAuthStep();
-  const error = getAuthError();
-  res.json({ connected, waitingFor: step, error });
+  res.json({ connected, waitingFor: step });
 });
 
 // --- API CRM ---

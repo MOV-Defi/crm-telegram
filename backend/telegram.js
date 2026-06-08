@@ -40,14 +40,10 @@ const getTenantState = () => {
             userId,
             client: null,
             clientOwnerUserId: null,
-            apiId: null,
-            apiHash: null,
             authResolvers: { phoneNumber: null, phoneCode: null, password: null },
             authCache: { phoneNumber: null, phoneCode: null, password: null },
             authFlowActive: false,
-            authFlowPromise: null,
-            currentAuthStep: null,
-            currentAuthError: null
+            authFlowPromise: null
         });
     }
     return clientsData.get(userId);
@@ -56,8 +52,6 @@ const getTenantState = () => {
 const resetAuthState = (state) => {
     state.authCache = { phoneNumber: null, phoneCode: null, password: null };
     state.authResolvers = { phoneNumber: null, phoneCode: null, password: null };
-    state.currentAuthStep = null;
-    state.currentAuthError = null;
 };
 
 const sessionsDir = path.join(runtimePaths.dataRoot, 'telegram_sessions');
@@ -99,20 +93,15 @@ const saveSession = (sessionString) => {
   }
 };
 
-const createTelegramClient = (apiId, apiHash, sessionString = '') => (
-  new TelegramClient(new StringSession(sessionString), parseInt(apiId, 10), apiHash, {
-    connectionRetries: 5,
-  })
-);
-
 const initTelegramClient = async (apiId, apiHash) => {
   const state = getTenantState();
   const userId = context.getUserId();
   const sessionString = getSession();
-
-  state.apiId = apiId;
-  state.apiHash = apiHash;
-  state.client = createTelegramClient(apiId, apiHash, sessionString);
+  const stringSession = new StringSession(sessionString);
+  
+  state.client = new TelegramClient(stringSession, parseInt(apiId), apiHash, {
+    connectionRetries: 5,
+  });
   state.clientOwnerUserId = userId;
 
   if (sessionString) {
@@ -131,88 +120,23 @@ const initTelegramClient = async (apiId, apiHash) => {
 const getAuthStep = () => {
     try {
         const state = getTenantState();
-        if (state.currentAuthStep) return state.currentAuthStep;
         if (state.authResolvers.password) return 'password';
         if (state.authResolvers.phoneCode) return 'code';
         if (state.authResolvers.phoneNumber) return 'phone';
         return null;
-    } catch (error) {
-        return null;
+    } catch(e) {
+        const userId = context.getUserId();
+        // Start the background auth flow, preserving the user context
+        context.runWithContext({ userId }, () => {
+            startAuthFlow().catch(err => {
+                console.error(`[User ${userId}] Auth flow error:`, err);
+                const state = getTenantState();
+                state.currentAuthStep = { step: 'error', error: err.message };
+            });
+        });
+        
+        return { success: true };
     }
-};
-
-const getAuthError = () => {
-    try {
-        const state = getTenantState();
-        return state.currentAuthError || null;
-    } catch (error) {
-        return null;
-    }
-};
-
-const isRetryableAuthTransportError = (error) => {
-    const text = String(error?.message || error || '');
-    return /invalid new nonce hash|websocket connection failed|connection closed|timeout|network/i.test(text);
-};
-
-const recreateAuthClient = async (state) => {
-    if (state.client) {
-        try {
-            await state.client.disconnect();
-        } catch (error) {}
-    }
-    const apiId = String(process.env.API_ID || '').trim()
-        || state.apiId
-        || String(db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get()?.value || '').trim();
-    const apiHash = String(process.env.API_HASH || '').trim()
-        || state.apiHash
-        || String(db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get()?.value || '').trim();
-    if (!apiId || !apiHash) {
-        throw new Error('Налаштування API відсутні. Будь ласка, вкажіть API ID та API HASH в налаштуваннях.');
-    }
-    state.apiId = apiId;
-    state.apiHash = apiHash;
-    state.client = createTelegramClient(apiId, apiHash, '');
-    state.clientOwnerUserId = context.getUserId();
-    state.authResolvers = { phoneNumber: null, phoneCode: null, password: null };
-    state.currentAuthStep = null;
-    state.currentAuthError = null;
-};
-
-const runAuthStartOnce = async (state) => {
-    await state.client.start({
-        phoneNumber: async () => {
-            console.log(`[User ${context.getUserId()}] Telegram auth waiting for phone number`);
-            if (state.authCache.phoneNumber) {
-                console.log(`[User ${context.getUserId()}] Telegram auth using cached phone number`);
-                return state.authCache.phoneNumber;
-            }
-            state.currentAuthStep = 'phone';
-            return new Promise(resolve => state.authResolvers.phoneNumber = resolve);
-        },
-        password: async () => {
-            console.log(`[User ${context.getUserId()}] Telegram auth waiting for 2FA password`);
-            if (state.authCache.password) {
-                console.log(`[User ${context.getUserId()}] Telegram auth using cached 2FA password`);
-                return state.authCache.password;
-            }
-            state.currentAuthStep = 'password';
-            return new Promise(resolve => state.authResolvers.password = resolve);
-        },
-        phoneCode: async () => {
-            console.log(`[User ${context.getUserId()}] Telegram auth waiting for code`);
-            if (state.authCache.phoneCode) {
-                console.log(`[User ${context.getUserId()}] Telegram auth using cached code`);
-                return state.authCache.phoneCode;
-            }
-            state.currentAuthStep = 'code';
-            return new Promise(resolve => state.authResolvers.phoneCode = resolve);
-        },
-        onError: (error) => {
-            state.currentAuthError = error?.message || String(error || 'Telegram auth error');
-            console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, error);
-        },
-    });
 };
 
 const startAuthFlow = async () => {
@@ -221,10 +145,7 @@ const startAuthFlow = async () => {
         return { success: false, error: 'Telegram клієнт не ініціалізовано' };
     }
     if (state.authFlowActive && state.authFlowPromise) {
-        console.warn(`[User ${context.getUserId()}] Restarting stale Telegram auth flow.`);
-        await recreateAuthClient(state);
-        state.authFlowActive = false;
-        state.authFlowPromise = null;
+        return state.authFlowPromise;
     }
     resetAuthState(state);
     state.authFlowActive = true;
@@ -232,27 +153,27 @@ const startAuthFlow = async () => {
     state.authFlowPromise = (async () => {
         try {
             console.log(`[User ${context.getUserId()}] Починаємо client.start()...`);
-            for (let attempt = 1; attempt <= 2; attempt += 1) {
-                try {
-                    await runAuthStartOnce(state);
-                    break;
-                } catch (error) {
-                    const canRetry = attempt === 1 && isRetryableAuthTransportError(error) && state.authCache.phoneNumber;
-                    if (!canRetry) throw error;
-                    console.warn(`[User ${context.getUserId()}] Telegram auth transport failed, retrying with fresh client:`, error?.message || error);
-                    await recreateAuthClient(state);
-                }
-            }
+            await state.client.start({
+                phoneNumber: async () => {
+                    if (state.authCache.phoneNumber) return state.authCache.phoneNumber;
+                    return new Promise(resolve => state.authResolvers.phoneNumber = resolve);
+                },
+                password: async () => {
+                    if (state.authCache.password) return state.authCache.password;
+                    return new Promise(resolve => state.authResolvers.password = resolve);
+                },
+                phoneCode: async () => {
+                    if (state.authCache.phoneCode) return state.authCache.phoneCode;
+                    return new Promise(resolve => state.authResolvers.phoneCode = resolve);
+                },
+                onError: (err) => console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err),
+            });
             
             console.log(`[User ${context.getUserId()}] Ви успішно авторизовані!`);
-            state.currentAuthStep = null;
-            state.currentAuthError = null;
             saveSession(state.client.session.save());
             return { success: true };
         } catch (error) {
             console.error(`[User ${context.getUserId()}] Помилка авторизації:`, error);
-            state.currentAuthStep = 'error';
-            state.currentAuthError = error?.message || String(error || 'Telegram auth failed');
             return { success: false, error: error.message };
         } finally {
             state.authFlowActive = false;
@@ -267,23 +188,14 @@ const resolveAuthStep = (step, value) => {
         const state = getTenantState();
         if (!String(value || '').trim()) return false;
         if (state.authResolvers[step]) {
-            state.authCache[step] = value;
             state.authResolvers[step](value);
             state.authResolvers[step] = null;
-            state.currentAuthStep = null;
-            state.currentAuthError = null;
-            if (step === 'phoneNumber') {
-                console.log(`[User ${context.getUserId()}] Telegram auth phone accepted`);
-            }
             return true;
         }
         if (!state.authFlowActive) {
             return false;
         }
         state.authCache[step] = value;
-        if (step === 'phoneNumber') {
-            console.log(`[User ${context.getUserId()}] Telegram auth phone cached`);
-        }
         return true;
     } catch(e) {
         return false;
@@ -352,7 +264,6 @@ module.exports = {
     resolveAuthStep,
     getClient,
     getAuthStep,
-    getAuthError,
     disconnectTelegramClient,
     logoutTelegramClient
 };

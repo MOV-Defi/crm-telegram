@@ -44,8 +44,6 @@ const SystemAuth = ({ onLogin }) => {
           localStorage.setItem('saas_username', loginData.username);
           window.dispatchEvent(new Event('auth-success'));
           onLogin(loginData.username);
-        } else {
-          throw new Error(loginData.error || 'Акаунт створено, але автоматичний вхід не пройшов. Спробуйте увійти вручну.');
         }
       }
     } catch (err) {

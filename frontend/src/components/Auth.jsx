@@ -12,8 +12,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
   const [step, setStep] = useState('phone'); // phone, code, password
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [statusMessage, setStatusMessage] = useState('');
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const logoSrc = useMemo(() => (
@@ -45,9 +43,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
         if (statusData?.connected) {
           return { connected: true, waitingFor: null };
         }
-        if (statusData?.error) {
-          return { connected: false, waitingFor: statusData?.waitingFor || null, error: statusData.error };
-        }
         if (acceptedSteps.includes(statusData?.waitingFor)) {
           return statusData;
         }
@@ -60,13 +55,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
   };
 
   const startAuth = async (phone) => {
-    const normalizedPhone = String(phone || '').trim();
-    if (!normalizedPhone) {
-        alert('Введіть номер телефону Telegram');
-        return;
-    }
     setLoading(true);
-    setStatusMessage('Запускаємо Telegram-вхід...');
     try {
         const { response: statusRes, data: statusData } = await requestJson(`${API_URL}/auth/status`);
         if (statusData.connected) {
@@ -91,20 +80,32 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             return false;
         };
 
-        const started = await tryStartFlow();
-        if (!started) {
-            throw new Error('Не вдалося запустити авторизацію Telegram. Оновіть сторінку і спробуйте ще раз.');
+        await tryStartFlow();
+
+        const statusAfterStart = await waitForAuthStep(['phone', 'code', 'password'], 12000);
+        if (statusAfterStart?.connected) {
+            onAuthenticated();
+            return;
+        }
+        if (statusAfterStart?.waitingFor === 'password') {
+            setStep('password');
+            setInputValue('');
+            return;
+        }
+        if (statusAfterStart?.waitingFor === 'code') {
+            setStep('code');
+            setInputValue('');
+            return;
         }
 
-        // client.start() сам керує Telegram auth flow; номер можна передати одразу,
-        // backend закешує його, якщо callback phoneNumber ще не готовий.
+        // Відправляємо номер з повторними спробами
         let phoneAccepted = false;
         let lastPhoneError = null;
-        for (let attempt = 0; attempt < 6; attempt += 1) {
+        for (let attempt = 0; attempt < 4; attempt += 1) {
             const phoneReq = await requestJson(`${API_URL}/auth/phone`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone: normalizedPhone })
+                body: JSON.stringify({ phone })
             });
             const phoneRes = phoneReq.response;
             const phoneData = phoneReq.data;
@@ -116,6 +117,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             lastPhoneError = phoneData?.error || phoneData?.message || 'Номер не прийнято. Спробуйте ще раз.';
             if (maybeRace) {
                 await tryStartFlow();
+                await waitForAuthStep('phone', 4000);
                 await sleep(350);
                 continue;
             }
@@ -124,38 +126,9 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
         if (!phoneAccepted) {
             throw new Error(lastPhoneError || 'Номер не прийнято. Спробуйте ще раз.');
         }
-
-        setPhoneNumber(normalizedPhone);
+        
         setStep('code');
         setInputValue('');
-        setLoading(false);
-        setStatusMessage('Telegram прийняв номер. Введіть код із офіційного додатку Telegram.');
-
-        const pollAuthStep = async () => {
-            try {
-                const { data } = await requestJson(`${API_URL}/auth/status`);
-                if (data.connected) {
-                    onAuthenticated();
-                    return;
-                }
-                if (data.waitingFor === 'password') {
-                    setStep('password');
-                    setInputValue('');
-                    setStatusMessage('Telegram просить хмарний пароль 2FA.');
-                    return;
-                }
-                if (data.waitingFor === 'code') {
-                    setStep('code');
-                    setStatusMessage('Telegram чекає код. Перевірте офіційний додаток Telegram.');
-                    return;
-                }
-                if (data.error) {
-                    setStatusMessage(data.error);
-                }
-            } catch (_) {}
-            setTimeout(pollAuthStep, 1500);
-        };
-        pollAuthStep();
     } catch (e) {
         console.error("Auth Error", e);
         const msg = String(e?.message || '');
@@ -164,20 +137,9 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
         } else {
           alert(msg || "Помилка підключення до сервера бекенду");
         }
-        setStatusMessage('');
     } finally {
         setLoading(false);
     }
-  };
-
-  const restartAuth = () => {
-      const phone = phoneNumber || inputValue;
-      setStep('phone');
-      setInputValue(phone || '');
-      setStatusMessage('');
-      if (phone) {
-          setTimeout(() => startAuth(phone), 0);
-      }
   };
 
   const sendCode = async () => {
@@ -235,7 +197,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
           }
           setStep('waiting');
           setInputValue('');
-          setStatusMessage('Перевіряємо пароль Telegram...');
           
           const pollStatus = async () => {
               try {
@@ -278,11 +239,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                   {step === 'code' && 'Введіть код підтвердження, який надіслав вам Telegram в офіційний додаток'}
                   {step === 'password' && 'На акаунті увімкнено безпеку 2FA. Введіть хмарний пароль, щоб завершити вхід'}
               </p>
-              {statusMessage && (
-                <div className="mb-4 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">
-                    {statusMessage}
-                </div>
-              )}
               
               <div className="mb-6">
                 {step === 'waiting' ? (
@@ -315,16 +271,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                     </svg>
                   ) : 'Продовжити'}
               </button>
-              )}
-              {step === 'code' && (
-                <button
-                    type="button"
-                    onClick={restartAuth}
-                    disabled={loading}
-                    className="mt-3 w-full border border-slate-600 hover:border-blue-500 text-slate-200 hover:text-white font-medium rounded-xl px-4 py-3 transition disabled:opacity-50"
-                >
-                    Надіслати код ще раз
-                </button>
               )}
           </div>
       </div>
