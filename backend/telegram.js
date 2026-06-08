@@ -257,20 +257,36 @@ const requestAuthCode = async (state, phone) => {
     state.authStep = 'sending_code';
     state.authError = null;
     state.phoneNumber = phoneNumber;
-    const forceSms = true;
-    const result = await withTimeout(
-        state.client.sendCode({ apiId: parseInt(state.apiId, 10), apiHash: state.apiHash }, phoneNumber, forceSms),
-        35000,
-        'Telegram sendCode timeout'
-    );
+    const credentials = { apiId: parseInt(state.apiId, 10), apiHash: state.apiHash };
+    let result;
+    let requestedSms = true;
+    try {
+        result = await withTimeout(
+            state.client.sendCode(credentials, phoneNumber, true),
+            35000,
+            'Telegram sendCode timeout'
+        );
+    } catch (error) {
+        const errorText = String(error?.errorMessage || error?.message || '');
+        if (!errorText.includes('SEND_CODE_UNAVAILABLE')) {
+            throw error;
+        }
+        console.warn(`[User ${context.getUserId()}] Telegram SMS code unavailable for ${maskPhone(phoneNumber)}, retrying normal code request.`);
+        requestedSms = false;
+        result = await withTimeout(
+            state.client.sendCode(credentials, phoneNumber, false),
+            35000,
+            'Telegram sendCode timeout'
+        );
+    }
     if (!result?.phoneCodeHash) {
         throw new Error('Telegram не повернув phoneCodeHash після відправки коду');
     }
     state.phoneCodeHash = result.phoneCodeHash;
     state.isCodeViaApp = Boolean(result.isCodeViaApp);
     state.authStep = 'code';
-    console.log(`[User ${context.getUserId()}] Telegram SMS code requested for ${maskPhone(phoneNumber)} (${state.isCodeViaApp ? 'app' : 'sms/other'}).`);
-    return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp };
+    console.log(`[User ${context.getUserId()}] Telegram code requested for ${maskPhone(phoneNumber)} (${state.isCodeViaApp ? 'app' : 'sms/other'}, requested=${requestedSms ? 'sms' : 'normal'}).`);
+    return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp, requestedSms };
 };
 
 const signInWithCode = async (state, codeValue) => {
