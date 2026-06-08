@@ -44,7 +44,8 @@ const getTenantState = () => {
             authCache: { phoneNumber: null, phoneCode: null, password: null },
             authFlowActive: false,
             authFlowPromise: null,
-            authError: null
+            authError: null,
+            authErrorLogged: false
         });
     }
     return clientsData.get(userId);
@@ -54,6 +55,7 @@ const resetAuthState = (state) => {
     state.authCache = { phoneNumber: null, phoneCode: null, password: null };
     state.authResolvers = { phoneNumber: null, phoneCode: null, password: null };
     state.authError = null;
+    state.authErrorLogged = false;
 };
 
 const formatAuthError = (error) => {
@@ -69,6 +71,15 @@ const formatAuthError = (error) => {
         return `Telegram тимчасово обмежив вхід через багато спроб. Зачекайте ${seconds} секунд (приблизно ${minutes} хв) і спробуйте знову.`;
     }
     return rawMessage;
+};
+
+const setAuthError = (state, error) => {
+    state.authError = formatAuthError(error);
+    if (!state.authErrorLogged) {
+        console.warn(`[User ${context.getUserId()}] Telegram auth stopped: ${state.authError}`);
+        state.authErrorLogged = true;
+    }
+    return state.authError;
 };
 
 const sessionsDir = path.join(runtimePaths.dataRoot, 'telegram_sessions');
@@ -184,8 +195,8 @@ const startAuthFlow = async () => {
                     return new Promise(resolve => state.authResolvers.phoneCode = resolve);
                 },
                 onError: (err) => {
-                    state.authError = formatAuthError(err);
-                    console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, err);
+                    setAuthError(state, err);
+                    return true;
                 },
             });
             
@@ -193,9 +204,8 @@ const startAuthFlow = async () => {
             saveSession(state.client.session.save());
             return { success: true };
         } catch (error) {
-            console.error(`[User ${context.getUserId()}] Помилка авторизації:`, error);
-            state.authError = formatAuthError(error);
-            return { success: false, error: state.authError };
+            const message = setAuthError(state, error);
+            return { success: false, error: message };
         } finally {
             state.authFlowActive = false;
             state.authFlowPromise = null;
