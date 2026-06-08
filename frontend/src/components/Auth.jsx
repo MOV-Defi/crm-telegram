@@ -48,6 +48,8 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
     return 'Введіть код підтвердження з офіційного застосунку Telegram.';
   };
 
+  const telegramAppConfirmText = 'Відкриється офіційний Telegram app для підтвердження входу на телефоні.';
+
   const waitForAuthStep = async (expectedSteps, timeoutMs = 12000) => {
     const acceptedSteps = Array.isArray(expectedSteps) ? expectedSteps : [expectedSteps];
     const startedAt = Date.now();
@@ -338,6 +340,11 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                   {step === 'code' && describeCodeDelivery()}
                   {step === 'password' && 'На акаунті увімкнено безпеку 2FA. Введіть хмарний пароль, щоб завершити вхід'}
               </p>
+              {(step === 'phone' || step === 'code') && (
+                <p className="text-slate-500 text-center mb-5 text-xs">
+                  {telegramAppConfirmText}
+                </p>
+              )}
               
               <div className="mb-6">
                 {step === 'waiting' ? (
@@ -388,7 +395,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
                     disabled={loading}
                     className="w-full text-sm text-slate-300 hover:text-white border border-slate-700/60 hover:border-slate-500 rounded-xl px-4 py-2 transition disabled:opacity-50"
                   >
-                    Увійти через Telegram app
+                    Підтвердити на телефоні в Telegram
                   </button>
                 )}
                 {telegramLoginUrl && (
