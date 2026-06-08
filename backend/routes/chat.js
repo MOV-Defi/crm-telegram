@@ -57,8 +57,8 @@ const getReadyTelegramClient = async () => {
 
   const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
   const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
-  const apiId = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
-  const apiHash = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
+  const apiId = String(idRow?.value || '').trim();
+  const apiHash = String(hashRow?.value || '').trim();
   if (!apiId || !apiHash) return null;
 
   client = await initTelegramClient(apiId, apiHash);
@@ -283,8 +283,8 @@ router.get('/dialogs', async (req, res) => {
     if (!client || !client.connected) {
       const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
       const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
-      const apiId = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
-      const apiHash = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
+      const apiId = String(idRow?.value || '').trim();
+      const apiHash = String(hashRow?.value || '').trim();
 
       if (apiId && apiHash) {
         client = await initTelegramClient(apiId, apiHash);
