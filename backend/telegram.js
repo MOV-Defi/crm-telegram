@@ -257,8 +257,9 @@ const requestAuthCode = async (state, phone) => {
     state.authStep = 'sending_code';
     state.authError = null;
     state.phoneNumber = phoneNumber;
+    const forceSms = true;
     const result = await withTimeout(
-        state.client.sendCode({ apiId: parseInt(state.apiId, 10), apiHash: state.apiHash }, phoneNumber, false),
+        state.client.sendCode({ apiId: parseInt(state.apiId, 10), apiHash: state.apiHash }, phoneNumber, forceSms),
         35000,
         'Telegram sendCode timeout'
     );
@@ -268,7 +269,7 @@ const requestAuthCode = async (state, phone) => {
     state.phoneCodeHash = result.phoneCodeHash;
     state.isCodeViaApp = Boolean(result.isCodeViaApp);
     state.authStep = 'code';
-    console.log(`[User ${context.getUserId()}] Telegram code requested for ${maskPhone(phoneNumber)} (${state.isCodeViaApp ? 'app' : 'sms/other'}).`);
+    console.log(`[User ${context.getUserId()}] Telegram SMS code requested for ${maskPhone(phoneNumber)} (${state.isCodeViaApp ? 'app' : 'sms/other'}).`);
     return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp };
 };
 
