@@ -24,6 +24,16 @@ const MEDIA_RETRY_MS = 15 * 60 * 1000;
 const MEDIA_BATCH_LIMIT = 4;
 const MEDIA_REQUEST_DELAY_MS = 1300;
 
+const canRequestForumTopics = (entity) => {
+  if (!entity) return false;
+  return Boolean(entity.forum) && String(entity.className || entity._ || '').toLowerCase().includes('channel');
+};
+
+const isNonForumTopicsError = (error) => {
+  const message = String(error?.message || error || '');
+  return /Cannot cast .*InputPeerChat.*InputChannel|INPUTCHANNEL|TOPIC|FORUM|CHANNEL_INVALID|CHANNEL_PRIVATE|PEER_ID_INVALID|CHAT_ID_INVALID/i.test(message);
+};
+
 const isAvatarTransientError = (error) => {
   const text = String(error?.message || error || '').toLowerCase();
   return text.includes('timeout') || text.includes('flood') || text.includes('chatforbidden');
@@ -341,6 +351,7 @@ router.get('/dialogs', async (req, res) => {
             date: d.message?.date,
             isIgnored: ignoredSet.has(id),
             isMuted: muteUntil > currentUnix,
+            canLoadTopics: canRequestForumTopics(d.entity),
             avatarPath: id ? avatarMap.get(id) : null
         };
     }).filter(d => d.id !== null && !(d.isChannel && !d.isGroup));
@@ -417,6 +428,11 @@ router.get('/:id/topics', async (req, res) => {
       peerCandidate = BigInt(rawPeerId);
     }
 
+    const entity = await client.getEntity(peerCandidate).catch(() => null);
+    if (!canRequestForumTopics(entity)) {
+      return res.json({ topics: [] });
+    }
+
     const channel = await client.getInputEntity(peerCandidate);
     const result = await client.invoke(new Api.channels.GetForumTopics({
       channel,
@@ -442,8 +458,7 @@ router.get('/:id/topics', async (req, res) => {
 
     return res.json({ topics: mapped });
   } catch (error) {
-    const message = String(error?.message || '');
-    if (/TOPIC|FORUM|CHANNEL_INVALID|CHANNEL_PRIVATE|PEER_ID_INVALID|CHAT_ID_INVALID/i.test(message)) {
+    if (isNonForumTopicsError(error)) {
       return res.json({ topics: [] });
     }
     console.error('topics GET error:', error);

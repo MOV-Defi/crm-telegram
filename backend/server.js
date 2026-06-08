@@ -363,7 +363,7 @@ app.use('/api', (req, res, next) => {
 app.post('/api/auth/start', async (req, res) => {
   try {
     let client = getClient();
-    if (!client) {
+    if (!client || !client.connected) {
       const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
       const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
 
