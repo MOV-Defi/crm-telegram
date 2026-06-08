@@ -117,25 +117,26 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             throw new Error(lastPhoneError || 'Номер не прийнято. Спробуйте ще раз.');
         }
 
-        const statusAfterPhone = await waitForAuthStep(['code', 'password'], 65000);
-        if (statusAfterPhone?.error) {
-            throw new Error(statusAfterPhone.error);
-        }
-        if (statusAfterPhone?.connected) {
-            onAuthenticated();
-            return;
-        }
-        if (statusAfterPhone?.waitingFor === 'password') {
-            setStep('password');
-            setInputValue('');
-            return;
-        }
-        if (!statusAfterPhone || statusAfterPhone?.waitingFor !== 'code') {
-            throw new Error('Telegram не підтвердив відправку коду. Перевірте API ID/API HASH, формат номера з +380 та спробуйте ще раз.');
-        }
-        
         setStep('code');
         setInputValue('');
+        setLoading(false);
+
+        const pollAuthStep = async () => {
+            try {
+                const { data } = await requestJson(`${API_URL}/auth/status`);
+                if (data.connected) {
+                    onAuthenticated();
+                    return;
+                }
+                if (data.waitingFor === 'password') {
+                    setStep('password');
+                    setInputValue('');
+                    return;
+                }
+            } catch (_) {}
+            setTimeout(pollAuthStep, 1500);
+        };
+        pollAuthStep();
     } catch (e) {
         console.error("Auth Error", e);
         const msg = String(e?.message || '');
