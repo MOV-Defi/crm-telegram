@@ -133,7 +133,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             throw new Error(lastPhoneError || 'Номер не прийнято. Спробуйте ще раз.');
         }
 
-        const statusAfterPhone = await waitForAuthStep(['code', 'password'], 25000);
+        const statusAfterPhone = await waitForAuthStep(['code', 'password'], 65000);
         if (statusAfterPhone?.error) {
             throw new Error(statusAfterPhone.error);
         }

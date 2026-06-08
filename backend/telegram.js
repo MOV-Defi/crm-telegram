@@ -152,7 +152,32 @@ const getAuthError = () => {
 
 const isRetryableAuthTransportError = (error) => {
     const text = String(error?.message || error || '');
-    return /invalid new nonce hash|websocket connection failed|connection closed|timeout|network/i.test(text);
+    return /invalid new nonce hash|websocket connection failed|connection closed|timeout|network|не підтвердив відправку коду/i.test(text);
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitForCodeStepAfterPhone = async (state, timeoutMs = 25000) => {
+    while (state.authFlowActive && !state.authCache.phoneNumber) {
+        await sleep(250);
+    }
+    if (!state.authFlowActive) return new Promise(() => {});
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (state.currentAuthStep === 'code' || state.currentAuthStep === 'password') {
+            return new Promise(() => {});
+        }
+        if (state.authResolvers.phoneCode || state.authResolvers.password) {
+            return new Promise(() => {});
+        }
+        if (state.currentAuthStep === 'error' || state.currentAuthError) {
+            throw new Error(state.currentAuthError || 'Telegram auth error');
+        }
+        await sleep(500);
+    }
+
+    throw new Error('Telegram не підтвердив відправку коду після номера. Повторюємо підключення.');
 };
 
 const recreateAuthClient = async (state) => {
@@ -176,7 +201,7 @@ const recreateAuthClient = async (state) => {
 };
 
 const runAuthStartOnce = async (state) => {
-    await state.client.start({
+    await Promise.race([state.client.start({
         phoneNumber: async () => {
             if (state.authCache.phoneNumber) return state.authCache.phoneNumber;
             state.currentAuthStep = 'phone';
@@ -196,7 +221,7 @@ const runAuthStartOnce = async (state) => {
             state.currentAuthError = error?.message || String(error || 'Telegram auth error');
             console.log(`[User ${context.getUserId()}] Telegram Auth Error:`, error);
         },
-    });
+    }), waitForCodeStepAfterPhone(state)]);
 };
 
 const startAuthFlow = async () => {
