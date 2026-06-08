@@ -49,6 +49,7 @@ const getTenantState = () => {
             phoneNumber: null,
             phoneCodeHash: null,
             isCodeViaApp: false,
+            authCodeInfo: null,
             authStep: null,
             authError: null,
             authFlowActive: false,
@@ -64,6 +65,7 @@ const resetAuthState = (state) => {
     state.phoneNumber = null;
     state.phoneCodeHash = null;
     state.isCodeViaApp = false;
+    state.authCodeInfo = null;
     state.authStep = null;
     state.authError = null;
 };
@@ -94,6 +96,50 @@ const withTimeout = (promise, timeoutMs, message) => {
         timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
     });
     return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+};
+
+const codeClassName = (value) => String(value?.className || value?.constructor?.name || '').replace(/^auth\./, '');
+
+const buildCodeInfo = (sentCode, requested = 'normal') => {
+    const delivery = codeClassName(sentCode?.type);
+    const nextType = codeClassName(sentCode?.nextType);
+    const timeout = Number.isFinite(Number(sentCode?.timeout)) ? Number(sentCode.timeout) : null;
+    return {
+        requested,
+        delivery,
+        nextType: nextType || null,
+        timeout,
+        isCodeViaApp: sentCode?.type instanceof Api.auth.SentCodeTypeApp
+    };
+};
+
+const sendTelegramCode = async (state, phoneNumber) => {
+    const sentCode = await withTimeout(
+        state.client.invoke(new Api.auth.SendCode({
+            phoneNumber,
+            apiId: parseInt(state.apiId, 10),
+            apiHash: state.apiHash,
+            settings: new Api.CodeSettings({})
+        })),
+        35000,
+        'Telegram sendCode timeout'
+    );
+    if (sentCode instanceof Api.auth.SentCodeSuccess) {
+        throw new Error('Telegram авторизувався одразу після відправки коду');
+    }
+    return sentCode;
+};
+
+const resendTelegramCode = async (state, phoneNumber, phoneCodeHash) => {
+    const sentCode = await withTimeout(
+        state.client.invoke(new Api.auth.ResendCode({ phoneNumber, phoneCodeHash })),
+        35000,
+        'Telegram resendCode timeout'
+    );
+    if (sentCode instanceof Api.auth.SentCodeSuccess) {
+        throw new Error('Telegram авторизувався одразу після повторної відправки коду');
+    }
+    return sentCode;
 };
 
 const ensureConnected = async (state) => {
@@ -199,6 +245,7 @@ const getAuthStep = () => {
     try {
         const state = getTenantState();
         if (state.authError) return { step: 'error', error: state.authError };
+        if (state.authStep === 'code') return { step: 'code', codeInfo: state.authCodeInfo || null };
         if (state.authStep) return state.authStep;
         if (state.authResolvers.password) return 'password';
         if (state.authResolvers.phoneCode) return 'code';
@@ -257,36 +304,30 @@ const requestAuthCode = async (state, phone) => {
     state.authStep = 'sending_code';
     state.authError = null;
     state.phoneNumber = phoneNumber;
-    const credentials = { apiId: parseInt(state.apiId, 10), apiHash: state.apiHash };
-    let result;
-    let requestedSms = true;
-    try {
-        result = await withTimeout(
-            state.client.sendCode(credentials, phoneNumber, true),
-            35000,
-            'Telegram sendCode timeout'
-        );
-    } catch (error) {
-        const errorText = String(error?.errorMessage || error?.message || '');
-        if (!errorText.includes('SEND_CODE_UNAVAILABLE')) {
-            throw error;
+    let result = await sendTelegramCode(state, phoneNumber);
+    let codeInfo = buildCodeInfo(result, 'normal');
+    if (codeInfo.isCodeViaApp && codeInfo.nextType && codeInfo.timeout === 0) {
+        try {
+            const resent = await resendTelegramCode(state, phoneNumber, result.phoneCodeHash);
+            result = resent;
+            codeInfo = buildCodeInfo(resent, 'resend');
+        } catch (error) {
+            const errorText = String(error?.errorMessage || error?.message || '');
+            if (!errorText.includes('SEND_CODE_UNAVAILABLE')) {
+                throw error;
+            }
+            console.warn(`[User ${context.getUserId()}] Telegram next code unavailable for ${maskPhone(phoneNumber)} (delivery=${codeInfo.delivery}, next=${codeInfo.nextType || 'none'}, timeout=${codeInfo.timeout ?? 'none'}).`);
         }
-        console.warn(`[User ${context.getUserId()}] Telegram SMS code unavailable for ${maskPhone(phoneNumber)}, retrying normal code request.`);
-        requestedSms = false;
-        result = await withTimeout(
-            state.client.sendCode(credentials, phoneNumber, false),
-            35000,
-            'Telegram sendCode timeout'
-        );
     }
     if (!result?.phoneCodeHash) {
         throw new Error('Telegram не повернув phoneCodeHash після відправки коду');
     }
     state.phoneCodeHash = result.phoneCodeHash;
-    state.isCodeViaApp = Boolean(result.isCodeViaApp);
+    state.isCodeViaApp = Boolean(codeInfo.isCodeViaApp);
+    state.authCodeInfo = codeInfo;
     state.authStep = 'code';
-    console.log(`[User ${context.getUserId()}] Telegram code requested for ${maskPhone(phoneNumber)} (${state.isCodeViaApp ? 'app' : 'sms/other'}, requested=${requestedSms ? 'sms' : 'normal'}).`);
-    return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp, requestedSms };
+    console.log(`[User ${context.getUserId()}] Telegram code requested for ${maskPhone(phoneNumber)} (delivery=${codeInfo.delivery || 'unknown'}, next=${codeInfo.nextType || 'none'}, timeout=${codeInfo.timeout ?? 'none'}, requested=${codeInfo.requested}).`);
+    return { success: true, waitingFor: 'code', isCodeViaApp: state.isCodeViaApp, codeInfo };
 };
 
 const signInWithCode = async (state, codeValue) => {

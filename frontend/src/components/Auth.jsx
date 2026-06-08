@@ -12,6 +12,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
   const [step, setStep] = useState('phone'); // phone, code, password
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
+  const [codeInfo, setCodeInfo] = useState(null);
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const logoSrc = useMemo(() => (
@@ -36,6 +37,21 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
       }
     }
     return { response, data: data || {} };
+  };
+
+  const describeCodeDelivery = () => {
+    const delivery = String(codeInfo?.delivery || '').toLowerCase();
+    const nextType = codeInfo?.nextType ? String(codeInfo.nextType).replace(/^CodeType/, '') : '';
+    if (delivery.includes('app')) {
+      const retryText = nextType && codeInfo?.timeout
+        ? ` Інший спосіб (${nextType}) Telegram дозволить приблизно через ${codeInfo.timeout} сек.`
+        : '';
+      return `Telegram відправив код у застосунок Telegram.${retryText}`;
+    }
+    if (delivery.includes('sms')) return 'Telegram відправив код через SMS.';
+    if (delivery.includes('call')) return 'Telegram відправив код через дзвінок.';
+    if (delivery) return `Telegram відправив код способом: ${codeInfo.delivery}.`;
+    return 'Введіть код підтвердження, який надіслав Telegram.';
   };
 
   const waitForAuthStep = async (expectedSteps, timeoutMs = 12000) => {
@@ -67,6 +83,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
 
   const startAuth = async (phone) => {
     setLoading(true);
+    setCodeInfo(null);
     try {
         const { response: statusRes, data: statusData } = await requestJson(`${API_URL}/auth/status`);
         if (statusData.connected) {
@@ -107,6 +124,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             return;
         }
         if (statusAfterStart?.waitingFor === 'code') {
+            setCodeInfo(statusAfterStart?.codeInfo || null);
             setStep('code');
             setInputValue('');
             return;
@@ -124,6 +142,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             const phoneRes = phoneReq.response;
             const phoneData = phoneReq.data;
             if (phoneRes.ok && phoneData?.success) {
+                setCodeInfo(phoneData?.codeInfo || null);
                 phoneAccepted = true;
                 break;
             }
@@ -159,6 +178,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             throw new Error('Telegram не підтвердив відправку коду. Перевірте API ID/API HASH, формат номера з +380 та спробуйте ще раз.');
         }
         
+        setCodeInfo(statusAfterPhone?.codeInfo || null);
         setStep('code');
         setInputValue('');
     } catch (e) {
@@ -268,7 +288,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
               <h1 className="text-2xl font-bold mb-2 text-center">Вхід до системи</h1>
               <p className="text-slate-400 text-center mb-6 text-sm">
                   {step === 'phone' && 'Введіть номер телефону від вашого облікового запису Telegram'}
-                  {step === 'code' && 'Введіть код підтвердження, який надіслав вам Telegram в офіційний додаток'}
+                  {step === 'code' && describeCodeDelivery()}
                   {step === 'password' && 'На акаунті увімкнено безпеку 2FA. Введіть хмарний пароль, щоб завершити вхід'}
               </p>
               
