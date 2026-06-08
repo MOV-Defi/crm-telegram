@@ -118,6 +118,7 @@ const triggerBrowserDownload = (blob, fileName) => {
 function App({ currentUser: initialUser }) {
   const PURCHASE_UNIT_OPTIONS = ['шт', 'м', 'м.п', 'км'];
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [showTelegramAuth, setShowTelegramAuth] = useState(false);
   const buildUploadUrl = (uploadPath) => {
       const token = String(localStorage.getItem('saas_token') || '').trim();
       const base = `${UPLOADS_BASE_URL}${String(uploadPath || '')}`;
@@ -551,7 +552,7 @@ function App({ currentUser: initialUser }) {
   }, [projects, selectedProjectId]);
 
   useEffect(() => {
-      if (!isAuthenticated || !backendTaskSyncLoadedRef.current) return;
+      if (!backendTaskSyncLoadedRef.current) return;
       const timer = setTimeout(async () => {
           try {
               await fetch(`${API_URL}/tasks`, {
@@ -564,7 +565,7 @@ function App({ currentUser: initialUser }) {
           }
       }, 400);
       return () => clearTimeout(timer);
-  }, [isAuthenticated, tasks, taskReminderSettings]);
+  }, [tasks, taskReminderSettings]);
 
   useEffect(() => {
       try {
@@ -573,7 +574,6 @@ function App({ currentUser: initialUser }) {
   }, [taskDailyNotesByDate]);
 
   useEffect(() => {
-      if (!isAuthenticated) return;
       const loadTasksFromServer = async () => {
           try {
               const res = await fetch(`${API_URL}/tasks`);
@@ -588,7 +588,7 @@ function App({ currentUser: initialUser }) {
           }
       };
       loadTasksFromServer();
-  }, [isAuthenticated]);
+  }, []);
 
   useEffect(() => {
       const isLight = appTheme === 'light';
@@ -977,6 +977,7 @@ function App({ currentUser: initialUser }) {
               console.log("Auth status data:", statusData);
               if (statusData?.connected) {
                   setIsAuthenticated(true);
+                  setShowTelegramAuth(false);
               }
               setLoading(false);
           }
@@ -985,6 +986,15 @@ function App({ currentUser: initialUser }) {
           setLoading(false);
           alert("Помилка підключення до сервера: " + (e.message || String(e))); 
       }
+  };
+
+  const openTelegramSettings = () => {
+      fetch(`${API_URL}/settings/telegram`).then(r=>r.json()).then(d=>{
+          setSettingsApiId(d.apiId || '');
+          setSettingsApiHash('');
+          loadMediaStorageStats();
+          setShowSettingsModal(true);
+      }).catch(console.error);
   };
 
   const formatBytes = (bytes) => {
@@ -1477,7 +1487,6 @@ function App({ currentUser: initialUser }) {
   }, [isAuthenticated]);
 
   useEffect(() => {
-      if (!isAuthenticated) return;
       fetch(`${API_URL}/orders/permissions`)
           .then((res) => res.json())
           .then((data) => {
@@ -1487,7 +1496,7 @@ function App({ currentUser: initialUser }) {
               setCanManageWarehouseOrders(canEdit);
           })
           .catch(() => {});
-  }, [isAuthenticated]);
+  }, []);
 
   useEffect(() => {
       if (activeTab === 'crm' || activeTab === 'bulk' || activeTab === 'tagsManager' || activeTab === 'requests' || activeTab === 'tasks' || activeTab === 'documentTemplates') {
@@ -4940,26 +4949,12 @@ function App({ currentUser: initialUser }) {
   };
 
   const resetClientState = () => {
-      try {
-          localStorage.removeItem('tgcrm-tasks-v1');
-          localStorage.removeItem('tgcrm-task-daily-notes-v1');
-          localStorage.removeItem('tgcrm-task-reminder-settings-v1');
-      } catch (_) {}
-
       setIsAuthenticated(false);
+      setShowTelegramAuth(false);
       setSelectedDialog(null);
       setDialogs([]);
       setMessages([]);
-      setContacts([]);
       setParticipants([]);
-      setTasks([]);
-      setProjects([]);
-      setSelectedTaskId(null);
-      setSelectedProjectId(null);
-      setQuickTaskTitle('');
-      setBulkTaskText('');
-      setTaskDailyNotesByDate({});
-      setTaskReminderSettings({ enabled: false, time: '09:00', chatId: '', lastSentDate: '' });
       setShowSettingsModal(false);
   };
 
@@ -5005,77 +5000,6 @@ function App({ currentUser: initialUser }) {
             <div className="text-white">Завантаження...</div>
         </div>
     );
-  }
-
-  if (!apiConfigured) {
-      return (
-          <div className="min-h-screen bg-[#0b101e] flex flex-col items-center justify-center p-4 text-slate-200">
-              <div className="bg-slate-900 border border-slate-700/50 p-8 rounded-3xl shadow-2xl max-w-md w-full relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
-                  <h2 className="text-2xl font-bold mb-2 flex items-center justify-center gap-3">
-                      <svg className="w-8 h-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      Налаштування API
-                  </h2>
-                  <p className="text-slate-400 text-sm mb-6 text-center">Будь ласка, вкажіть ваші API ID та API Hash для запуску CRM. Ви можете взяти їх на <a href="https://my.telegram.org/" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">my.telegram.org</a>.</p>
-                  
-                  <div className="space-y-4 mb-6">
-                      <div>
-                          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">API ID</label>
-                          <input type="text" value={settingsApiId} onChange={e => setSettingsApiId(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-slate-200 outline-none focus:border-blue-500 transition" placeholder="Приклад: 123456" />
-                      </div>
-                      <div>
-                          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">API Hash</label>
-                          <input type="text" value={settingsApiHash} onChange={e => setSettingsApiHash(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-slate-200 outline-none focus:border-blue-500 transition" placeholder="Приклад: e2a..." />
-                      </div>
-                      <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
-                          <div className="flex items-center justify-between gap-3">
-                              <div>
-                                  <div className="text-xs font-semibold text-slate-300">Автозавантаження відео</div>
-                                  <div className="text-[11px] text-slate-500 mt-1">Якщо вимкнути, відео завантажується вручну кнопкою в чаті.</div>
-                              </div>
-                              <button
-                                  type="button"
-                                  onClick={() => setAutoDownloadVideos((prev) => !prev)}
-                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${autoDownloadVideos ? 'bg-blue-600' : 'bg-slate-600'}`}
-                              >
-                                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${autoDownloadVideos ? 'translate-x-5' : 'translate-x-1'}`} />
-                              </button>
-                          </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
-                          <div className="flex items-start justify-between gap-3">
-                              <div>
-                                  <div className="text-xs font-semibold text-slate-300">Локальне сховище</div>
-                                  <div className="text-[11px] text-slate-500 mt-1">
-                                      Медіа: {formatBytes(mediaStorageStats.mediaBytes)} | Аватари: {formatBytes(mediaStorageStats.avatarsBytes)}
-                                  </div>
-                                  <div className="text-sm text-slate-200 mt-1">Разом: {formatBytes(mediaStorageStats.totalBytes)}</div>
-                              </div>
-                              <button
-                                  type="button"
-                                  onClick={handleClearMediaStorage}
-                                  disabled={clearingMediaStorage || loadingMediaStorage}
-                                  className="px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-300 hover:bg-red-500/10 disabled:opacity-60 transition"
-                              >
-                                  {clearingMediaStorage ? 'Очищення...' : 'Видалити всі медіа'}
-                              </button>
-                          </div>
-                      </div>
-                  </div>
-
-                  <button onClick={handleSaveSettings} className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl transition font-medium shadow-lg shadow-blue-900/20">
-                      Зберегти та Запустити
-                  </button>
-              </div>
-          </div>
-      );
-  }
-
-  if (!isAuthenticated) {
-    return <Auth onAuthenticated={() => setIsAuthenticated(true)} appTheme={appTheme} />;
   }
 
   const navLabelClass = (isNavCollapsed || isCompactLayout) ? 'hidden' : 'hidden md:block';
@@ -5748,14 +5672,7 @@ function App({ currentUser: initialUser }) {
             </div>
             
             <div className="mt-auto pt-4 flex flex-col gap-2">
-                <button onClick={() => {
-                    fetch(`${API_URL}/settings/telegram`).then(r=>r.json()).then(d=>{
-                        setSettingsApiId(d.apiId || '');
-                        setSettingsApiHash(''); // do not show hash fully
-                        loadMediaStorageStats();
-                        setShowSettingsModal(true);
-                    }).catch(console.error);
-                }} className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-slate-800 text-slate-400 hover:text-slate-200`}>
+                <button onClick={openTelegramSettings} className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-slate-800 text-slate-400 hover:text-slate-200`}>
                     <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -5959,6 +5876,7 @@ function App({ currentUser: initialUser }) {
                   </button>
                   <button 
                       onClick={() => setShowCreateGroupModal(true)}
+                      disabled={!apiConfigured || !isAuthenticated}
                       className="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition shadow-lg shadow-blue-500/20"
                       title="Створити групу"
                   >
@@ -5988,8 +5906,13 @@ function App({ currentUser: initialUser }) {
               </div>
           </div>
           <div className="dialogs-list flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+              {(!apiConfigured || !isAuthenticated) && (
+                  <div className="p-4 text-sm text-slate-500">
+                      Telegram ще не підключений. CRM доступна, а чати зʼявляться після підключення Telegram.
+                  </div>
+              )}
               {loadingDialogs && <div className="p-4 text-center text-slate-500 text-sm">Завантаження чатів...</div>}
-              {groupedDialogs.map(({ key, dialog, topic, type, level }) => (
+              {apiConfigured && isAuthenticated && groupedDialogs.map(({ key, dialog, topic, type, level }) => (
                   (() => {
                       const dialogTopics = chatTopicsByDialogId[String(dialog.id)] || [];
                       const hasTopicToggle = type === 'dialog' && (dialog.isGroup || dialog.isChannel) && Array.isArray(dialogTopics) && dialogTopics.length > 0;
@@ -6071,7 +5994,55 @@ function App({ currentUser: initialUser }) {
       {/* Main Chat Area */}
       {activeTab === 'messenger' && (
       <div className="flex-1 flex flex-col bg-[#0b101e] relative min-w-0 min-h-0 overflow-x-hidden">
-          {!selectedDialog ? (
+          {!apiConfigured ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
+                  <div className="w-full max-w-md rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 shadow-2xl">
+                      <div className="w-14 h-14 rounded-2xl bg-blue-500/15 text-blue-300 flex items-center justify-center mx-auto mb-4">
+                          <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                      </div>
+                      <h3 className="text-xl font-semibold text-slate-100">Telegram API не налаштований</h3>
+                      <p className="text-sm text-slate-400 mt-2">CRM вже доступна. Для чатів потрібно один раз додати API ID та API Hash.</p>
+                      <button onClick={openTelegramSettings} className="mt-5 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium transition">
+                          Налаштувати API
+                      </button>
+                  </div>
+              </div>
+          ) : showTelegramAuth ? (
+              <div className="absolute inset-0 flex items-center justify-center p-6 overflow-y-auto">
+                  <Auth
+                      embedded
+                      appTheme={appTheme}
+                      onCancel={() => setShowTelegramAuth(false)}
+                      onAuthenticated={() => {
+                          setIsAuthenticated(true);
+                          setShowTelegramAuth(false);
+                      }}
+                  />
+              </div>
+          ) : !isAuthenticated ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
+                  <div className="w-full max-w-md rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 shadow-2xl">
+                      <div className="w-14 h-14 rounded-2xl bg-sky-500/15 text-sky-300 flex items-center justify-center mx-auto mb-4">
+                          <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h8m-8 4h5m8-2a9 9 0 11-4.2-7.6L21 4v5h-5" />
+                          </svg>
+                      </div>
+                      <h3 className="text-xl font-semibold text-slate-100">Telegram не підключений</h3>
+                      <p className="text-sm text-slate-400 mt-2">Вхід у CRM уже виконано. Підключіть Telegram тільки якщо потрібні чати, розсилки або контакти з Telegram.</p>
+                      <div className="mt-5 flex flex-col sm:flex-row gap-2 justify-center">
+                          <button onClick={() => setShowTelegramAuth(true)} className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium transition">
+                              Підключити Telegram
+                          </button>
+                          <button onClick={() => setActiveTab('crm')} className="px-4 py-2.5 rounded-xl border border-slate-600 text-slate-200 hover:bg-slate-800 transition">
+                              Перейти до CRM
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          ) : !selectedDialog ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center opacity-50">
                   <div className="w-24 h-24 bg-slate-800 rounded-full flex items-center justify-center mb-4 shadow-xl">
                      <svg className="w-12 h-12 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">

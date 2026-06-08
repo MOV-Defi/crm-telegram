@@ -8,7 +8,7 @@ const resolveApiUrl = () => {
 
 const API_URL = resolveApiUrl();
 
-export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
+export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = false, onCancel = null }) {
   const [step, setStep] = useState('phone'); // phone, code, password
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
@@ -218,15 +218,27 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
   };
 
   return (
-      <div className="flex items-center justify-center min-h-screen bg-background text-slate-200">
+      <div className={`flex items-center justify-center bg-background text-slate-200 ${embedded ? 'w-full' : 'min-h-screen'}`}>
           <div className="glass p-8 rounded-2xl w-full max-w-md relative overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 to-indigo-500"></div>
+              {onCancel && (
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  className="absolute top-4 right-4 text-slate-400 hover:text-white transition"
+                  aria-label="Закрити"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
               
               <div className="flex justify-center mb-6">
                 <img src={logoSrc} alt="Solar Service" className="h-16 w-auto object-contain" />
               </div>
 
-              <h1 className="text-2xl font-bold mb-2 text-center">Вхід до системи</h1>
+              <h1 className="text-2xl font-bold mb-2 text-center">{embedded ? 'Підключення Telegram' : 'Вхід до системи'}</h1>
               <p className="text-slate-400 text-center mb-6 text-sm">
                   {step === 'phone' && 'Введіть номер телефону від вашого облікового запису Telegram'}
                   {step === 'code' && 'Введіть код підтвердження, який надіслав вам Telegram в офіційний додаток'}
