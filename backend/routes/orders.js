@@ -184,10 +184,10 @@ const mergeOrderItems = (currentItems, nextItems) => {
       code: String(item.code ?? previous?.code ?? '').trim(),
       unit: String(item.unit ?? previous?.unit ?? '').trim(),
       requestedQty: String(item.requestedQty ?? previous?.requestedQty ?? '').trim(),
-      status: previous?.status || (ITEM_STATUS_SET.has(String(item.status || '').trim())
+      status: ITEM_STATUS_SET.has(String(item.status || '').trim())
         ? String(item.status).trim()
-        : 'available'),
-      comment: String(previous?.comment ?? item.comment ?? '').trim()
+        : (previous?.status || 'available'),
+      comment: String(item.comment ?? previous?.comment ?? '').trim()
     };
   });
 };
