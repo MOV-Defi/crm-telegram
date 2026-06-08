@@ -91,31 +91,16 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             return false;
         };
 
-        await tryStartFlow();
-
-        const statusAfterStart = await waitForAuthStep(['phone', 'code', 'password'], 12000);
-        if (statusAfterStart?.error) {
-            throw new Error(statusAfterStart.error);
-        }
-        if (statusAfterStart?.connected) {
-            onAuthenticated();
-            return;
-        }
-        if (statusAfterStart?.waitingFor === 'password') {
-            setStep('password');
-            setInputValue('');
-            return;
-        }
-        if (statusAfterStart?.waitingFor === 'code') {
-            setStep('code');
-            setInputValue('');
-            return;
+        const started = await tryStartFlow();
+        if (!started) {
+            throw new Error('Не вдалося запустити авторизацію Telegram. Оновіть сторінку і спробуйте ще раз.');
         }
 
-        // Відправляємо номер з повторними спробами
+        // Старий client.start() може попросити номер із затримкою, тому передаємо його одразу.
+        // Backend збереже номер у cache, якщо callback phoneNumber ще не готовий.
         let phoneAccepted = false;
         let lastPhoneError = null;
-        for (let attempt = 0; attempt < 4; attempt += 1) {
+        for (let attempt = 0; attempt < 6; attempt += 1) {
             const phoneReq = await requestJson(`${API_URL}/auth/phone`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -132,7 +117,6 @@ export default function Auth({ onAuthenticated, appTheme = 'dark' }) {
             console.warn('auth/phone rejected:', lastPhoneError);
             if (maybeRace) {
                 await tryStartFlow();
-                await waitForAuthStep('phone', 4000);
                 await sleep(350);
                 continue;
             }
