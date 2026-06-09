@@ -468,6 +468,7 @@ const projectsRoutes = require('./routes/projects');
 app.use('/api/projects', projectsRoutes);
 
 const TELEGRAM_BOT_API = 'https://api.telegram.org';
+const APP_TIME_ZONE = 'Europe/Kiev';
 const sentRepeatCache = new Map();
 const sendBotMessageForUser = async (userId, text) => {
   return context.runWithContext({ userId }, async () => {
@@ -486,14 +487,83 @@ const sendBotMessageForUser = async (userId, text) => {
   });
 };
 
+const getTimeZoneOffsetMs = (timeZone, date) => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value;
+    return acc;
+  }, {});
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second)
+  );
+  return asUtc - date.getTime();
+};
+
+const getAppNowParts = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APP_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value;
+    return acc;
+  }, {});
+
+  return {
+    today: `${parts.year}-${parts.month}-${parts.day}`,
+    nowTime: `${parts.hour}:${parts.minute}`
+  };
+};
+
+const parseAppLocalDateTimeMs = (value) => {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) {
+    const fallback = new Date(value).getTime();
+    return Number.isFinite(fallback) ? fallback : NaN;
+  }
+  const [, year, month, day, hour, minute] = match;
+  const utcGuess = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    0
+  );
+  const offset = getTimeZoneOffsetMs(APP_TIME_ZONE, new Date(utcGuess));
+  return utcGuess - offset;
+};
+
+const addDaysToLocalDateTimeValue = (value, days) => {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) return value;
+  const [, year, month, day, hour, minute] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), 0));
+  date.setUTCDate(date.getUTCDate() + days);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}T${hour}:${minute}`;
+};
+
 setInterval(async () => {
   try {
     const users = db.central.prepare('SELECT id FROM users').all();
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const nowTime = `${hh}:${mm}`;
-    const today = now.toISOString().slice(0, 10);
+    const { today, nowTime } = getAppNowParts();
     for (const u of users) {
       await context.runWithContext({ userId: u.id }, async () => {
         const tasksRaw = db.prepare("SELECT value FROM settings WHERE key='tasks_v2'").get()?.value;
@@ -506,7 +576,7 @@ setInterval(async () => {
 
         for (const task of tasks) {
           if (!task?.reminderAt) continue;
-          const ts = new Date(task.reminderAt).getTime();
+          const ts = parseAppLocalDateTimeMs(task.reminderAt);
           if (!Number.isFinite(ts) || ts > Date.now()) continue;
           if (!task.reminderRepeat && task.reminderSentAt) continue;
 
@@ -520,15 +590,11 @@ setInterval(async () => {
           if (!ok) continue;
 
           if (task.reminderRepeat === 'daily') {
-            const d = new Date(task.reminderAt);
-            d.setDate(d.getDate() + 1);
-            task.reminderAt = d.toISOString().slice(0, 16);
+            task.reminderAt = addDaysToLocalDateTimeValue(task.reminderAt, 1);
             task.reminderSentAt = new Date().toISOString();
             changed = true;
           } else if (task.reminderRepeat === 'weekly') {
-            const d = new Date(task.reminderAt);
-            d.setDate(d.getDate() + 7);
-            task.reminderAt = d.toISOString().slice(0, 16);
+            task.reminderAt = addDaysToLocalDateTimeValue(task.reminderAt, 7);
             task.reminderSentAt = new Date().toISOString();
             changed = true;
           } else {
