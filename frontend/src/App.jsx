@@ -2386,6 +2386,13 @@ function App({ currentUser: initialUser }) {
           alert('Вкажіть коректну суму');
           return;
       }
+      const entryCurrency = String(projectFinanceDraft.currency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH';
+      const needsRate = entryCurrency !== selectedProjectCurrency;
+      const usdRate = Number.parseFloat(String(projectFinanceDraft.usdRate || '').replace(',', '.'));
+      if (needsRate && (!Number.isFinite(usdRate) || usdRate <= 0)) {
+          alert('Вкажіть курс USD/UAH для перерахунку у валюту проєкту');
+          return;
+      }
       setProjectFinanceSaving(true);
       const entryType = typeOverride || projectFinanceDraft.type || 'income';
       try {
@@ -2395,8 +2402,8 @@ function App({ currentUser: initialUser }) {
               body: JSON.stringify({
                   type: entryType,
                   amount: String(amount),
-                  currency: projectFinanceDraft.currency,
-                  usdRate: projectFinanceDraft.usdRate,
+                  currency: entryCurrency,
+                  usdRate: Number.isFinite(usdRate) && usdRate > 0 ? String(usdRate) : '',
                   paymentDate: projectFinanceDraft.paymentDate || todayIso,
                   note: projectFinanceDraft.note
               })
@@ -5176,14 +5183,15 @@ function App({ currentUser: initialUser }) {
   const selectedProjectProfitUah = selectedProjectIncomeUah - selectedProjectExpenseUah;
   const selectedProjectProfitUsd = selectedProjectIncomeUsd - selectedProjectExpenseUsd;
   const selectedProjectValueRaw = parseMoneyValue(selectedProject?.projectValue || selectedProject?.budgetPlan || 0);
+  const selectedProjectFinanceCurrency = selectedProjectCurrency === 'USD' ? 'USD' : 'UAH';
+  const selectedProjectIncomeInProjectCurrency = selectedProjectFinanceCurrency === 'USD' ? selectedProjectIncomeUsd : selectedProjectIncomeUah;
+  const selectedProjectExpenseInProjectCurrency = selectedProjectFinanceCurrency === 'USD' ? selectedProjectExpenseUsd : selectedProjectExpenseUah;
+  const selectedProjectProfitInProjectCurrency = selectedProjectIncomeInProjectCurrency - selectedProjectExpenseInProjectCurrency;
+  const selectedProjectCurrencySymbol = selectedProjectFinanceCurrency === 'USD' ? '$' : '₴';
+  const projectFinanceNeedsRate = String(projectFinanceDraft.currency || 'UAH').toUpperCase() !== selectedProjectFinanceCurrency;
   const selectedProjectOutstanding = (() => {
-      const projectCurrency = selectedProjectCurrency === 'USD' ? 'USD' : 'UAH';
-      if (projectCurrency === 'USD') {
-          const dueUsd = selectedProjectValueRaw - selectedProjectIncomeUsd;
-          return { amount: dueUsd, currency: 'USD' };
-      }
-      const dueUah = selectedProjectValueRaw - selectedProjectIncomeUah;
-      return { amount: dueUah, currency: 'UAH' };
+      const due = selectedProjectValueRaw - selectedProjectIncomeInProjectCurrency;
+      return { amount: due, currency: selectedProjectFinanceCurrency };
   })();
   const todayDate = new Date();
   const calendarViewStartDate = new Date(todayDate.getFullYear(), todayDate.getMonth() + calendarMonthOffset, 1);
@@ -9152,7 +9160,7 @@ function App({ currentUser: initialUser }) {
                               <option value="UAH">грн</option>
                               <option value="USD">$</option>
                             </select>
-                            {projectFinanceDraft.currency === 'USD' && (
+                            {projectFinanceNeedsRate && (
                               <input
                                 type="number"
                                 min="0"
@@ -9199,7 +9207,7 @@ function App({ currentUser: initialUser }) {
                               <option value="UAH">грн</option>
                               <option value="USD">$</option>
                             </select>
-                            {projectFinanceDraft.currency === 'USD' && (
+                            {projectFinanceNeedsRate && (
                               <input
                                 type="number"
                                 min="0"
@@ -9579,30 +9587,36 @@ function App({ currentUser: initialUser }) {
                     <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
                       <div className="text-slate-500">Клієнт має доплатити</div>
                       <div className={`${selectedProjectOutstanding.amount > 0 ? 'text-amber-500' : 'text-emerald-500'} text-xl font-bold`}>
-                        {selectedProjectOutstanding.currency === 'USD' ? '$' : '₴'} {Number(selectedProjectOutstanding.amount || 0).toLocaleString('uk-UA')}
+                        {selectedProjectCurrencySymbol} {Number(selectedProjectOutstanding.amount || 0).toLocaleString('uk-UA')}
                       </div>
                     </div>
                     <div className={`rounded-xl p-3 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
                       <div className="text-slate-500">Дохід</div>
-                      <div className="text-cyan-500 text-lg font-bold">₴ {Number(selectedProjectIncomeUah || 0).toLocaleString('uk-UA')}</div>
-                      <div className="text-cyan-400 text-sm">$ {Number(selectedProjectIncomeUsd || 0).toLocaleString('uk-UA')}</div>
+                      <div className="text-cyan-500 text-lg font-bold">
+                        {selectedProjectCurrencySymbol} {Number(selectedProjectIncomeInProjectCurrency || 0).toLocaleString('uk-UA')}
+                      </div>
+                      <div className="text-slate-500 text-xs">у валюті проєкту</div>
                     </div>
                     <div className={`rounded-xl p-3 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
                       <div className="text-slate-500">Витрати</div>
-                      <div className={`${isLightTheme ? 'text-slate-900' : 'text-slate-100'} text-lg font-bold`}>₴ {Number(selectedProjectExpenseUah || 0).toLocaleString('uk-UA')}</div>
-                      <div className={`${isLightTheme ? 'text-slate-700' : 'text-slate-300'} text-sm`}>$ {Number(selectedProjectExpenseUsd || 0).toLocaleString('uk-UA')}</div>
+                      <div className={`${isLightTheme ? 'text-slate-900' : 'text-slate-100'} text-lg font-bold`}>
+                        {selectedProjectCurrencySymbol} {Number(selectedProjectExpenseInProjectCurrency || 0).toLocaleString('uk-UA')}
+                      </div>
+                      <div className="text-slate-500 text-xs">у валюті проєкту</div>
                     </div>
                     <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
                       <div className="text-slate-500">Залишок</div>
-                      <div className={`${selectedProjectProfitUah >= 0 ? 'text-emerald-500' : 'text-red-500'} text-lg font-bold`}>₴ {Number(selectedProjectProfitUah || 0).toLocaleString('uk-UA')}</div>
-                      <div className={`${selectedProjectProfitUsd >= 0 ? 'text-emerald-400' : 'text-red-400'} text-sm`}>$ {Number(selectedProjectProfitUsd || 0).toLocaleString('uk-UA')}</div>
+                      <div className={`${selectedProjectProfitInProjectCurrency >= 0 ? 'text-emerald-500' : 'text-red-500'} text-lg font-bold`}>
+                        {selectedProjectCurrencySymbol} {Number(selectedProjectProfitInProjectCurrency || 0).toLocaleString('uk-UA')}
+                      </div>
+                      <div className="text-slate-500 text-xs">дохід мінус витрати</div>
                     </div>
                   </div>
                   {showFinanceStatsExpanded && (
                     <div className={`mt-2 rounded-xl border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/40'}`}>
                       <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Розгорнута статистика</div>
                       <div className={`text-xs mb-2 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
-                        Конвертація USD/UAH рахується по курсу, який ти вказуєш у кожній $-операції.
+                        Основні показники вище перераховані у валюту проєкту. Деталізація нижче показує суми в оригінальних валютах операцій.
                       </div>
                       <div className="space-y-2 text-sm">
                         {['UAH', 'USD'].map((currency) => {

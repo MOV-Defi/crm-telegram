@@ -625,7 +625,7 @@ router.post('/:id/finance', (req, res) => {
     const paymentDate = String(req.body?.paymentDate || '').trim();
     const usdRateRaw = String(req.body?.usdRate || '').trim().replace(',', '.');
     const usdRateNum = Number.parseFloat(usdRateRaw);
-    const usdRate = currency === 'USD' && Number.isFinite(usdRateNum) && usdRateNum > 0 ? String(usdRateNum) : null;
+    const usdRate = Number.isFinite(usdRateNum) && usdRateNum > 0 ? String(usdRateNum) : null;
     const note = String(req.body?.note || '').trim();
     const now = new Date().toISOString();
 
