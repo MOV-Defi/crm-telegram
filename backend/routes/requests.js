@@ -11,6 +11,7 @@ const { execFileSync } = require('child_process');
 const crypto = require('crypto');
 const AdmZip = require('adm-zip');
 const sharp = require('sharp');
+const { Api } = require('telegram');
 const { parseWarehouseItemsFromFile } = require('../warehouse-file-items');
 
 const router = express.Router();
@@ -224,13 +225,58 @@ const isFieldVisible = (field, values) => {
   return String(currentValue || '') === String(field.visibleWhen.equals || '');
 };
 
-const normalizeMention = (mention) => {
+const parseMentionEntry = (mention) => {
   const trimmed = String(mention || '').trim();
   if (!trimmed) return null;
-  if (trimmed.startsWith('@')) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object') {
+      const username = String(parsed.username || '').trim();
+      const userId = String(parsed.id || parsed.userId || '').trim();
+      const label = String(parsed.label || '').trim()
+        || (username ? `@${username}` : '')
+        || (userId ? `ID ${userId}` : '');
+      if (!label) return null;
+      return {
+        text: username ? `@${username}` : label,
+        label,
+        userId: userId || null,
+        username: username || null
+      };
+    }
+  } catch (_) {}
+  if (trimmed.startsWith('@')) return { text: trimmed, label: trimmed, userId: null, username: trimmed.slice(1) || null };
   // Add @ only for username-like tokens; keep full names/plain text as is.
-  if (/^[a-zA-Z0-9_]{3,}$/.test(trimmed)) return `@${trimmed}`;
-  return trimmed;
+  if (/^[a-zA-Z0-9_]{3,}$/.test(trimmed)) return { text: `@${trimmed}`, label: `@${trimmed}`, userId: null, username: trimmed };
+  return { text: trimmed, label: trimmed, userId: null, username: null };
+};
+
+const normalizeMention = (mention) => {
+  const parsed = parseMentionEntry(mention);
+  return parsed?.text || null;
+};
+
+const collectTemplateMentionEntries = (template, values = {}) => {
+  const mentionField = (template.fields || []).find((field) => field.key === 'selected_mentions');
+  const defaultMentions = Array.isArray(mentionField?.defaultMentions) ? mentionField.defaultMentions : [];
+  const selectedMentionsRaw = getFieldValue(values, 'selected_mentions');
+  const selectedMentions = Array.isArray(selectedMentionsRaw)
+    ? selectedMentionsRaw
+    : String(selectedMentionsRaw || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+  const seen = new Set();
+  return [...defaultMentions, ...selectedMentions]
+    .map(parseMentionEntry)
+    .filter(Boolean)
+    .filter((mention) => {
+      const key = mention.userId ? `id:${mention.userId}` : `text:${mention.text}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 };
 
 const collectTemplateMentions = (template, values = {}) => {
@@ -276,6 +322,31 @@ const collectTemplateChatIntro = (template, values = {}) => {
     .find(Boolean) || '';
 
   return [mentions.join(' '), chatMessageRaw].filter(Boolean).join('\n').trim();
+};
+
+const buildMentionEntities = async (client, template, values, text) => {
+  const mentionEntries = collectTemplateMentionEntries(template, values).filter((mention) => mention.userId);
+  if (!mentionEntries.length) return [];
+
+  const entities = [];
+  let searchFrom = 0;
+  for (const mention of mentionEntries) {
+    const offset = String(text || '').indexOf(mention.text, searchFrom);
+    if (offset < 0) continue;
+    searchFrom = offset + mention.text.length;
+    try {
+      const lookup = /^\d+$/.test(String(mention.userId)) ? BigInt(String(mention.userId)) : String(mention.userId);
+      const inputUser = await client.getInputEntity(lookup);
+      entities.push(new Api.InputMessageEntityMentionName({
+        offset,
+        length: mention.text.length,
+        userId: inputUser
+      }));
+    } catch (error) {
+      console.warn('[requests] failed to build mention entity:', mention.userId, error.message);
+    }
+  }
+  return entities;
 };
 
 const decodeMultipartFileName = (name) => {
@@ -1549,10 +1620,12 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       const generated = writeDocxFromTemplate(templateWithFields.body_template, formattedValues, logisticsFileBase);
       tempDocxRoot = generated.tempRoot;
       const caption = trimTelegramCaption(buildLogisticsStandardCaption(chatIntro));
+      const formattingEntities = await buildMentionEntities(client, templateWithFields, values, caption);
 
       const sent = await client.sendFile(template.target_chat_id, {
         file: generated.docxPath,
-        caption
+        caption,
+        formattingEntities
       });
       const sentMessage = normalizeSentMessage(sent);
       saveRequestHistory({
@@ -1576,10 +1649,12 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       const generated = writePurchaseDocx(values, purchaseFileBase);
       tempDocxRoot = generated.tempRoot;
       const caption = trimTelegramCaption(buildPurchaseStandardCaption(chatIntro));
+      const formattingEntities = await buildMentionEntities(client, templateWithFields, values, caption);
 
       const sent = await client.sendFile(template.target_chat_id, {
         file: generated.docxPath,
-        caption
+        caption,
+        formattingEntities
       });
       const sentMessage = normalizeSentMessage(sent);
       saveRequestHistory({
@@ -1601,6 +1676,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       includeIntroInBody ? chatIntro : '',
       message
     ].filter(Boolean).join('\n\n').trim();
+    const outgoingMentionEntities = await buildMentionEntities(client, templateWithFields, values, outgoingMessage);
 
     const createWarehouseOrder = ({
       sentMessageId = null,
@@ -1641,7 +1717,8 @@ router.post('/send', upload.single('file'), (req, res, next) => {
     if (uploadedFilePath) {
       const sent = await client.sendFile(template.target_chat_id, {
         file: uploadedFilePath,
-        caption: outgoingMessage
+        caption: outgoingMessage,
+        formattingEntities: outgoingMentionEntities
       });
       const sentMessage = normalizeSentMessage(sent);
       saveRequestHistory({
@@ -1659,7 +1736,10 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         });
       }
     } else {
-      const sent = await client.sendMessage(template.target_chat_id, { message: outgoingMessage });
+      const sent = await client.sendMessage(template.target_chat_id, {
+        message: outgoingMessage,
+        formattingEntities: outgoingMentionEntities
+      });
       saveRequestHistory({
         template,
         messageId: sent?.id,

@@ -1884,8 +1884,23 @@ function App({ currentUser: initialUser }) {
   };
 
   const getRequestParticipantMentionValue = (participant) => {
-      if (participant?.username) return `@${participant.username}`;
-      return getRequestParticipantLabel(participant);
+      return JSON.stringify({
+          id: String(participant?.id || ''),
+          username: String(participant?.username || ''),
+          label: getRequestParticipantLabel(participant)
+      });
+  };
+
+  const getRequestMentionDisplay = (mention) => {
+      const raw = String(mention || '').trim();
+      if (!raw) return '';
+      try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+              return String(parsed.label || parsed.username || parsed.id || raw).trim();
+          }
+      } catch (_) {}
+      return raw;
   };
 
   const messagesById = React.useMemo(
@@ -4199,12 +4214,12 @@ function App({ currentUser: initialUser }) {
       }
   };
 
-  const handleToggleRequestMention = (username) => {
-      if (!username) return;
+  const handleToggleRequestMention = (mentionValue) => {
+      if (!mentionValue) return;
       setRequestFeedback(null);
       setRequestFormValues(prev => {
           const currentValues = Array.isArray(prev.selected_mentions) ? prev.selected_mentions : [];
-          const normalized = username.startsWith('@') ? username : `@${username}`;
+          const normalized = String(mentionValue || '').trim();
           const nextValues = currentValues.includes(normalized)
               ? currentValues.filter(item => item !== normalized)
               : [...currentValues, normalized];
@@ -6855,7 +6870,7 @@ function App({ currentUser: initialUser }) {
                                                   onClick={() => handleToggleRequestMention(mention)}
                                                   className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-sm hover:bg-amber-500/20 transition"
                                               >
-                                                  {mention} ×
+                                                  {getRequestMentionDisplay(mention)} ×
                                               </button>
                                           ))}
                                           {(!Array.isArray(requestFormValues.selected_mentions) || requestFormValues.selected_mentions.length === 0) && (
@@ -7107,7 +7122,7 @@ function App({ currentUser: initialUser }) {
                                                           onClick={() => handleToggleRequestMention(mention)}
                                                           className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-sm hover:bg-amber-500/20 transition"
                                                       >
-                                                          {mention} ×
+                                                          {getRequestMentionDisplay(mention)} ×
                                                       </button>
                                                   ))}
                                                   {(!Array.isArray(requestFormValues.selected_mentions) || requestFormValues.selected_mentions.length === 0) && (
@@ -7372,7 +7387,7 @@ function App({ currentUser: initialUser }) {
                                                               onClick={() => handleToggleRequestMention(mention)}
                                                               className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-sm hover:bg-amber-500/20 transition"
                                                           >
-                                                              {mention} ×
+                                                              {getRequestMentionDisplay(mention)} ×
                                                           </button>
                                                       ))}
                                                   </div>
