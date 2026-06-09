@@ -12,6 +12,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
   const [step, setStep] = useState('phone'); // phone, code, password
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
+  const [phoneForCode, setPhoneForCode] = useState('');
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const logoSrc = useMemo(() => (
@@ -97,6 +98,13 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
                 phoneAccepted = true;
                 break;
             }
+            try {
+                const { data: currentStatus } = await requestJson(`${API_URL}/auth/status`);
+                if (currentStatus?.waitingFor === 'code') {
+                    phoneAccepted = true;
+                    break;
+                }
+            } catch (_) {}
             const maybeRace = String(phoneData?.message || phoneData?.error || '').toLowerCase().includes('no active phone request');
             lastPhoneError = phoneData?.error || phoneData?.message || 'Номер не прийнято. Спробуйте ще раз.';
             if (maybeRace) {
@@ -107,9 +115,16 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
             await sleep(350);
         }
         if (!phoneAccepted) {
+            const stepStatus = await waitForAuthStep('code', 2500);
+            if (stepStatus?.waitingFor === 'code') {
+                phoneAccepted = true;
+            }
+        }
+        if (!phoneAccepted) {
             throw new Error(lastPhoneError || 'Номер не прийнято. Спробуйте ще раз.');
         }
         
+        setPhoneForCode(phone);
         setStep('code');
         setInputValue('');
     } catch (e) {
@@ -149,6 +164,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
                 } else if (data.error) {
                     alert(data.error);
                     setStep('phone');
+                    setPhoneForCode('');
                     setInputValue('');
                     setLoading(false);
                 } else if (data.waitingFor === 'password') {
@@ -167,6 +183,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
         console.error(e);
         alert(e.message || 'Невірний код. Повертаємо до вводу номера телефону.');
         setStep('phone');
+        setPhoneForCode('');
         setInputValue('');
         setLoading(false);
     }
@@ -194,6 +211,7 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
                   } else if (data.error) {
                       alert(data.error);
                       setStep('phone');
+                      setPhoneForCode('');
                       setInputValue('');
                       setLoading(false);
                   } else {
@@ -244,6 +262,11 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
                   {step === 'code' && 'Введіть код підтвердження, який надіслав вам Telegram в офіційний додаток'}
                   {step === 'password' && 'На акаунті увімкнено безпеку 2FA. Введіть хмарний пароль, щоб завершити вхід'}
               </p>
+              {step === 'code' && phoneForCode && (
+                <div className="mb-4 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-center text-xs text-blue-200">
+                  Код надіслано для {phoneForCode}. Введіть його нижче.
+                </div>
+              )}
               
               <div className="mb-6">
                 {step === 'waiting' ? (
