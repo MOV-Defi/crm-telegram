@@ -1664,6 +1664,10 @@ router.get('/history', (req, res) => {
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 100;
     const offsetRaw = Number.parseInt(String(req.query.offset || '0'), 10);
     const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
+    const currentUserId = Number(req.userId || 0);
+    if (!Number.isFinite(currentUserId) || currentUserId <= 0) {
+      return res.status(401).json({ error: 'Unauthorized. Please login.' });
+    }
     const rows = db.central.prepare(
       requestHistoryHasProjectColumn
         ? `
@@ -1681,6 +1685,7 @@ router.get('/history', (req, res) => {
             created_by_username,
             created_at
           FROM request_history
+          WHERE created_by_user_id = ?
           ORDER BY datetime(created_at) DESC, id DESC
           LIMIT ? OFFSET ?
         `
@@ -1698,15 +1703,20 @@ router.get('/history', (req, res) => {
             created_by_username,
             created_at
           FROM request_history
+          WHERE created_by_user_id = ?
           ORDER BY datetime(created_at) DESC, id DESC
           LIMIT ? OFFSET ?
         `
-    ).all(limit, offset).map((row) => ({
+    ).all(currentUserId, limit, offset).map((row) => ({
       ...row,
       project_name: row.project_name || extractProjectNameFromMessageText(row.message_text)
     }));
 
-    const totalRow = db.central.prepare(`SELECT COUNT(*) AS total FROM request_history`).get();
+    const totalRow = db.central.prepare(`
+      SELECT COUNT(*) AS total
+      FROM request_history
+      WHERE created_by_user_id = ?
+    `).get(currentUserId);
     const total = Number(totalRow?.total || 0);
     return res.json({
       items: rows,
