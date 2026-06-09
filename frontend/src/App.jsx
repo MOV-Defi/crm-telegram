@@ -6802,9 +6802,9 @@ function App({ currentUser: initialUser }) {
                               <div className="rounded-2xl border border-slate-700 bg-slate-800/40 p-4 space-y-3">
                                   <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                                       <div>
-                                          <div className="text-sm font-medium text-slate-200">Стандартний чат для цього шаблону</div>
+                                          <div className="text-sm font-medium text-slate-200">Ваш чат для цього шаблону</div>
                                           <div className="text-xs text-slate-400 mt-1">
-                                              Вибраний чат збережеться, і при наступному відкритті заяви він уже буде підставлений.
+                                              Вибраний чат збережеться тільки для вашого акаунта і не буде видимий іншим користувачам.
                                           </div>
                                       </div>
                                       <button

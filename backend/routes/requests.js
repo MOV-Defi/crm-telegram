@@ -16,6 +16,34 @@ const { parseWarehouseItemsFromFile } = require('../warehouse-file-items');
 const router = express.Router();
 let requestHistoryHasProjectColumn = null;
 const TEXT_QTY_UNIT_PATTERN = 'шт\\.?|штук|м\\.?\\s*п\\.?|мп|м²|м2|пог\\.?\\s*м\\.?|м|кг|компл\\.?|упак\\.?|pcs';
+const REQUEST_TEMPLATE_TARGETS_KEY = 'request_template_targets_v1';
+
+const readRequestTemplateTargets = () => {
+  try {
+    const raw = db.prepare('SELECT value FROM settings WHERE key = ?').get(REQUEST_TEMPLATE_TARGETS_KEY)?.value;
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+};
+
+const writeRequestTemplateTargets = (targets) => {
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+    .run(REQUEST_TEMPLATE_TARGETS_KEY, JSON.stringify(targets && typeof targets === 'object' ? targets : {}));
+};
+
+const applyUserTemplateTarget = (templateRow) => {
+  if (!templateRow) return templateRow;
+  const targets = readRequestTemplateTargets();
+  const target = targets[String(templateRow.id)] || targets[String(templateRow.code || '')] || null;
+  if (!target || typeof target !== 'object') return { ...templateRow, target_chat_id: null, target_chat_name: null };
+  return {
+    ...templateRow,
+    target_chat_id: String(target.target_chat_id || '').trim() || null,
+    target_chat_name: String(target.target_chat_name || '').trim() || null
+  };
+};
 
 const normalizeTextUnit = (unit) => String(unit || '').replace(/\s+/g, '').trim();
 
@@ -1340,7 +1368,7 @@ router.get('/templates', (req, res) => {
       ORDER BY id ASC
     `).all();
 
-    res.json(rows.map(parseTemplate).filter(Boolean).map(hydrateTemplateFields));
+    res.json(rows.map(applyUserTemplateTarget).map(parseTemplate).filter(Boolean).map(hydrateTemplateFields));
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -1355,15 +1383,30 @@ router.put('/templates/:id', (req, res) => {
       return res.status(400).json({ error: 'Некоректний ID шаблону заявки' });
     }
 
-    const updateTargetChat = () => db.central.prepare(`
-      UPDATE request_templates
-      SET target_chat_id = ?, target_chat_name = ?
+    const targetRow = db.central.prepare(`
+      SELECT id, code
+      FROM request_templates
       WHERE id = ?
-    `).run(
-      targetChatId ? String(targetChatId) : null,
-      targetChatName ? String(targetChatName) : null,
-      templateId
-    );
+    `).get(templateId);
+    if (!targetRow) {
+      return res.status(404).json({ error: 'Шаблон не знайдено' });
+    }
+
+    const updateTargetChat = () => {
+      const targets = readRequestTemplateTargets();
+      const key = String(templateId);
+      const chatId = String(targetChatId || '').trim();
+      if (!chatId) {
+        delete targets[key];
+      } else {
+        targets[key] = {
+          template_code: String(targetRow.code || '').trim(),
+          target_chat_id: chatId,
+          target_chat_name: String(targetChatName || '').trim()
+        };
+      }
+      writeRequestTemplateTargets(targets);
+    };
 
     try {
       updateTargetChat();
@@ -1380,7 +1423,7 @@ router.put('/templates/:id', (req, res) => {
       WHERE id = ?
     `).get(templateId);
 
-    const parsed = parseTemplate(row);
+    const parsed = parseTemplate(applyUserTemplateTarget(row));
     if (!parsed) {
       return res.status(404).json({ error: 'Шаблон не знайдено' });
     }
@@ -1431,11 +1474,12 @@ router.post('/send', upload.single('file'), (req, res, next) => {
   let createdWarehouseOrder = null;
 
   try {
-    const template = db.central.prepare(`
+    const templateRow = db.central.prepare(`
       SELECT id, code, title, description, target_chat_id, target_chat_name, body_template, fields_json, is_active
       FROM request_templates
       WHERE id = ? AND is_active = 1
     `).get(templateId);
+    const template = applyUserTemplateTarget(templateRow);
 
     if (!template) {
       return res.status(404).json({ error: 'Шаблон не знайдено' });
