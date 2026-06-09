@@ -645,16 +645,6 @@ router.post('/:id/finance', (req, res) => {
       now,
       now
     );
-    const taskId = Number(taskInfo.lastInsertRowid);
-    if (assignedUserId) {
-      notifyProjectMembers(projectId, req.userId, {
-        eventType: 'task_assigned',
-        title: 'Вам призначено задачу',
-        body: `Проєкт: ${current.title || current.number || projectId}
-Задача: ${title}`,
-        taskId
-      }, { onlyUserId: assignedUserId, includeActor: Number(assignedUserId) === Number(req.userId) });
-    }
     db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
     const project = loadProjectForUser(projectId, req.userId);
     return res.status(201).json({ project });
