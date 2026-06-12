@@ -1,6 +1,6 @@
 /**
  * Local Server Startup Script for Solar CRM (SaaS Version)
- * One-click local startup: backend + frontend without root "concurrently".
+ * One-click local startup: backend serves frontend/dist on localhost:5050.
  */
 
 const { spawn, spawnSync, execSync } = require('child_process');
@@ -15,7 +15,6 @@ const FRONTEND_DIST_INDEX = path.join(FRONTEND_DIR, 'dist', 'index.html');
 const PID_FILE = path.join(PROJECT_ROOT, '.local-dev.pid');
 const DATA_DIR = path.join(PROJECT_ROOT, 'data');
 const BACKEND_LOG_FILE = path.join(__dirname, 'backend-start.log');
-const FRONTEND_PORT = 5173;
 const BACKEND_PORT = 5050;
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
@@ -142,7 +141,6 @@ const cleanup = () => {
 
 console.log(color.cyan('=== Solar CRM Local Server Startup ==='));
 stopFromPidFile();
-killPort(FRONTEND_PORT);
 killPort(BACKEND_PORT);
 ensureDeps(BACKEND_DIR, 'backend');
 ensureDeps(FRONTEND_DIR, 'frontend');
@@ -188,21 +186,10 @@ const appendBackendLog = (chunk, streamName) => {
 if (backend.stdout) backend.stdout.on('data', (chunk) => appendBackendLog(chunk, 'stdout'));
 if (backend.stderr) backend.stderr.on('data', (chunk) => appendBackendLog(chunk, 'stderr'));
 
-const frontend = spawn(
-  npmCmd,
-  ['run', 'dev', '--', '--host', '127.0.0.1', '--port', String(FRONTEND_PORT), '--strictPort'],
-  {
-    cwd: FRONTEND_DIR,
-    stdio: 'inherit',
-    env: { ...process.env }
-  }
-);
-
 fs.writeFileSync(PID_FILE, String(process.pid));
 console.log(color.green(`Launcher PID=${process.pid}`));
 console.log(color.green(`Main URL: ${MAIN_URL}`));
 console.log(color.green(`Backend:  ${MAIN_URL}`));
-console.log(color.green(`Frontend: http://localhost:${FRONTEND_PORT}`));
 console.log(color.green(`Backend log: ${BACKEND_LOG_FILE}`));
 console.log(color.cyan('Press Ctrl+C to stop both services.'));
 waitForBackendAndOpen(MAIN_URL);
@@ -212,10 +199,8 @@ const shutdown = (reason) => {
   if (isStopping) return;
   isStopping = true;
   if (reason) console.log(color.yellow(reason));
-  safeKill(frontend.pid, 'SIGTERM');
   safeKill(backend.pid, 'SIGTERM');
   setTimeout(() => {
-    safeKill(frontend.pid, 'SIGKILL');
     safeKill(backend.pid, 'SIGKILL');
     cleanup();
     process.exit(0);
@@ -223,15 +208,11 @@ const shutdown = (reason) => {
 };
 
 backend.on('exit', (code) => {
-  shutdown(`Backend exited with code ${code ?? 0}. Stopping frontend...`);
+  shutdown(`Backend exited with code ${code ?? 0}.`);
 });
 
 backend.on('error', (error) => {
   shutdown(`Backend process failed to start: ${String(error?.message || error)}`);
-});
-
-frontend.on('exit', (code) => {
-  console.log(color.yellow(`Frontend exited with code ${code ?? 0}. Continuing with backend on http://localhost:${BACKEND_PORT}`));
 });
 
 process.on('SIGINT', () => shutdown('Stopping local dev stack...'));
