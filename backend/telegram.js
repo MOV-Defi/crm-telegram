@@ -10,14 +10,16 @@ const loadTelegramDependencies = () => {
     try {
         return {
             TelegramClient: require('telegram').TelegramClient,
-            StringSession: require('telegram/sessions').StringSession
+            StringSession: require('telegram/sessions').StringSession,
+            ConnectionTCPObfuscated: require('telegram/network').ConnectionTCPObfuscated,
+            ConnectionTCPAbridged: require('telegram/network').ConnectionTCPAbridged
         };
     } finally {
         Module._load = originalLoad;
     }
 };
 
-const { TelegramClient, StringSession } = loadTelegramDependencies();
+const { TelegramClient, StringSession, ConnectionTCPObfuscated, ConnectionTCPAbridged } = loadTelegramDependencies();
 const db = require('./db');
 const context = require('./context');
 const runtimePaths = require('./runtime-paths');
@@ -25,6 +27,45 @@ const fs = require('fs');
 const path = require('path');
 
 const clientsData = new Map();
+const DEFAULT_TELEGRAM_DC = { dcId: 4, host: '149.154.167.91' };
+
+const parsePositiveInt = (value, fallback) => {
+    const parsed = Number.parseInt(String(value || ''), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const parseBooleanEnv = (value, fallback) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return fallback;
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+    return fallback;
+};
+
+const TELEGRAM_CONNECT_TIMEOUT_SEC = parsePositiveInt(process.env.TELEGRAM_CONNECT_TIMEOUT_SEC, 20);
+const TELEGRAM_CONNECTION_RETRIES = parsePositiveInt(process.env.TELEGRAM_CONNECTION_RETRIES, 8);
+const TELEGRAM_RETRY_DELAY_MS = parsePositiveInt(process.env.TELEGRAM_RETRY_DELAY_MS, 1500);
+const TELEGRAM_USE_HTTPS_PORT = parseBooleanEnv(process.env.TELEGRAM_USE_HTTPS_PORT, true);
+const TELEGRAM_CONNECTION_MODE = String(process.env.TELEGRAM_CONNECTION_MODE || 'obfuscated').trim().toLowerCase();
+
+const getTelegramConnectionClass = () => {
+    if (TELEGRAM_CONNECTION_MODE === 'abridged') return ConnectionTCPAbridged;
+    return ConnectionTCPObfuscated;
+};
+
+const getTelegramProxy = () => {
+    const host = String(process.env.TELEGRAM_PROXY_HOST || '').trim();
+    const port = parsePositiveInt(process.env.TELEGRAM_PROXY_PORT, 0);
+    if (!host || !port) return undefined;
+    return {
+        ip: host,
+        port,
+        socksType: parsePositiveInt(process.env.TELEGRAM_PROXY_SOCKS_TYPE, 5),
+        username: String(process.env.TELEGRAM_PROXY_USERNAME || '').trim() || undefined,
+        password: String(process.env.TELEGRAM_PROXY_PASSWORD || '').trim() || undefined,
+        timeout: parsePositiveInt(process.env.TELEGRAM_PROXY_TIMEOUT_SEC, TELEGRAM_CONNECT_TIMEOUT_SEC)
+    };
+};
 
 const getTenantState = () => {
     const userId = context.getUserId();
@@ -69,6 +110,9 @@ const formatAuthError = (error) => {
     if (seconds > 0) {
         const minutes = Math.ceil(seconds / 60);
         return `Telegram тимчасово обмежив вхід через багато спроб. Зачекайте ${seconds} секунд (приблизно ${minutes} хв) і спробуйте знову.`;
+    }
+    if (isTelegramNetworkError(error)) {
+        return 'Telegram зараз не відповідає з сервера. Ми зробили кілька спроб підключення, але мережа Telegram недоступна. Спробуйте ще раз через хвилину.';
     }
     return rawMessage;
 };
@@ -121,24 +165,102 @@ const saveSession = (sessionString) => {
   }
 };
 
+const normalizeTelegramSessionTransport = (stringSession) => {
+  const dcId = stringSession.dcId || DEFAULT_TELEGRAM_DC.dcId;
+  const host = stringSession.serverAddress || DEFAULT_TELEGRAM_DC.host;
+  const port = TELEGRAM_USE_HTTPS_PORT ? 443 : 80;
+  stringSession.setDC(dcId, host, port);
+};
+
+const isTelegramNetworkError = (error) => {
+    const message = String(error?.message || error || '').toLowerCase();
+    const code = String(error?.code || '').toLowerCase();
+    return (
+        code === 'etimedout' ||
+        code === 'econnreset' ||
+        code === 'econnrefused' ||
+        code === 'enetwork' ||
+        message.includes('timeout') ||
+        message.includes('timed out') ||
+        message.includes('etimedout') ||
+        message.includes('connection closed') ||
+        message.includes('not connected')
+    );
+};
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const withTimeout = (promise, timeoutMs, label) => {
+    let timer = null;
+    const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label + ' timeout after ' + timeoutMs + 'ms')), timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+        if (timer) clearTimeout(timer);
+    });
+};
+
+const connectTelegramClient = async (state, reason = 'connect') => {
+    if (!state.client) {
+        throw new Error('Telegram клієнт не ініціалізовано');
+    }
+    if (state.client.connected) return state.client;
+
+    let lastError = null;
+    const timeoutMs = TELEGRAM_CONNECT_TIMEOUT_SEC * 1000;
+    for (let attempt = 1; attempt <= TELEGRAM_CONNECTION_RETRIES; attempt += 1) {
+        try {
+            console.log(`[User ${context.getUserId()}] Telegram ${reason}: attempt ${attempt}/${TELEGRAM_CONNECTION_RETRIES}`);
+            await withTimeout(state.client.connect(), timeoutMs, 'Telegram connect');
+            normalizeTelegramSessionTransport(state.client.session);
+            return state.client;
+        } catch (error) {
+            lastError = error;
+            console.warn(`[User ${context.getUserId()}] Telegram ${reason} failed (${attempt}/${TELEGRAM_CONNECTION_RETRIES}):`, error?.message || error);
+            try {
+                await state.client.disconnect();
+            } catch (_) {}
+            if (attempt < TELEGRAM_CONNECTION_RETRIES) {
+                await wait(TELEGRAM_RETRY_DELAY_MS * attempt);
+            }
+        }
+    }
+
+    throw lastError || new Error('Telegram connect failed');
+};
+
 const initTelegramClient = async (apiId, apiHash) => {
   const state = getTenantState();
   const userId = context.getUserId();
   const sessionString = getSession();
   const stringSession = new StringSession(sessionString);
+  normalizeTelegramSessionTransport(stringSession);
   
   state.client = new TelegramClient(stringSession, parseInt(apiId), apiHash, {
-    connectionRetries: 5,
+    connection: getTelegramConnectionClass(),
+    connectionRetries: TELEGRAM_CONNECTION_RETRIES,
+    retryDelay: TELEGRAM_RETRY_DELAY_MS,
+    timeout: TELEGRAM_CONNECT_TIMEOUT_SEC,
+    requestRetries: 5,
+    useWSS: TELEGRAM_USE_HTTPS_PORT,
+    proxy: getTelegramProxy(),
+    appVersion: 'Solar Service CRM',
+    deviceModel: 'Railway Node.js',
+    systemVersion: process.version
   });
+  try {
+    state.client.setLogLevel('warn');
+  } catch (_) {}
   state.clientOwnerUserId = userId;
 
   if (sessionString) {
     try {
-      await state.client.connect();
+      await connectTelegramClient(state, 'session restore');
       console.log(`[User ${context.getUserId()}] Підключено до Telegram за існуючою сесією!`);
       return state.client;
     } catch (e) {
-      console.error(`[User ${context.getUserId()}] Не вдалося підключитися (сесія невірна або застаріла):`, e);
+      console.error(`[User ${context.getUserId()}] Не вдалося підключитися до Telegram за існуючою сесією:`, e?.message || e);
+      setAuthError(state, e);
     }
   }
 
@@ -181,6 +303,7 @@ const startAuthFlow = async () => {
     state.authFlowPromise = (async () => {
         try {
             console.log(`[User ${context.getUserId()}] Починаємо client.start()...`);
+            await connectTelegramClient(state, 'auth start');
             await state.client.start({
                 phoneNumber: async () => {
                     if (state.authCache.phoneNumber) return state.authCache.phoneNumber;
@@ -201,6 +324,7 @@ const startAuthFlow = async () => {
             });
             
             console.log(`[User ${context.getUserId()}] Ви успішно авторизовані!`);
+            normalizeTelegramSessionTransport(state.client.session);
             saveSession(state.client.session.save());
             return { success: true };
         } catch (error) {
