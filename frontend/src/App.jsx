@@ -199,6 +199,7 @@ function App({ currentUser: initialUser }) {
   const fileInputRef = useRef(null);
   const requestFileInputRef = useRef(null);
   const dialogLoadRequestRef = useRef(0);
+  const warehouseItemPatchSeqRef = useRef({});
   const projectStagePatchSeqRef = useRef({});
   const projectPatchSeqRef = useRef({});
   const activeDialogIdRef = useRef(null);
@@ -309,7 +310,7 @@ function App({ currentUser: initialUser }) {
   const [calendarZoom, setCalendarZoom] = useState(1);
   const [calendarMonthOffset, setCalendarMonthOffset] = useState(0);
   const [selectedCalendarTaskKey, setSelectedCalendarTaskKey] = useState('');
-  const [projectFinanceDraft, setProjectFinanceDraft] = useState({ type: 'income', amount: '', currency: 'UAH', usdRate: '', paymentDate: '', note: '' });
+  const [projectFinanceDraft, setProjectFinanceDraft] = useState({ type: 'income', amount: '', currency: 'UAH', usdRate: '', paymentMethod: 'cashless', paymentDate: '', note: '' });
   const [projectFinanceSaving, setProjectFinanceSaving] = useState(false);
   const [showFinanceStatsExpanded, setShowFinanceStatsExpanded] = useState(false);
   const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', startAt: '', dueAt: '', assignedUserId: '', telegramReminder: false });
@@ -2256,6 +2257,10 @@ function App({ currentUser: initialUser }) {
                           text: taskText,
                           plannedDate: '',
                           completedAt: '',
+                          planStart: '',
+                          planEnd: '',
+                          factStart: '',
+                          factEnd: '',
                           done: false
                       }))
                   }))
@@ -2404,6 +2409,7 @@ function App({ currentUser: initialUser }) {
                   amount: String(amount),
                   currency: entryCurrency,
                   usdRate: Number.isFinite(usdRate) && usdRate > 0 ? String(usdRate) : '',
+                  paymentMethod: entryType === 'expense' ? projectFinanceDraft.paymentMethod : '',
                   paymentDate: projectFinanceDraft.paymentDate || todayIso,
                   note: projectFinanceDraft.note
               })
@@ -2680,10 +2686,17 @@ function App({ currentUser: initialUser }) {
       return lines.join('\n');
   };
 
+  const isTaskInDailyDigest = (task, dayValue) => {
+      if (!task || task.status === 'done') return false;
+      return String(task.planDate || '') === dayValue
+          || (!!task.dueDate && String(task.dueDate) < dayValue)
+          || task.status === 'in_progress';
+  };
+
   const buildDailyDigestText = (dailyTasks, dayValue) => {
       const header = [`Щоденний дайджест задач (${dayValue})`, ''];
       if (!dailyTasks.length) {
-          return [...header, 'На сьогодні задач немає.'].join('\n');
+          return [...header, 'Немає активних задач на сьогодні, прострочених або в роботі.'].join('\n');
       }
       const rows = dailyTasks.map((task, index) => {
           const duePart = task.dueDate ? ` | дедлайн: ${task.dueDate}` : '';
@@ -2874,7 +2887,7 @@ function App({ currentUser: initialUser }) {
               if (nowTime !== taskReminderSettings.time) return;
               if (taskReminderSettings.lastSentDate === today) return;
 
-              const todayTasks = tasks.filter((task) => String(task.planDate || '') === today);
+              const todayTasks = tasks.filter((task) => isTaskInDailyDigest(task, today));
               const message = buildDailyDigestText(todayTasks, today);
               await sendTelegramReminderMessage(message);
               setTaskReminderSettings((prev) => ({ ...prev, lastSentDate: today }));
@@ -3305,6 +3318,9 @@ function App({ currentUser: initialUser }) {
   const updateWarehouseOrderItem = async (order, itemId, patch) => {
       const orderId = Number(order?.id);
       if (!Number.isFinite(orderId) || !itemId) return;
+      const patchKey = `${orderId}:${itemId}`;
+      const patchSeq = (warehouseItemPatchSeqRef.current[patchKey] || 0) + 1;
+      warehouseItemPatchSeqRef.current[patchKey] = patchSeq;
       const applyLocalPatch = (currentOrder) => ({
           ...currentOrder,
           items: getWarehouseOrderItems(currentOrder).map((item) => (
@@ -3323,9 +3339,11 @@ function App({ currentUser: initialUser }) {
               body: JSON.stringify(patch)
           });
           const updated = await parseApiJson(res, 'Не вдалося зберегти позицію');
+          if (warehouseItemPatchSeqRef.current[patchKey] !== patchSeq) return;
           setWarehouseOrders((prev) => prev.map((currentOrder) => (Number(currentOrder.id) === orderId ? updated : currentOrder)));
           setExpandedOrder((prev) => (prev && Number(prev.id) === orderId ? updated : prev));
       } catch (error) {
+          if (warehouseItemPatchSeqRef.current[patchKey] !== patchSeq) return;
           alert(error.message || 'Помилка збереження позиції');
           loadWarehouseOrders();
       }
@@ -5104,12 +5122,20 @@ function App({ currentUser: initialUser }) {
       if (!Array.isArray(tasks)) return [];
       return tasks.map((task) => {
           if (typeof task === 'string') {
-              return { text: task, plannedDate: '', completedAt: '', done: false };
+              return { text: task, plannedDate: '', completedAt: '', planStart: '', planEnd: '', factStart: '', factEnd: '', done: false };
           }
+          const planStart = String(task?.planStart || task?.plannedDate || task?.startDate || '');
+          const planEnd = String(task?.planEnd || task?.plannedEnd || task?.plannedDate || '');
+          const factStart = String(task?.factStart || task?.actualStart || '');
+          const factEnd = String(task?.factEnd || task?.completedAt || task?.endDate || '');
           return {
               text: String(task?.text || ''),
-              plannedDate: String(task?.plannedDate || task?.startDate || ''),
-              completedAt: String(task?.completedAt || task?.endDate || ''),
+              plannedDate: planStart,
+              completedAt: factEnd,
+              planStart,
+              planEnd,
+              factStart,
+              factEnd,
               done: !!task?.done
           };
       });
@@ -5129,6 +5155,131 @@ function App({ currentUser: initialUser }) {
       return `${y}-${m}-${d}`;
   };
   const todayIso = toLocalIsoDate(new Date());
+  const diffDaysSigned = (from, to) => {
+      const a = toIsoDate(from);
+      const b = toIsoDate(to);
+      if (!a || !b) return 0;
+      return Math.round((new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime()) / 86400000);
+  };
+  const getDeadlineMeta = (plannedRaw, actualRaw, label) => {
+      const planned = toIsoDate(plannedRaw);
+      const actual = toIsoDate(actualRaw);
+      if (!planned) return null;
+      if (actual) {
+          const diff = diffDaysSigned(planned, actual);
+          if (diff < 0) return { type: 'ahead', days: Math.abs(diff), text: `${label}: раніше на ${Math.abs(diff)} дн.` };
+          if (diff > 0) return { type: 'late', days: diff, text: `${label}: пізніше на ${diff} дн.` };
+          return { type: 'ok', days: 0, text: `${label}: день у день` };
+      }
+      const until = diffDaysSigned(todayIso, planned);
+      if (until < 0) return { type: 'overdue', days: Math.abs(until), text: `${label}: прострочено на ${Math.abs(until)} дн.` };
+      if (until === 0) return { type: 'today', days: 0, text: `${label}: сьогодні` };
+      return { type: 'upcoming', days: until, text: `${label}: залишилось ${until} дн.` };
+  };
+  const getStageScheduleItems = (stage) => {
+      const stageItems = [
+          getDeadlineMeta(stage?.planStart || stage?.planDate, stage?.factStart || stage?.factDate, 'Старт етапу'),
+          getDeadlineMeta(stage?.planEnd, stage?.factEnd, 'Фініш етапу')
+      ].filter(Boolean);
+      const taskItems = normalizeStageTasks(stage?.stageTasks).flatMap((task) => ([
+          getDeadlineMeta(task.planStart || task.plannedDate, task.factStart, 'Старт підетапу'),
+          getDeadlineMeta(task.planEnd || task.plannedDate, task.factEnd || task.completedAt, 'Фініш підетапу')
+      ].filter(Boolean)));
+      return [...stageItems, ...taskItems];
+  };
+  const getStageScheduleSummary = (stage) => {
+      const items = getStageScheduleItems(stage);
+      const overdue = items.filter((item) => item.type === 'overdue');
+      const late = items.filter((item) => item.type === 'late');
+      const ahead = items.filter((item) => item.type === 'ahead');
+      const upcoming = items
+          .filter((item) => item.type === 'upcoming' || item.type === 'today')
+          .sort((a, b) => Number(a.days || 0) - Number(b.days || 0));
+      const worst = [...overdue, ...late].sort((a, b) => Number(b.days || 0) - Number(a.days || 0))[0] || null;
+      return { items, overdue, late, ahead, upcoming, worst };
+  };
+  const getProjectScheduleSummary = (project) => {
+      const stages = Array.isArray(project?.stages) ? project.stages : [];
+      const stageSummaries = stages.map((stage) => getStageScheduleSummary(stage));
+      const overdue = stageSummaries.flatMap((summary) => summary.overdue);
+      const late = stageSummaries.flatMap((summary) => summary.late);
+      const ahead = stageSummaries.flatMap((summary) => summary.ahead);
+      const upcoming = stageSummaries.flatMap((summary) => summary.upcoming).sort((a, b) => Number(a.days || 0) - Number(b.days || 0));
+      const worst = [...overdue, ...late].sort((a, b) => Number(b.days || 0) - Number(a.days || 0))[0] || null;
+      return { overdue, late, ahead, upcoming, worst };
+  };
+  const getProjectTaskTimingMeta = (task) => {
+      const due = toIsoDate(task?.dueAt);
+      const completed = toIsoDate(task?.completedAt);
+      if (!due) return { type: 'none', label: 'Без дедлайну', days: 0 };
+      if (completed) {
+          const diff = diffDaysSigned(due, completed);
+          if (diff < 0) return { type: 'ahead', label: `З опереженням на ${Math.abs(diff)} дн.`, days: Math.abs(diff) };
+          if (diff > 0) return { type: 'late', label: `Пізніше на ${diff} дн.`, days: diff };
+          return { type: 'on_time', label: 'День у день', days: 0 };
+      }
+      const until = diffDaysSigned(todayIso, due);
+      if (until < 0) return { type: 'overdue', label: `Прострочено на ${Math.abs(until)} дн.`, days: Math.abs(until) };
+      if (until === 0) return { type: 'today', label: 'Дедлайн сьогодні', days: 0 };
+      return { type: 'pending', label: `Залишилось ${until} дн.`, days: until };
+  };
+  const buildProjectCalendarMarks = (project) => {
+      if (!project) return [];
+      const marks = [];
+      const addMark = (dateRaw, title, details = '') => {
+          const date = toIsoDate(dateRaw);
+          if (!date || !title) return;
+          marks.push({ date, title, details: String(details || '').trim() });
+      };
+      addMark(project.createdAt, 'Створено проєкт', project.title || '');
+      addMark(project.planStart, 'Плановий старт проєкту', project.title || '');
+      addMark(project.planEnd, 'Плановий дедлайн проєкту', project.title || '');
+      addMark(project.factStart, 'Фактичний старт проєкту', project.title || '');
+      addMark(project.factEnd, 'Фактичне завершення проєкту', project.title || '');
+      (Array.isArray(project.stages) ? project.stages : []).forEach((stage) => {
+          addMark(stage.planStart || stage.planDate, `Плановий старт етапу: ${stage.name || 'Без назви'}`);
+          addMark(stage.planEnd, `Плановий дедлайн етапу: ${stage.name || 'Без назви'}`);
+          addMark(stage.factStart || stage.factDate, `Фактичний старт етапу: ${stage.name || 'Без назви'}`);
+          addMark(stage.factEnd, `Фактичне завершення етапу: ${stage.name || 'Без назви'}`);
+          normalizeStageTasks(stage.stageTasks).forEach((task) => {
+              const title = task.text || 'Підетап без назви';
+              addMark(task.planStart || task.plannedDate, `План підетапу: ${title}`, stage.name || '');
+              addMark(task.planEnd || task.plannedDate, `Дедлайн підетапу: ${title}`, getDeadlineMeta(task.planEnd || task.plannedDate, task.factEnd || task.completedAt, 'Стан')?.text || '');
+              addMark(task.factStart, `Фактичний старт підетапу: ${title}`, stage.name || '');
+              addMark(task.factEnd || task.completedAt, `Виконано підетап: ${title}`, getDeadlineMeta(task.planEnd || task.plannedDate, task.factEnd || task.completedAt, 'Стан')?.text || '');
+          });
+      });
+      (Array.isArray(project.tasks) ? project.tasks : []).forEach((task) => {
+          const title = task.title || 'Задача без назви';
+          const timing = getProjectTaskTimingMeta(task);
+          addMark(task.startAt, `Старт задачі: ${title}`, task.assignedUsername ? `Відповідальний: ${task.assignedUsername}` : '');
+          addMark(task.dueAt, `Дедлайн задачі: ${title}`, timing.label);
+          addMark(task.completedAt, `Виконано задачу: ${title}`, timing.label);
+          addMark(task.remindAt, `Telegram-нагадування: ${title}`, task.assignedUsername ? `Кому: ${task.assignedUsername}` : '');
+      });
+      (Array.isArray(project.financeEntries) ? project.financeEntries : []).forEach((entry) => {
+          addMark(entry.paymentDate || entry.createdAt, `${entry.type === 'expense' ? 'Витрата' : 'Оплата'}: ${entry.amount || 0} ${entry.currency || 'UAH'}`, entry.note || '');
+      });
+      (Array.isArray(project.notes) ? project.notes : []).forEach((note) => {
+          addMark(note.createdAt, `Нотатка: ${(note.body || '').slice(0, 90)}`, note.createdByUsername ? `Автор: ${note.createdByUsername}` : '');
+      });
+      return marks.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  };
+  const handleExportProjectFile = (project) => {
+      if (!project) return;
+      fetch(buildApiUrlWithToken(`/projects/${project.id}/export.xlsx`))
+          .then(async (res) => {
+              if (!res.ok) {
+                  const data = await res.json().catch(() => ({}));
+                  throw new Error(data?.error || `HTTP ${res.status}`);
+              }
+              const blob = await res.blob();
+              triggerBrowserDownload(blob, getDownloadFileNameFromHeaders(res, `Проєкт ${project.id}.xlsx`));
+          })
+          .catch((error) => {
+              alert(error.message || 'Не вдалося сформувати Excel-файл');
+          });
+  };
   const getStageDateRange = (stage) => {
       const tasks = normalizeStageTasks(stage?.stageTasks);
       const start = toIsoDate(stage?.planStart || stage?.planDate) || tasks.map((t) => toIsoDate(t.plannedDate)).filter(Boolean).sort()[0] || '';
@@ -5149,6 +5300,7 @@ function App({ currentUser: initialUser }) {
       String(stage.status || '') === 'done' || isStageDoneByTasks(stage)
   )).length;
   const selectedProjectProgress = selectedProjectStages.length > 0 ? Math.round((selectedProjectDoneStages / selectedProjectStages.length) * 100) : 0;
+  const selectedProjectScheduleSummary = getProjectScheduleSummary(selectedProject);
   const financeStatsByCurrency = selectedProjectFinanceEntries.reduce((acc, entry) => {
       const currency = String(entry?.currency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH';
       const amount = parseMoneyValue(entry?.amount);
@@ -5188,6 +5340,19 @@ function App({ currentUser: initialUser }) {
   const selectedProjectExpenseInProjectCurrency = selectedProjectFinanceCurrency === 'USD' ? selectedProjectExpenseUsd : selectedProjectExpenseUah;
   const selectedProjectProfitInProjectCurrency = selectedProjectIncomeInProjectCurrency - selectedProjectExpenseInProjectCurrency;
   const selectedProjectCurrencySymbol = selectedProjectFinanceCurrency === 'USD' ? '$' : '₴';
+  const expenseStatsByPaymentMethod = selectedProjectFinanceEntries
+      .filter((entry) => String(entry?.type || '') === 'expense')
+      .reduce((acc, entry) => {
+          const method = String(entry?.paymentMethod || '').toLowerCase() === 'cash' ? 'cash' : 'cashless';
+          const amount = convertCurrencyAmount(
+              parseMoneyValue(entry?.amount),
+              entry?.currency,
+              selectedProjectFinanceCurrency,
+              parseMoneyValue(entry?.usdRate)
+          );
+          acc[method] = Number(acc[method] || 0) + amount;
+          return acc;
+      }, { cash: 0, cashless: 0 });
   const projectFinanceNeedsRate = String(projectFinanceDraft.currency || 'UAH').toUpperCase() !== selectedProjectFinanceCurrency;
   const selectedProjectOutstanding = (() => {
       const due = selectedProjectValueRaw - selectedProjectIncomeInProjectCurrency;
@@ -5309,6 +5474,9 @@ function App({ currentUser: initialUser }) {
   const projectInputReadOnlyClass = isLightTheme
       ? 'bg-slate-100 border-slate-300 text-slate-500'
       : 'bg-slate-800 border-slate-700 text-slate-400';
+  const getPaymentMethodLabel = (value) => (
+      String(value || '').toLowerCase() === 'cash' ? 'Готівка' : 'Безготівковий рахунок'
+  );
   const formatStageDateBadge = (value) => {
       const raw = String(value || '').trim();
       const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -5376,13 +5544,15 @@ function App({ currentUser: initialUser }) {
       if (parts.length >= 3) return { name: parts[0], code: parts[1], requestedQty: parts[2], unit: normalizeWarehouseTextUnit(parts[3] || '') };
       const dashQtyMatch = cleaned.match(new RegExp(`^(.+?)\\s*[-–—]\\s*(\\d+(?:[,.]\\d+)?)\\s*(${warehouseTextQtyUnitPattern})?(?:\\b|\\s|$)(?:.*)?$`, 'i'));
       const endQtyMatch = cleaned.match(new RegExp(`^(.+?)\\s+(\\d+(?:[,.]\\d+)?)\\s*(${warehouseTextQtyUnitPattern})\\s*$`, 'i'));
+      const startQtyMatch = cleaned.match(new RegExp(`^(\\d+(?:[,.]\\d+)?)\\s*(${warehouseTextQtyUnitPattern})\\s+(.+)$`, 'i'));
+      const startUnitQtyMatch = cleaned.match(new RegExp(`^(${warehouseTextQtyUnitPattern})\\s*(\\d+(?:[,.]\\d+)?)\\s+(.+)$`, 'i'));
       const qtyMatch = dashQtyMatch || endQtyMatch;
-      const name = qtyMatch?.[1]?.trim() || cleaned;
+      const name = startQtyMatch?.[3]?.trim() || startUnitQtyMatch?.[3]?.trim() || qtyMatch?.[1]?.trim() || cleaned;
       return {
           name: name.replace(/\s*[-–—]\s*$/, '').trim(),
           code: '',
-          requestedQty: qtyMatch?.[2] || '',
-          unit: normalizeWarehouseTextUnit(qtyMatch?.[3] || '')
+          requestedQty: startQtyMatch?.[1] || startUnitQtyMatch?.[2] || qtyMatch?.[2] || '',
+          unit: normalizeWarehouseTextUnit(startQtyMatch?.[2] || startUnitQtyMatch?.[1] || qtyMatch?.[3] || '')
       };
   };
   const manualWarehouseOrderLines = String(manualWarehouseOrder.messageText || '')
@@ -8870,11 +9040,25 @@ function App({ currentUser: initialUser }) {
             {filteredProjects.map((project) => {
               const stages = Array.isArray(project.stages) ? project.stages : [];
               const doneCount = stages.filter((stage) => String(stage.status || '') === 'done' || isStageDoneByTasks(stage)).length;
+              const scheduleSummary = getProjectScheduleSummary(project);
+              const overdueCount = scheduleSummary.overdue.length;
               return (
                 <button key={project.id} onClick={() => setSelectedProjectId(project.id)} className={`w-full text-left rounded-xl border p-3 ${selectedProjectId === project.id ? 'border-blue-500 bg-blue-500/10' : (isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/70')}`}>
                   <div className="text-xs text-slate-500">№ {project.number}</div>
                   <div className={`text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{project.title}</div>
-                  <div className="text-sm text-slate-500">Етапи: {doneCount}/{stages.length}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-slate-500">Етапи: {doneCount}/{stages.length}</span>
+                    {overdueCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full border border-red-500/40 text-red-300 bg-red-500/10">
+                        Прострочено: {overdueCount}
+                      </span>
+                    )}
+                    {!overdueCount && scheduleSummary.upcoming[0] && (
+                      <span className="px-2 py-0.5 rounded-full border border-amber-500/40 text-amber-300 bg-amber-500/10">
+                        Найближче: {scheduleSummary.upcoming[0].days} дн.
+                      </span>
+                    )}
+                  </div>
                 </button>
               );
             })}
@@ -8884,12 +9068,13 @@ function App({ currentUser: initialUser }) {
               <div className="space-y-2">
                 {filteredProjects.map((project) => {
                   const shortName = String(project.title || project.number || 'Проєкт').trim();
+                  const overdueCount = getProjectScheduleSummary(project).overdue.length;
                   return (
                     <button
                       key={`mini-project-${project.id}`}
                       onClick={() => setSelectedProjectId(project.id)}
                       title={`${project.number || ''} ${project.title || ''}`.trim()}
-                      className={`w-full h-10 rounded-lg border text-xs font-semibold transition px-2 text-left ${selectedProjectId === project.id ? 'border-blue-500 bg-blue-500/20 text-blue-200' : (isLightTheme ? 'border-slate-300 bg-white text-slate-700' : 'border-slate-700 bg-slate-900/70 text-slate-300')}`}
+                      className={`w-full h-10 rounded-lg border text-xs font-semibold transition px-2 text-left ${overdueCount > 0 ? 'ring-1 ring-red-500/70' : ''} ${selectedProjectId === project.id ? 'border-blue-500 bg-blue-500/20 text-blue-200' : (isLightTheme ? 'border-slate-300 bg-white text-slate-700' : 'border-slate-700 bg-slate-900/70 text-slate-300')}`}
                     >
                       <span className="block truncate">{shortName}</span>
                     </button>
@@ -8902,13 +9087,86 @@ function App({ currentUser: initialUser }) {
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
           {!selectedProject ? <div className="text-slate-500">Оберіть проєкт</div> : (
             <div className={`grid grid-cols-1 ${isProjectsRightCollapsed ? '' : 'xl:grid-cols-[minmax(0,1fr)_30rem]'} gap-4`}>
+              <div className="space-y-4">
               <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
-                <div className="flex items-center gap-2 mb-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                  <label className="block md:col-span-2">
+                    <span className={`block text-xs mb-1 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Назва проєкту</span>
+                    <input
+                      type="text"
+                      value={selectedProject.title || ''}
+                      onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { title: e.target.value })}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm font-semibold ${projectInputClass}`}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={`block text-xs mb-1 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Клієнт</span>
+                    <input
+                      type="text"
+                      value={selectedProject.clientName || ''}
+                      onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { clientName: e.target.value })}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={`block text-xs mb-1 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Статус</span>
+                    <select
+                      value={selectedProject.status || 'planning'}
+                      onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { status: e.target.value })}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                    >
+                      <option value="planning">Планування</option>
+                      <option value="active">Активний</option>
+                      <option value="done">Завершений</option>
+                      <option value="cancelled">Скасований</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className={`block text-xs mb-1 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Потужність, кВт</span>
+                    <input
+                      type="text"
+                      value={selectedProject.powerKw || ''}
+                      onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { powerKw: e.target.value })}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={`block text-xs mb-1 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Плановий старт</span>
+                    <input
+                      type="date"
+                      value={normalizeDateInputValue(selectedProject.planStart)}
+                      onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { planStart: e.target.value })}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={`block text-xs mb-1 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Плановий дедлайн</span>
+                    <input
+                      type="date"
+                      value={normalizeDateInputValue(selectedProject.planEnd)}
+                      onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { planEnd: e.target.value })}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={`block text-xs mb-1 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Факт завершення</span>
+                    <input
+                      type="date"
+                      value={normalizeDateInputValue(selectedProject.factEnd)}
+                      onChange={(e) => handleProjectFieldUpdate(selectedProject.id, { factEnd: e.target.value })}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
+                <div className="flex flex-wrap items-center gap-2 mb-3">
                   <button type="button" onClick={() => setProjectViewTab('stages')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'stages' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Етапи</button>
                   <button type="button" onClick={() => setProjectViewTab('calendar')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'calendar' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Календар</button>
                   <button type="button" onClick={() => setProjectViewTab('finance')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'finance' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Фінанси</button>
                   <button type="button" onClick={() => setProjectViewTab('tasks')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'tasks' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Задачі</button>
                   <button type="button" onClick={() => setProjectViewTab('notes')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'notes' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Нотатки</button>
+                  <button type="button" onClick={() => handleExportProjectFile(selectedProject)} className="px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 text-sm">Експорт файлу</button>
                   {projectViewTab === 'calendar' && (
                     <div className="ml-auto flex items-center gap-1">
                       <button type="button" onClick={() => setCalendarMonthOffset((prev) => prev - 1)} className={`px-2 py-1 rounded border text-xs ${projectInputClass}`}>Місяць -</button>
@@ -8932,9 +9190,13 @@ function App({ currentUser: initialUser }) {
                         : stage.stageTasks);
                       const dateStart = formatStageDateBadge(stage.planStart || stage.planDate);
                       const dateEnd = formatStageDateBadge(stage.planEnd);
+                      const stageScheduleSummary = getStageScheduleSummary({ ...stage, stageTasks });
+                      const hasStageOverdue = stageScheduleSummary.overdue.length > 0;
                       return (
                       <div key={stage.id} className={`rounded-xl border ${
-                        isDone
+                        hasStageOverdue
+                          ? (isLightTheme ? 'border-red-300 bg-red-50/80' : 'border-red-500/50 bg-red-950/20')
+                          : isDone
                           ? (isLightTheme ? 'border-emerald-300 bg-emerald-50/70' : 'border-emerald-600/40 bg-emerald-900/20')
                           : isActive
                             ? (isLightTheme ? 'border-cyan-300 bg-cyan-50/70' : 'border-cyan-500/40 bg-cyan-900/20')
@@ -8950,6 +9212,11 @@ function App({ currentUser: initialUser }) {
                                   : (isLightTheme ? 'border-slate-400 text-slate-600 bg-white' : 'border-slate-500 text-slate-300 bg-slate-800')
                             }`}>{idx + 1}</span>
                             <div className={`font-medium truncate ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{stage.name}</div>
+                            {hasStageOverdue && (
+                              <span className="px-2 py-0.5 rounded-full border border-red-500/40 text-red-300 bg-red-500/10 text-xs">
+                                {stageScheduleSummary.worst?.text || 'Є прострочка'}
+                              </span>
+                            )}
                           </div>
                           <span className={`text-sm ${
                             isDone
@@ -8961,46 +9228,125 @@ function App({ currentUser: initialUser }) {
                         </button>
                         {isExpanded && (
                         <div className={`px-3 pb-3 border-t ${isLightTheme ? 'border-slate-200' : 'border-slate-700/80'}`}>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
-                            <input type="date" value={normalizeDateInputValue(stage.planStart || stage.planDate)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planStart: e.target.value, planDate: e.target.value })} title="Початок етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
-                            <input type="date" value={normalizeDateInputValue(stage.planEnd)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planEnd: e.target.value })} title="Кінець етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mt-3">
+                            <label className="flex flex-col gap-1">
+                              <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>План старт</span>
+                              <input type="date" value={normalizeDateInputValue(stage.planStart || stage.planDate)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planStart: e.target.value, planDate: e.target.value })} title="Плановий початок етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                            </label>
+                            <label className="flex flex-col gap-1">
+                              <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>План фініш</span>
+                              <input type="date" value={normalizeDateInputValue(stage.planEnd)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planEnd: e.target.value })} title="Планове завершення етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                            </label>
+                            <label className="flex flex-col gap-1">
+                              <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Факт старт</span>
+                              <input type="date" value={normalizeDateInputValue(stage.factStart || stage.factDate)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { factStart: e.target.value, factDate: e.target.value })} title="Фактичний початок етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                            </label>
+                            <label className="flex flex-col gap-1">
+                              <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Факт фініш</span>
+                              <input type="date" value={normalizeDateInputValue(stage.factEnd)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { factEnd: e.target.value })} title="Фактичне завершення етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                            </label>
                           </div>
+                          {stageScheduleSummary.items.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {stageScheduleSummary.items.slice(0, 4).map((item, itemIndex) => (
+                                <span key={`stage-schedule-${stage.id}-${itemIndex}`} className={`px-2 py-0.5 rounded-full border text-xs ${
+                                  item.type === 'overdue' || item.type === 'late'
+                                    ? 'border-red-500/40 text-red-300 bg-red-500/10'
+                                    : item.type === 'ahead'
+                                      ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10'
+                                      : 'border-amber-500/40 text-amber-300 bg-amber-500/10'
+                                }`}>
+                                  {item.text}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           <div className="mt-3 space-y-2">
                             {stageTasks.map((task, taskIndex) => {
                               const taskText = String(task?.text || '');
                               const taskDone = !!task?.done;
+                              const taskScheduleItems = [
+                                getDeadlineMeta(task.planStart || task.plannedDate, task.factStart, 'Старт'),
+                                getDeadlineMeta(task.planEnd || task.plannedDate, task.factEnd || task.completedAt, 'Фініш')
+                              ].filter(Boolean);
                               return (
-                                <div key={`task-${stage.id}-${taskIndex}`} className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_12rem_auto] gap-2 items-center w-full">
-                                  <button type="button" onClick={() => {
-                                    const nextTasks = stageTasks.map((item, idx2) => {
-                                      if (idx2 !== taskIndex) return item;
-                                      const nextDone = !item.done;
-                                      return { ...item, done: nextDone, completedAt: nextDone ? todayIso : '' };
-                                    });
-                                    setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
-                                    handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
-                                  }} className={`w-5 h-5 rounded-full border shrink-0 ${taskDone ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500'}`} />
-                                  <input type="text" value={taskText} onChange={(e) => {
-                                    const nextTasks = stageTasks.map((item, idx2) => idx2 !== taskIndex ? item : { ...item, text: e.target.value });
-                                    setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
-                                    handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
-                                  }} className={`flex-1 border rounded-lg px-3 py-1.5 text-sm ${projectInputClass} ${taskDone ? 'line-through text-emerald-500' : ''}`} />
-                                  <input type="date" value={normalizeDateInputValue(task.plannedDate)} onChange={(e) => {
-                                    const nextTasks = stageTasks.map((item, idx2) => idx2 !== taskIndex ? item : { ...item, plannedDate: e.target.value });
-                                    setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
-                                    handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
-                                  }} className={`border rounded-lg px-2 py-1.5 text-xs ${projectInputClass}`} />
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const nextTasks = stageTasks.filter((_, idx2) => idx2 !== taskIndex);
+                                <div key={`task-${stage.id}-${taskIndex}`} className="space-y-2 w-full">
+                                  <div className="flex items-center gap-2 w-full">
+                                    <button type="button" onClick={() => {
+                                      const nextTasks = stageTasks.map((item, idx2) => {
+                                        if (idx2 !== taskIndex) return item;
+                                        const nextDone = !item.done;
+                                        return { ...item, done: nextDone, factEnd: nextDone ? todayIso : '', completedAt: nextDone ? todayIso : '' };
+                                      });
                                       setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
                                       handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
-                                    }}
-                                    className="px-2 py-1.5 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs"
-                                  >
-                                    Видалити
-                                  </button>
+                                    }} className={`w-5 h-5 rounded-full border shrink-0 ${taskDone ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500'}`} />
+                                    <input type="text" value={taskText} onChange={(e) => {
+                                      const nextTasks = stageTasks.map((item, idx2) => idx2 !== taskIndex ? item : { ...item, text: e.target.value });
+                                      setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                      handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                    }} className={`min-w-0 flex-1 border rounded-lg px-3 py-1.5 text-sm ${projectInputClass} ${taskDone ? 'line-through text-emerald-500' : ''}`} />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const nextTasks = stageTasks.filter((_, idx2) => idx2 !== taskIndex);
+                                        setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                        handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                      }}
+                                      className="px-2 py-1.5 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs shrink-0"
+                                    >
+                                      Видалити
+                                    </button>
+                                  </div>
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pl-7">
+                                    <label className="space-y-1">
+                                      <span className="block text-[10px] uppercase text-slate-500">План старт</span>
+                                      <input type="date" value={normalizeDateInputValue(task.planStart || task.plannedDate)} title="План старт" onChange={(e) => {
+                                        const nextTasks = stageTasks.map((item, idx2) => idx2 !== taskIndex ? item : { ...item, planStart: e.target.value, plannedDate: e.target.value });
+                                        setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                        handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                      }} className={`w-full border rounded-lg px-2 py-1.5 text-xs ${projectInputClass}`} />
+                                    </label>
+                                    <label className="space-y-1">
+                                      <span className="block text-[10px] uppercase text-slate-500">План фініш</span>
+                                      <input type="date" value={normalizeDateInputValue(task.planEnd)} title="План фініш" onChange={(e) => {
+                                        const nextTasks = stageTasks.map((item, idx2) => idx2 !== taskIndex ? item : { ...item, planEnd: e.target.value });
+                                        setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                        handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                      }} className={`w-full border rounded-lg px-2 py-1.5 text-xs ${projectInputClass}`} />
+                                    </label>
+                                    <label className="space-y-1">
+                                      <span className="block text-[10px] uppercase text-slate-500">Факт старт</span>
+                                      <input type="date" value={normalizeDateInputValue(task.factStart)} title="Факт старт" onChange={(e) => {
+                                        const nextTasks = stageTasks.map((item, idx2) => idx2 !== taskIndex ? item : { ...item, factStart: e.target.value });
+                                        setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                        handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                      }} className={`w-full border rounded-lg px-2 py-1.5 text-xs ${projectInputClass}`} />
+                                    </label>
+                                    <label className="space-y-1">
+                                      <span className="block text-[10px] uppercase text-slate-500">Факт фініш</span>
+                                      <input type="date" value={normalizeDateInputValue(task.factEnd || task.completedAt)} title="Факт фініш" onChange={(e) => {
+                                        const nextTasks = stageTasks.map((item, idx2) => idx2 !== taskIndex ? item : { ...item, factEnd: e.target.value, completedAt: e.target.value, done: !!e.target.value });
+                                        setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
+                                        handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
+                                      }} className={`w-full border rounded-lg px-2 py-1.5 text-xs ${projectInputClass}`} />
+                                    </label>
+                                  </div>
+                                  {taskScheduleItems.length > 0 && (
+                                    <div className="pl-7 flex flex-wrap gap-1">
+                                      {taskScheduleItems.map((item, itemIndex) => (
+                                        <span key={`task-schedule-${stage.id}-${taskIndex}-${itemIndex}`} className={`px-2 py-0.5 rounded-full border text-[11px] ${
+                                          item.type === 'overdue' || item.type === 'late'
+                                            ? 'border-red-500/40 text-red-300 bg-red-500/10'
+                                            : item.type === 'ahead'
+                                              ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10'
+                                              : 'border-amber-500/40 text-amber-300 bg-amber-500/10'
+                                        }`}>
+                                          {item.text}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
@@ -9014,7 +9360,7 @@ function App({ currentUser: initialUser }) {
                                   e.preventDefault();
                                   const raw = String(stageTaskDrafts[draftKey] || '').trim();
                                   const text = raw || `Нова задача ${stageTasks.length + 1}`;
-                                  const nextTasks = [...stageTasks, { text, plannedDate: '', completedAt: '', done: false }];
+                                  const nextTasks = [...stageTasks, { text, plannedDate: '', completedAt: '', planStart: '', planEnd: '', factStart: '', factEnd: '', done: false }];
                                   setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
                                   handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
                                   setStageTaskDrafts((prev) => ({ ...prev, [draftKey]: '' }));
@@ -9025,7 +9371,7 @@ function App({ currentUser: initialUser }) {
                               <button type="button" onClick={() => {
                                 const raw = String(stageTaskDrafts[draftKey] || '').trim();
                                 const text = raw || `Нова задача ${stageTasks.length + 1}`;
-                                const nextTasks = [...stageTasks, { text, plannedDate: '', completedAt: '', done: false }];
+                                const nextTasks = [...stageTasks, { text, plannedDate: '', completedAt: '', planStart: '', planEnd: '', factStart: '', factEnd: '', done: false }];
                                 setStageTasksLocal((prev) => ({ ...prev, [draftKey]: nextTasks }));
                                 handleProjectStageUpdate(selectedProject.id, stage.id, { stageTasks: nextTasks });
                                 setStageTaskDrafts((prev) => ({ ...prev, [draftKey]: '' }));
@@ -9043,6 +9389,12 @@ function App({ currentUser: initialUser }) {
                     <div className={`text-sm ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>Період: {calendarMinDate} - {calendarMaxDate} ({calendarTotalDays} дн.)</div>
                     <div className={`text-base font-semibold ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>
                       {new Date(calendarStartTs).toLocaleDateString('uk-UA', { month: 'long', year: 'numeric' })} - {new Date(calendarEndTs).toLocaleDateString('uk-UA', { month: 'long', year: 'numeric' })}
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <span className="px-2 py-1 rounded-full border border-blue-500/40 text-blue-300 bg-blue-500/10">План етапу</span>
+                      <span className="px-2 py-1 rounded-full border border-amber-500/40 text-amber-300 bg-amber-500/10">План підетапу</span>
+                      <span className="px-2 py-1 rounded-full border border-emerald-500/40 text-emerald-300 bg-emerald-500/10">Факт</span>
+                      <span className="px-2 py-1 rounded-full border border-red-500/40 text-red-300 bg-red-500/10">Прострочка</span>
                     </div>
                     <div className={`rounded-xl border p-3 ${isLightTheme ? 'border-slate-200 bg-slate-50' : 'border-slate-700 bg-slate-900/40'}`}>
                       <div className="overflow-auto">
@@ -9069,9 +9421,24 @@ function App({ currentUser: initialUser }) {
                                 <div className="flex items-center">
                                 <div className={`w-72 shrink-0 px-2 py-1 text-sm font-semibold ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>{stage.name}</div>
                                   <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${calendarDays.length}, minmax(${Math.round(24 * calendarZoom)}px, 1fr))` }}>
-                                    {calendarDays.map((day) => (
-                                      <div key={`cal-stage-${stage.id}-${day.iso}`} className={`h-7 border ${isDateInRange(day.iso, stage.planStart || stage.planDate, stage.planEnd) ? (isLightTheme ? 'bg-blue-200 border-blue-300' : 'bg-blue-500/40 border-blue-500/50') : (day.isSunday ? (isLightTheme ? 'border-rose-200 bg-rose-50/60' : 'border-rose-500/20 bg-rose-900/10') : (isLightTheme ? 'border-slate-300 bg-slate-100/70' : 'border-slate-800 bg-slate-900/50'))}`} />
-                                    ))}
+                                    {calendarDays.map((day) => {
+                                      const inPlan = isDateInRange(day.iso, stage.planStart || stage.planDate, stage.planEnd);
+                                      const inFact = isDateInRange(day.iso, stage.factStart || stage.factDate, stage.factEnd || stage.factStart || stage.factDate);
+                                      const planEnd = toIsoDate(stage.planEnd || stage.planStart || stage.planDate);
+                                      const missingFact = !toIsoDate(stage.factEnd || stage.factStart || stage.factDate);
+                                      const isOverdueCell = inPlan && missingFact && planEnd && planEnd < todayIso;
+                                      return (
+                                        <div key={`cal-stage-${stage.id}-${day.iso}`} className={`h-7 border ${
+                                          isOverdueCell
+                                            ? (isLightTheme ? 'bg-red-200 border-red-300' : 'bg-red-500/50 border-red-500/70')
+                                            : inFact
+                                              ? (isLightTheme ? 'bg-emerald-300 border-emerald-400' : 'bg-emerald-500/60 border-emerald-500/70')
+                                              : inPlan
+                                                ? (isLightTheme ? 'bg-blue-200 border-blue-300' : 'bg-blue-500/40 border-blue-500/50')
+                                                : (day.isSunday ? (isLightTheme ? 'border-rose-200 bg-rose-50/60' : 'border-rose-500/20 bg-rose-900/10') : (isLightTheme ? 'border-slate-300 bg-slate-100/70' : 'border-slate-800 bg-slate-900/50'))
+                                        }`} />
+                                      );
+                                    })}
                                   </div>
                                 </div>
                                 {tasks.map((task, idx) => {
@@ -9087,9 +9454,27 @@ function App({ currentUser: initialUser }) {
                                       {task.text}
                                     </button>
                                     <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${calendarDays.length}, minmax(${Math.round(24 * calendarZoom)}px, 1fr))` }}>
-                                      {calendarDays.map((day) => (
-                                        <div key={`cal-task-cell-${stage.id}-${idx}-${day.iso}`} className={`h-6 border transition ${isDateInRange(day.iso, task.plannedDate, task.done ? task.completedAt : task.plannedDate) ? (task.done ? (isLightTheme ? 'bg-emerald-300 border-emerald-400' : 'bg-emerald-500/60 border-emerald-500/70') : (isLightTheme ? 'bg-amber-200 border-amber-300' : 'bg-amber-500/60 border-amber-500/70')) : (day.isSunday ? (isLightTheme ? 'border-rose-200 bg-rose-50/60' : 'border-rose-500/20 bg-rose-900/10') : (isLightTheme ? 'border-slate-300 bg-white' : 'border-slate-800 bg-slate-900/40'))} ${isSelectedTaskRow ? (isLightTheme ? 'bg-blue-100/70 ring-1 ring-blue-500 border-blue-400' : 'bg-blue-500/20 ring-1 ring-cyan-300/90 border-cyan-400/70') : ''}`} />
-                                      ))}
+                                      {calendarDays.map((day) => {
+                                        const taskPlanStart = task.planStart || task.plannedDate;
+                                        const taskPlanEnd = task.planEnd || task.plannedDate;
+                                        const taskFactStart = task.factStart || '';
+                                        const taskFactEnd = task.factEnd || task.completedAt || taskFactStart;
+                                        const inPlan = isDateInRange(day.iso, taskPlanStart, taskPlanEnd);
+                                        const inFact = isDateInRange(day.iso, taskFactStart, taskFactEnd);
+                                        const planEnd = toIsoDate(taskPlanEnd || taskPlanStart);
+                                        const isOverdueCell = inPlan && !toIsoDate(task.factEnd || task.completedAt) && planEnd && planEnd < todayIso;
+                                        return (
+                                          <div key={`cal-task-cell-${stage.id}-${idx}-${day.iso}`} className={`h-6 border transition ${
+                                            isOverdueCell
+                                              ? (isLightTheme ? 'bg-red-200 border-red-300' : 'bg-red-500/50 border-red-500/70')
+                                              : inFact
+                                                ? (isLightTheme ? 'bg-emerald-300 border-emerald-400' : 'bg-emerald-500/60 border-emerald-500/70')
+                                                : inPlan
+                                                  ? (isLightTheme ? 'bg-amber-200 border-amber-300' : 'bg-amber-500/60 border-amber-500/70')
+                                                  : (day.isSunday ? (isLightTheme ? 'border-rose-200 bg-rose-50/60' : 'border-rose-500/20 bg-rose-900/10') : (isLightTheme ? 'border-slate-300 bg-white' : 'border-slate-800 bg-slate-900/40'))
+                                          } ${isSelectedTaskRow ? (isLightTheme ? 'bg-blue-100/70 ring-1 ring-blue-500 border-blue-400' : 'bg-blue-500/20 ring-1 ring-cyan-300/90 border-cyan-400/70') : ''}`} />
+                                        );
+                                      })}
                                     </div>
                                   </div>
                                 )})}
@@ -9189,7 +9574,7 @@ function App({ currentUser: initialUser }) {
                         </div>
                         <div className={`rounded-lg border p-2 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/50'}`}>
                           <div className={`text-xs mb-2 ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>Додати витрату</div>
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
                             <input
                               type="number"
                               min="0"
@@ -9206,6 +9591,14 @@ function App({ currentUser: initialUser }) {
                             >
                               <option value="UAH">грн</option>
                               <option value="USD">$</option>
+                            </select>
+                            <select
+                              value={projectFinanceDraft.paymentMethod}
+                              onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, paymentMethod: e.target.value }))}
+                              className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            >
+                              <option value="cashless">Безготівковий рахунок</option>
+                              <option value="cash">Готівка</option>
                             </select>
                             {projectFinanceNeedsRate && (
                               <input
@@ -9257,6 +9650,11 @@ function App({ currentUser: initialUser }) {
                                 <span className={`text-xs px-2 py-0.5 rounded-full border ${String(entry.type) === 'expense' ? 'border-red-500/40 text-red-400' : 'border-emerald-500/40 text-emerald-400'}`}>
                                   {String(entry.type) === 'expense' ? 'Витрата' : 'Отримано'}
                                 </span>
+                                {String(entry.type) === 'expense' && (
+                                  <span className="text-xs px-2 py-0.5 rounded-full border border-slate-500/40 text-slate-300">
+                                    {getPaymentMethodLabel(entry.paymentMethod)}
+                                  </span>
+                                )}
                                 <span className={`text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{Number(parseMoneyValue(entry.amount)).toLocaleString('uk-UA')} {entry.currency === 'USD' ? '$' : 'грн'}</span>
                               </div>
                               <button type="button" onClick={() => handleDeleteProjectFinanceEntry(entry.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10">Видалити</button>
@@ -9482,6 +9880,7 @@ function App({ currentUser: initialUser }) {
                   </div>
                 )}
               </div>
+              </div>
               {!isProjectsRightCollapsed && <div className="space-y-4">
                 <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
                   <div className={`text-xl font-semibold mb-3 ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Доступ до проєкту</div>
@@ -9550,6 +9949,8 @@ function App({ currentUser: initialUser }) {
                     <div><div className="text-slate-500">Відповідальний</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProject.owner || '—'}</div></div>
                     <div><div className="text-slate-500">Днів по проєкту</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProjectTotalDays || 0}</div></div>
                     <div><div className="text-slate-500">Прогрес етапів</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProjectDoneStages}/{selectedProjectStages.length}</div></div>
+                    <div><div className="text-slate-500">Прострочки</div><div className={selectedProjectScheduleSummary.overdue.length > 0 ? 'text-red-400 font-semibold' : (isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold')}>{selectedProjectScheduleSummary.overdue.length || 0}</div></div>
+                    <div><div className="text-slate-500">Найближчий план</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProjectScheduleSummary.upcoming[0] ? `${selectedProjectScheduleSummary.upcoming[0].days} дн.` : '—'}</div></div>
                   </div>
                 </div>
                 <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
@@ -9562,7 +9963,9 @@ function App({ currentUser: initialUser }) {
                       {selectedProjectStages.map((stage) => (
                         <div key={`stage-stats-${stage.id}`} className="flex items-center justify-between">
                           <span className={isLightTheme ? 'text-slate-700' : 'text-slate-300'}>{stage.name}</span>
-                          <span className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{getStageDurationDays(stage)} дн.</span>
+                          <span className={getStageScheduleSummary(stage).overdue.length > 0 ? 'text-red-400 font-semibold' : (isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold')}>
+                            {getStageDurationDays(stage)} дн. {getStageScheduleSummary(stage).worst ? `• ${getStageScheduleSummary(stage).worst.text}` : ''}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -9601,6 +10004,20 @@ function App({ currentUser: initialUser }) {
                       <div className="text-slate-500">Витрати</div>
                       <div className={`${isLightTheme ? 'text-slate-900' : 'text-slate-100'} text-lg font-bold`}>
                         {selectedProjectCurrencySymbol} {Number(selectedProjectExpenseInProjectCurrency || 0).toLocaleString('uk-UA')}
+                      </div>
+                      <div className="text-slate-500 text-xs">у валюті проєкту</div>
+                    </div>
+                    <div className={`rounded-xl p-3 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Готівкові витрати</div>
+                      <div className="text-amber-500 text-lg font-bold">
+                        {selectedProjectCurrencySymbol} {Number(expenseStatsByPaymentMethod.cash || 0).toLocaleString('uk-UA')}
+                      </div>
+                      <div className="text-slate-500 text-xs">у валюті проєкту</div>
+                    </div>
+                    <div className={`rounded-xl p-3 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Безготівкові витрати</div>
+                      <div className="text-blue-500 text-lg font-bold">
+                        {selectedProjectCurrencySymbol} {Number(expenseStatsByPaymentMethod.cashless || 0).toLocaleString('uk-UA')}
                       </div>
                       <div className="text-slate-500 text-xs">у валюті проєкту</div>
                     </div>

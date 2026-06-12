@@ -209,6 +209,7 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     amount TEXT NOT NULL,
     currency TEXT NOT NULL DEFAULT 'UAH',
     usd_rate TEXT,
+    payment_method TEXT,
     payment_date TEXT,
     note TEXT,
     created_by_user_id INTEGER,
@@ -307,6 +308,7 @@ ensureCentralColumn('projects', 'project_value', 'TEXT');
 ensureCentralColumn('projects', 'project_value_currency', "TEXT NOT NULL DEFAULT 'UAH'");
 ensureCentralColumn('project_finance_entries', 'currency', "TEXT NOT NULL DEFAULT 'UAH'");
 ensureCentralColumn('project_finance_entries', 'usd_rate', 'TEXT');
+ensureCentralColumn('project_finance_entries', 'payment_method', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'payment_date', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'note', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'created_by_user_id', 'INTEGER');
@@ -760,6 +762,7 @@ const seedTemplates = () => {
 
 📍🔍 Сума: {{amount}}
 💵 валюта: {{currency}}
+🏢 ФОП / компанія: {{legal_entity}}
 
 🧩Підрядник/Постачальник: {{contractor}}
 
@@ -774,6 +777,7 @@ const seedTemplates = () => {
     { key: 'address', label: 'Адреса', type: 'text', required: false, placeholder: 'Вкажіть адресу або залиште порожнім' },
     { key: 'amount', label: 'Сума', type: 'text', required: true, placeholder: '33645 грн' },
     { key: 'currency', label: 'Валюта', type: 'text', required: true, placeholder: 'грн.' },
+    { key: 'legal_entity', label: 'ФОП / компанія', type: 'text', required: false, placeholder: 'Через який ФОП або компанію' },
     { key: 'contractor', label: 'Підрядник/Постачальник', type: 'text', required: true, placeholder: 'ПІБ постачальника' },
     { key: 'purpose', label: 'Призначення', type: 'textarea', required: true, placeholder: 'Оплата замовлення...' },
     { key: 'expected_delivery', label: 'Очікувана дата видачі та отримувач', type: 'textarea', required: true, placeholder: 'середа, 10.04. ПІБ постачальника' }
@@ -789,6 +793,7 @@ ensureRequestTemplate({
 Дата: {{request_date}}
 Проект: {{project_name}}
 Менеджер: {{manager_name}}
+ФОП / компанія закупки: {{legal_entity}}
 
 {{items_list}}
 
@@ -802,6 +807,7 @@ ensureRequestTemplate({
     { key: 'request_date', label: 'Дата заявки', type: 'text', required: true, placeholder: '14.04.2026' },
     { key: 'project_name', label: 'Проект', type: 'text', required: true, placeholder: 'Назва проекту' },
     { key: 'manager_name', label: 'Менеджер', type: 'text', required: true, placeholder: 'ПІБ менеджера' },
+    { key: 'legal_entity', label: 'ФОП / компанія закупки', type: 'text', required: false, placeholder: 'Через який ФОП або компанію закупаємо' },
     {
       key: 'items_list',
       label: 'Список товарів',

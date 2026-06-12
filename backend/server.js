@@ -399,22 +399,31 @@ app.post('/api/auth/start', async (req, res) => {
   }
 });
 
-app.post('/api/auth/phone', (req, res) => {
+app.post('/api/auth/phone', async (req, res) => {
   const { phone } = req.body;
-  const resolved = resolveAuthStep('phoneNumber', phone);
-  res.json({ success: resolved, message: resolved ? 'Phone accepted' : 'No active phone request' });
+  const result = await context.runWithContext({ userId: req.userId }, () => resolveAuthStep('phoneNumber', phone));
+  if (result && typeof result === 'object') {
+    return res.status(result.success ? 200 : 400).json(result);
+  }
+  res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Phone accepted' : 'No active phone request' });
 });
 
-app.post('/api/auth/code', (req, res) => {
+app.post('/api/auth/code', async (req, res) => {
   const { code } = req.body;
-  const resolved = resolveAuthStep('phoneCode', code);
-  res.json({ success: resolved, message: resolved ? 'Code accepted' : 'No active code request' });
+  const result = await context.runWithContext({ userId: req.userId }, () => resolveAuthStep('phoneCode', code));
+  if (result && typeof result === 'object') {
+    return res.status(result.success ? 200 : 400).json(result);
+  }
+  res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Code accepted' : 'No active code request' });
 });
 
-app.post('/api/auth/password', (req, res) => {
+app.post('/api/auth/password', async (req, res) => {
   const { password } = req.body;
-  const resolved = resolveAuthStep('password', password);
-  res.json({ success: resolved, message: resolved ? 'Password accepted' : 'No active password request' });
+  const result = await context.runWithContext({ userId: req.userId }, () => resolveAuthStep('password', password));
+  if (result && typeof result === 'object') {
+    return res.status(result.success ? 200 : 400).json(result);
+  }
+  res.status(result ? 200 : 400).json({ success: !!result, message: result ? 'Password accepted' : 'No active password request' });
 });
 
 app.get('/api/auth/status', async (req, res) => {
@@ -560,6 +569,34 @@ const addDaysToLocalDateTimeValue = (value, days) => {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}T${hour}:${minute}`;
 };
 
+const getTaskDateValue = (value) => String(value || '').trim().slice(0, 10);
+const getTaskStatusValue = (task) => String(task?.status || 'plan').trim();
+const isTaskDone = (task) => getTaskStatusValue(task) === 'done';
+const isTaskInDailyDigest = (task, today) => {
+  if (!task || isTaskDone(task)) return false;
+  const planDate = getTaskDateValue(task.planDate);
+  const dueDate = getTaskDateValue(task.dueDate);
+  return planDate === today || (!!dueDate && dueDate < today) || getTaskStatusValue(task) === 'in_progress';
+};
+const getTaskStatusLabel = (task) => {
+  const status = getTaskStatusValue(task);
+  if (status === 'in_progress') return 'в роботі';
+  if (status === 'done') return 'готово';
+  return 'план';
+};
+const buildTaskDailyDigestText = (dailyTasks, today) => {
+  const header = [`Щоденний дайджест задач (${today})`, ''];
+  if (!dailyTasks.length) {
+    return [...header, 'Немає активних задач на сьогодні, прострочених або в роботі.'].join('\n');
+  }
+  const rows = dailyTasks.map((task, index) => {
+    const dueDate = getTaskDateValue(task.dueDate);
+    const duePart = dueDate ? ` | дедлайн: ${dueDate}` : '';
+    return `${index + 1}. ${task.title || 'Без назви'} (${getTaskStatusLabel(task)}${duePart})`;
+  });
+  return [...header, ...rows].join('\n');
+};
+
 setInterval(async () => {
   try {
     const users = db.central.prepare('SELECT id FROM users').all();
@@ -604,11 +641,8 @@ setInterval(async () => {
         }
 
         if (reminder.enabled && reminder.time === nowTime && reminder.lastSentDate !== today) {
-          const todayTasks = tasks.filter((t) => String(t.planDate || '') === today);
-          const lines = todayTasks.length
-            ? todayTasks.map((t, i) => `${i + 1}. ${t.title || 'Без назви'}`)
-            : ['На сьогодні задач немає.'];
-          const ok = await sendBotMessageForUser(u.id, `Щоденний дайджест задач (${today})\n\n${lines.join('\n')}`);
+          const digestTasks = tasks.filter((task) => isTaskInDailyDigest(task, today));
+          const ok = await sendBotMessageForUser(u.id, buildTaskDailyDigestText(digestTasks, today));
           if (ok) {
             reminder.lastSentDate = today;
             changed = true;

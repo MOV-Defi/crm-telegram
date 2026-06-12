@@ -1,4 +1,5 @@
 const express = require('express');
+const AdmZip = require('adm-zip');
 const db = require('../db');
 
 const router = express.Router();
@@ -53,6 +54,96 @@ const STAGE_FIELD_MAP = {
 
 const PROJECT_TASK_STATUS_VALUES = new Set(['new', 'in_progress', 'done']);
 
+const escapeXml = (value) => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&apos;');
+
+const safeFileNameSegment = (value) => String(value || '')
+  .normalize('NFKC')
+  .replace(/[\\/:*?"<>|]+/g, '_')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .slice(0, 80);
+
+const columnName = (index) => {
+  let n = index + 1;
+  let name = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    name = String.fromCharCode(65 + rem) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name;
+};
+
+const xlsxCell = (rowNumber, colIndex, value, styleId = 0) => {
+  const ref = `${columnName(colIndex)}${rowNumber}`;
+  const styleAttr = styleId ? ` s="${styleId}"` : '';
+  return `<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>`;
+};
+
+const toIsoDate = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  const dmY = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+  if (dmY) return `${dmY[3]}-${dmY[2]}-${dmY[1]}`;
+  return '';
+};
+
+const diffDaysSigned = (from, to) => {
+  const a = toIsoDate(from);
+  const b = toIsoDate(to);
+  if (!a || !b) return 0;
+  return Math.round((new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime()) / 86400000);
+};
+
+const normalizeStageTasksForExport = (tasks) => {
+  if (!Array.isArray(tasks)) return [];
+  return tasks.map((task) => {
+    if (typeof task === 'string') {
+      return { text: task, plannedDate: '', completedAt: '', planStart: '', planEnd: '', factStart: '', factEnd: '', done: false };
+    }
+    const planStart = String(task?.planStart || task?.plannedDate || task?.startDate || '');
+    const planEnd = String(task?.planEnd || task?.plannedEnd || task?.plannedDate || '');
+    const factStart = String(task?.factStart || task?.actualStart || '');
+    const factEnd = String(task?.factEnd || task?.completedAt || task?.endDate || '');
+    return {
+      text: String(task?.text || ''),
+      plannedDate: planStart,
+      completedAt: factEnd,
+      planStart,
+      planEnd,
+      factStart,
+      factEnd,
+      done: !!task?.done
+    };
+  });
+};
+
+const getDeadlineExportLabel = (plannedRaw, actualRaw, label = 'Стан') => {
+  const planned = toIsoDate(plannedRaw);
+  const actual = toIsoDate(actualRaw);
+  if (!planned) return `${label}: без дедлайну`;
+  if (actual) {
+    const diff = diffDaysSigned(planned, actual);
+    if (diff < 0) return `${label}: з опереженням на ${Math.abs(diff)} дн.`;
+    if (diff > 0) return `${label}: пізніше на ${diff} дн.`;
+    return `${label}: день у день`;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const until = diffDaysSigned(today, planned);
+  if (until < 0) return `${label}: прострочено на ${Math.abs(until)} дн.`;
+  if (until === 0) return `${label}: дедлайн сьогодні`;
+  return `${label}: залишилось ${until} дн.`;
+};
+
+const getProjectTaskTimingExportLabel = (task) => getDeadlineExportLabel(task?.dueAt, task?.completedAt, 'Задача');
+
 const normalizeProjectTaskStatus = (value) => {
   const status = String(value || '').trim();
   return PROJECT_TASK_STATUS_VALUES.has(status) ? status : 'new';
@@ -104,7 +195,7 @@ const notifyProjectMembers = (projectId, actorUserId, payload, options = {}) => 
 
 const getProjectFinanceEntries = (projectId) => (
   db.central.prepare(`
-    SELECT id, project_id, entry_type, amount, currency, usd_rate, payment_date, note, created_by_user_id, created_at, updated_at
+    SELECT id, project_id, entry_type, amount, currency, usd_rate, payment_method, payment_date, note, created_by_user_id, created_at, updated_at
     FROM project_finance_entries
     WHERE project_id = ?
     ORDER BY COALESCE(payment_date, '') DESC, id DESC
@@ -115,6 +206,7 @@ const getProjectFinanceEntries = (projectId) => (
     amount: row.amount || '',
     currency: String(row.currency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH',
     usdRate: row.usd_rate || '',
+    paymentMethod: row.payment_method || '',
     paymentDate: row.payment_date || '',
     note: row.note || '',
     createdByUserId: row.created_by_user_id || null,
@@ -308,6 +400,199 @@ const loadProjectForUser = (projectId, userId) => {
   );
 };
 
+const buildProjectCalendarRows = (project) => {
+  const rows = [];
+  const add = (dateRaw, type, title, details = '') => {
+    const date = toIsoDate(dateRaw);
+    if (!date || !title) return;
+    rows.push([date, type, title, String(details || '').trim()]);
+  };
+  add(project.createdAt, 'Проєкт', 'Створено проєкт', project.title);
+  add(project.planStart, 'Проєкт', 'Плановий старт проєкту', project.title);
+  add(project.planEnd, 'Проєкт', 'Плановий дедлайн проєкту', project.title);
+  add(project.factStart, 'Проєкт', 'Фактичний старт проєкту', project.title);
+  add(project.factEnd, 'Проєкт', 'Фактичне завершення проєкту', project.title);
+  (project.stages || []).forEach((stage) => {
+    add(stage.planStart || stage.planDate, 'Етап', `Плановий старт: ${stage.name || ''}`);
+    add(stage.planEnd, 'Етап', `Плановий дедлайн: ${stage.name || ''}`);
+    add(stage.factStart || stage.factDate, 'Етап', `Фактичний старт: ${stage.name || ''}`);
+    add(stage.factEnd, 'Етап', `Фактичне завершення: ${stage.name || ''}`);
+    normalizeStageTasksForExport(stage.stageTasks).forEach((task) => {
+      const taskTitle = task.text || 'Підетап без назви';
+      add(task.planStart || task.plannedDate, 'Підетап', `План старту: ${taskTitle}`, stage.name || '');
+      add(task.planEnd || task.plannedDate, 'Підетап', `Дедлайн: ${taskTitle}`, getDeadlineExportLabel(task.planEnd || task.plannedDate, task.factEnd || task.completedAt));
+      add(task.factStart, 'Підетап', `Фактичний старт: ${taskTitle}`, stage.name || '');
+      add(task.factEnd || task.completedAt, 'Підетап', `Виконано: ${taskTitle}`, getDeadlineExportLabel(task.planEnd || task.plannedDate, task.factEnd || task.completedAt));
+    });
+  });
+  (project.tasks || []).forEach((task) => {
+    const taskTitle = task.title || 'Задача без назви';
+    add(task.startAt, 'Задача', `Старт задачі: ${taskTitle}`, task.assignedUsername || '');
+    add(task.dueAt, 'Задача', `Дедлайн задачі: ${taskTitle}`, getProjectTaskTimingExportLabel(task));
+    add(task.completedAt, 'Задача', `Виконано задачу: ${taskTitle}`, getProjectTaskTimingExportLabel(task));
+    add(task.remindAt, 'Задача', `Telegram-нагадування: ${taskTitle}`, task.assignedUsername || '');
+  });
+  (project.financeEntries || []).forEach((entry) => {
+    add(entry.paymentDate || entry.createdAt, 'Фінанси', `${entry.type === 'expense' ? 'Витрата' : 'Дохід'}: ${entry.amount || 0} ${entry.currency || 'UAH'}`, entry.note || '');
+  });
+  (project.notes || []).forEach((note) => {
+    add(note.createdAt, 'Нотатка', String(note.body || '').slice(0, 120), note.createdByUsername || '');
+  });
+  return rows.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]) || a[2].localeCompare(b[2]));
+};
+
+const buildProjectExportXlsx = (project) => {
+  const safe = (value) => String(value ?? '').trim();
+  const tasks = project.tasks || [];
+  const stages = project.stages || [];
+  const stageTaskRows = stages.flatMap((stage, stageIndex) => (
+    normalizeStageTasksForExport(stage.stageTasks).map((task, taskIndex) => [
+      String(stageIndex + 1),
+      stage.name || '',
+      String(taskIndex + 1),
+      task.text || '',
+      task.planStart || task.plannedDate || '',
+      task.planEnd || task.plannedDate || '',
+      task.factStart || '',
+      task.factEnd || task.completedAt || '',
+      task.done ? 'Так' : 'Ні',
+      getDeadlineExportLabel(task.planEnd || task.plannedDate, task.factEnd || task.completedAt)
+    ])
+  ));
+  const taskTimingRows = tasks.map((task, index) => [
+    String(index + 1),
+    task.title || '',
+    task.description || '',
+    task.status || '',
+    task.assignedUsername || '',
+    task.startAt || '',
+    task.dueAt || '',
+    task.completedAt || '',
+    getProjectTaskTimingExportLabel(task),
+    task.remindAt || '',
+    task.createdByUsername || ''
+  ]);
+  const aheadCount = [
+    ...stageTaskRows.filter((row) => String(row[9] || '').includes('опереження')),
+    ...taskTimingRows.filter((row) => String(row[8] || '').includes('опереження'))
+  ].length;
+  const overdueCount = [
+    ...stageTaskRows.filter((row) => String(row[9] || '').includes('прострочено') || String(row[9] || '').includes('пізніше')),
+    ...taskTimingRows.filter((row) => String(row[8] || '').includes('прострочено') || String(row[8] || '').includes('пізніше'))
+  ].length;
+  const sheets = [
+    {
+      name: 'Проєкт',
+      rows: [
+        ['Поле', 'Значення'],
+        ['ID', safe(project.id)],
+        ['Номер', safe(project.number)],
+        ['Назва', safe(project.title)],
+        ['Клієнт', safe(project.clientName)],
+        ['Тип', safe(project.type)],
+        ['Потужність, кВт', safe(project.powerKw)],
+        ['Відповідальний', safe(project.owner)],
+        ['Статус', safe(project.status)],
+        ['Плановий старт', safe(project.planStart)],
+        ['Плановий дедлайн', safe(project.planEnd)],
+        ['Фактичний старт', safe(project.factStart)],
+        ['Фактичне завершення', safe(project.factEnd)],
+        ['Причина затримки', safe(project.delayReason)],
+        ['Створено', safe(project.createdAt)],
+        ['Оновлено', safe(project.updatedAt)]
+      ]
+    },
+    {
+      name: 'Етапи',
+      rows: [
+        ['№', 'Назва', 'Статус', 'План старт', 'План дедлайн', 'Факт старт', 'Факт завершення', 'План нотатки', 'Факт нотатки'],
+        ...stages.map((stage, index) => [
+          String(index + 1), stage.name || '', stage.status || '', stage.planStart || stage.planDate || '',
+          stage.planEnd || '', stage.factStart || stage.factDate || '', stage.factEnd || '', stage.planNotes || '', stage.factNotes || ''
+        ])
+      ]
+    },
+    { name: 'Підетапи', rows: [['Етап №', 'Етап', 'Підетап №', 'Назва', 'План старт', 'План дедлайн', 'Факт старт', 'Факт завершення', 'Виконано', 'Стан'], ...stageTaskRows] },
+    { name: 'Календар', rows: [['Дата', 'Тип', 'Відмітка', 'Деталі'], ...buildProjectCalendarRows(project)] },
+    {
+      name: 'Фінанси',
+      rows: [
+        ['Тип', 'Сума', 'Валюта', 'Курс USD/UAH', 'Метод оплати', 'Дата', 'Примітка', 'Створено'],
+        ...(project.financeEntries || []).map((entry) => [
+          entry.type === 'expense' ? 'Витрата' : 'Дохід', entry.amount || '', entry.currency || 'UAH',
+          entry.usdRate || '', entry.paymentMethod || '', entry.paymentDate || '', entry.note || '', entry.createdAt || ''
+        ])
+      ]
+    },
+    { name: 'Задачі', rows: [['№', 'Назва', 'Опис', 'Статус', 'Відповідальний', 'Старт', 'Дедлайн', 'Виконано', 'Стан', 'Нагадування', 'Автор'], ...taskTimingRows] },
+    {
+      name: 'Нотатки',
+      rows: [['Дата', 'Автор', 'Нотатка'], ...(project.notes || []).map((note) => [note.createdAt || '', note.createdByUsername || '', note.body || ''])]
+    },
+    {
+      name: 'Доступ',
+      rows: [['Користувач', 'Роль', 'Додано'], ...(project.members || []).map((member) => [member.username || '', member.role || '', member.createdAt || ''])]
+    },
+    {
+      name: 'Підсумок',
+      rows: [
+        ['Показник', 'Значення'],
+        ['Кількість етапів', String(stages.length)],
+        ['Кількість підетапів', String(stageTaskRows.length)],
+        ['Кількість задач', String(tasks.length)],
+        ['Прострочки / пізніше', String(overdueCount)],
+        ['Виконано з опереженням', String(aheadCount)],
+        ['Фінансових операцій', String((project.financeEntries || []).length)],
+        ['Нотаток', String((project.notes || []).length)]
+      ]
+    }
+  ];
+
+  const zip = new AdmZip();
+  const sheetOverrides = sheets.map((_, index) => `  <Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('\n');
+  zip.addFile('[Content_Types].xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+${sheetOverrides}
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`));
+  zip.addFile('_rels/.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`));
+  zip.addFile('xl/workbook.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>${sheets.map((sheet, index) => `<sheet name="${escapeXml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join('')}</sheets>
+</workbook>`));
+  zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${sheets.map((_, index) => `  <Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join('\n')}
+  <Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`));
+  zip.addFile('xl/styles.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>
+  <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD9EAF7"/><bgColor indexed="64"/></patternFill></fill></fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>
+</styleSheet>`));
+  sheets.forEach((sheet, sheetIndex) => {
+    const sheetData = sheet.rows.map((row, rowIndex) => {
+      const rowNumber = rowIndex + 1;
+      const styleId = rowIndex === 0 ? 1 : 0;
+      return `<row r="${rowNumber}">${row.map((value, colIndex) => xlsxCell(rowNumber, colIndex, value, styleId)).join('')}</row>`;
+    }).join('');
+    zip.addFile(`xl/worksheets/sheet${sheetIndex + 1}.xml`, Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>${sheetData}</sheetData>
+</worksheet>`));
+  });
+  return zip.toBuffer();
+};
+
 router.get('/users', (req, res) => {
   try {
     const query = String(req.query?.q || '').trim();
@@ -451,6 +736,10 @@ router.post('/', (req, res) => {
           text: taskText,
           plannedDate: '',
           completedAt: '',
+          planStart: '',
+          planEnd: '',
+          factStart: '',
+          factEnd: '',
           done: false
         }))
       }));
@@ -487,6 +776,23 @@ router.post('/', (req, res) => {
     return res.status(201).json({ project });
   } catch (error) {
     console.error('projects create error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/:id/export.xlsx', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(projectId)) return res.status(400).json({ error: 'Некоректний ID проєкту' });
+    const project = loadProjectForUser(projectId, req.userId);
+    if (!project) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+    const buffer = buildProjectExportXlsx(project);
+    const fileName = `Проєкт ${safeFileNameSegment(project.number || project.id)} - ${safeFileNameSegment(project.title || 'експорт')}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('projects export xlsx error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -623,6 +929,8 @@ router.post('/:id/finance', (req, res) => {
     const currencyRaw = String(req.body?.currency || 'UAH').trim().toUpperCase();
     const currency = currencyRaw === 'USD' ? 'USD' : 'UAH';
     const paymentDate = String(req.body?.paymentDate || '').trim();
+    const paymentMethodRaw = String(req.body?.paymentMethod || '').trim().toLowerCase();
+    const paymentMethod = paymentMethodRaw === 'cash' || paymentMethodRaw === 'cashless' ? paymentMethodRaw : null;
     const usdRateRaw = String(req.body?.usdRate || '').trim().replace(',', '.');
     const usdRateNum = Number.parseFloat(usdRateRaw);
     const usdRate = Number.isFinite(usdRateNum) && usdRateNum > 0 ? String(usdRateNum) : null;
@@ -631,14 +939,15 @@ router.post('/:id/finance', (req, res) => {
 
     db.central.prepare(`
       INSERT INTO project_finance_entries
-      (project_id, entry_type, amount, currency, usd_rate, payment_date, note, created_by_user_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (project_id, entry_type, amount, currency, usd_rate, payment_method, payment_date, note, created_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       projectId,
       type,
       String(amountNum),
       currency,
       usdRate,
+      paymentMethod,
       paymentDate || null,
       note || null,
       req.userId,
