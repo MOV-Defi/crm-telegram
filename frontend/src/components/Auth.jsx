@@ -44,6 +44,9 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
         if (statusData?.connected) {
           return { connected: true, waitingFor: null };
         }
+        if (statusData?.error) {
+          return { error: statusData.error, waitingFor: null };
+        }
         if (acceptedSteps.includes(statusData?.waitingFor)) {
           return statusData;
         }
@@ -94,12 +97,16 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
             });
             const phoneRes = phoneReq.response;
             const phoneData = phoneReq.data;
-            if (phoneRes.ok && phoneData?.success) {
+            if (phoneRes.ok && phoneData?.success && phoneData?.waitingFor === 'code') {
                 phoneAccepted = true;
                 break;
             }
             try {
                 const { data: currentStatus } = await requestJson(`${API_URL}/auth/status`);
+                if (currentStatus?.error) {
+                    lastPhoneError = currentStatus.error;
+                    break;
+                }
                 if (currentStatus?.waitingFor === 'code') {
                     phoneAccepted = true;
                     break;
@@ -115,13 +122,15 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
             await sleep(350);
         }
         if (!phoneAccepted) {
-            const stepStatus = await waitForAuthStep('code', 2500);
+            const stepStatus = await waitForAuthStep('code', 20000);
             if (stepStatus?.waitingFor === 'code') {
                 phoneAccepted = true;
+            } else if (stepStatus?.error) {
+                lastPhoneError = stepStatus.error;
             }
         }
         if (!phoneAccepted) {
-            throw new Error(lastPhoneError || 'Номер не прийнято. Спробуйте ще раз.');
+            throw new Error(lastPhoneError || 'Telegram ще не підтвердив відправку коду. Перевірте номер, зачекайте хвилину і спробуйте ще раз.');
         }
         
         setPhoneForCode(phone);

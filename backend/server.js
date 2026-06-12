@@ -399,27 +399,6 @@ app.post('/api/auth/start', async (req, res) => {
   }
 });
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const waitForAuthState = async (userId, expectedSteps, timeoutMs = 15000) => {
-  const expected = new Set(Array.isArray(expectedSteps) ? expectedSteps : [expectedSteps]);
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const state = await context.runWithContext({ userId }, async () => ({
-      error: getAuthError(),
-      step: getAuthStep(),
-      connected: false
-    }));
-    if (state.error) return { success: false, error: state.error };
-    if (expected.has(state.step)) return { success: true, waitingFor: state.step };
-    await sleep(350);
-  }
-  return {
-    success: false,
-    error: 'Telegram не підтвердив відправку коду. Перевірте номер, зачекайте хвилину і спробуйте ще раз.'
-  };
-};
-
 app.post('/api/auth/phone', async (req, res) => {
   const { phone } = req.body;
   const result = await context.runWithContext({ userId: req.userId }, () => resolveAuthStep('phoneNumber', phone));
@@ -430,12 +409,17 @@ app.post('/api/auth/phone', async (req, res) => {
     const error = await context.runWithContext({ userId: req.userId }, () => getAuthError());
     return res.status(400).json({ success: false, error: error || 'No active phone request' });
   }
-  const state = await waitForAuthState(req.userId, 'code', 15000);
-  return res.status(state.success ? 200 : 400).json({
-    success: state.success,
-    waitingFor: state.waitingFor || null,
-    message: state.success ? 'Code requested' : undefined,
-    error: state.error || undefined
+  const state = await context.runWithContext({ userId: req.userId }, () => ({
+    error: getAuthError(),
+    step: getAuthStep()
+  }));
+  if (state.error) {
+    return res.status(400).json({ success: false, error: state.error });
+  }
+  return res.status(202).json({
+    success: true,
+    waitingFor: state.step || 'phone',
+    message: 'Phone accepted'
   });
 });
 
