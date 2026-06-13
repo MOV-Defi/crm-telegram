@@ -9042,6 +9042,7 @@ function App({ currentUser: initialUser }) {
               const doneCount = stages.filter((stage) => String(stage.status || '') === 'done' || isStageDoneByTasks(stage)).length;
               const scheduleSummary = getProjectScheduleSummary(project);
               const overdueCount = scheduleSummary.overdue.length;
+              const nearestUpcoming = scheduleSummary.upcoming[0] || null;
               return (
                 <button key={project.id} onClick={() => setSelectedProjectId(project.id)} className={`w-full text-left rounded-xl border p-3 ${selectedProjectId === project.id ? 'border-blue-500 bg-blue-500/10' : (isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/70')}`}>
                   <div className="text-xs text-slate-500">№ {project.number}</div>
@@ -9053,9 +9054,9 @@ function App({ currentUser: initialUser }) {
                         Прострочено: {overdueCount}
                       </span>
                     )}
-                    {!overdueCount && scheduleSummary.upcoming[0] && (
+                    {nearestUpcoming && (
                       <span className="px-2 py-0.5 rounded-full border border-amber-500/40 text-amber-300 bg-amber-500/10">
-                        Найближче: {scheduleSummary.upcoming[0].days} дн.
+                        {nearestUpcoming.text}
                       </span>
                     )}
                   </div>
@@ -9068,13 +9069,15 @@ function App({ currentUser: initialUser }) {
               <div className="space-y-2">
                 {filteredProjects.map((project) => {
                   const shortName = String(project.title || project.number || 'Проєкт').trim();
-                  const overdueCount = getProjectScheduleSummary(project).overdue.length;
+                  const scheduleSummary = getProjectScheduleSummary(project);
+                  const overdueCount = scheduleSummary.overdue.length;
+                  const nearestUpcoming = scheduleSummary.upcoming[0] || null;
                   return (
                     <button
                       key={`mini-project-${project.id}`}
                       onClick={() => setSelectedProjectId(project.id)}
-                      title={`${project.number || ''} ${project.title || ''}`.trim()}
-                      className={`w-full h-10 rounded-lg border text-xs font-semibold transition px-2 text-left ${overdueCount > 0 ? 'ring-1 ring-red-500/70' : ''} ${selectedProjectId === project.id ? 'border-blue-500 bg-blue-500/20 text-blue-200' : (isLightTheme ? 'border-slate-300 bg-white text-slate-700' : 'border-slate-700 bg-slate-900/70 text-slate-300')}`}
+                      title={[`${project.number || ''} ${project.title || ''}`.trim(), scheduleSummary.worst?.text, nearestUpcoming?.text].filter(Boolean).join(' • ')}
+                      className={`w-full h-10 rounded-lg border text-xs font-semibold transition px-2 text-left ${overdueCount > 0 ? 'ring-1 ring-red-500/70' : nearestUpcoming ? 'ring-1 ring-amber-500/70' : ''} ${selectedProjectId === project.id ? 'border-blue-500 bg-blue-500/20 text-blue-200' : (isLightTheme ? 'border-slate-300 bg-white text-slate-700' : 'border-slate-700 bg-slate-900/70 text-slate-300')}`}
                     >
                       <span className="block truncate">{shortName}</span>
                     </button>
@@ -9192,10 +9195,14 @@ function App({ currentUser: initialUser }) {
                       const dateEnd = formatStageDateBadge(stage.planEnd);
                       const stageScheduleSummary = getStageScheduleSummary({ ...stage, stageTasks });
                       const hasStageOverdue = stageScheduleSummary.overdue.length > 0;
+                      const nearestStageUpcoming = stageScheduleSummary.upcoming[0] || null;
+                      const hasStageUpcoming = !!nearestStageUpcoming;
                       return (
                       <div key={stage.id} className={`rounded-xl border ${
                         hasStageOverdue
                           ? (isLightTheme ? 'border-red-300 bg-red-50/80' : 'border-red-500/50 bg-red-950/20')
+                          : hasStageUpcoming
+                          ? (isLightTheme ? 'border-amber-300 bg-amber-50/80' : 'border-amber-500/50 bg-amber-950/20')
                           : isDone
                           ? (isLightTheme ? 'border-emerald-300 bg-emerald-50/70' : 'border-emerald-600/40 bg-emerald-900/20')
                           : isActive
@@ -9215,6 +9222,11 @@ function App({ currentUser: initialUser }) {
                             {hasStageOverdue && (
                               <span className="px-2 py-0.5 rounded-full border border-red-500/40 text-red-300 bg-red-500/10 text-xs">
                                 {stageScheduleSummary.worst?.text || 'Є прострочка'}
+                              </span>
+                            )}
+                            {nearestStageUpcoming && (
+                              <span className="px-2 py-0.5 rounded-full border border-amber-500/40 text-amber-300 bg-amber-500/10 text-xs">
+                                {nearestStageUpcoming.text}
                               </span>
                             )}
                           </div>
@@ -9950,7 +9962,7 @@ function App({ currentUser: initialUser }) {
                     <div><div className="text-slate-500">Днів по проєкту</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProjectTotalDays || 0}</div></div>
                     <div><div className="text-slate-500">Прогрес етапів</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProjectDoneStages}/{selectedProjectStages.length}</div></div>
                     <div><div className="text-slate-500">Прострочки</div><div className={selectedProjectScheduleSummary.overdue.length > 0 ? 'text-red-400 font-semibold' : (isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold')}>{selectedProjectScheduleSummary.overdue.length || 0}</div></div>
-                    <div><div className="text-slate-500">Найближчий план</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProjectScheduleSummary.upcoming[0] ? `${selectedProjectScheduleSummary.upcoming[0].days} дн.` : '—'}</div></div>
+                    <div><div className="text-slate-500">Найближчий план</div><div className={selectedProjectScheduleSummary.upcoming[0] ? 'text-amber-300 font-semibold' : (isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold')}>{selectedProjectScheduleSummary.upcoming[0] ? selectedProjectScheduleSummary.upcoming[0].text : '—'}</div></div>
                   </div>
                 </div>
                 <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
@@ -9960,14 +9972,18 @@ function App({ currentUser: initialUser }) {
                   </button>
                   {showStageStats && (
                     <div className="space-y-2 text-sm mt-3">
-                      {selectedProjectStages.map((stage) => (
-                        <div key={`stage-stats-${stage.id}`} className="flex items-center justify-between">
+                      {selectedProjectStages.map((stage) => {
+                        const summary = getStageScheduleSummary(stage);
+                        const nearestUpcoming = summary.upcoming[0] || null;
+                        return (
+                        <div key={`stage-stats-${stage.id}`} className="flex items-center justify-between gap-3">
                           <span className={isLightTheme ? 'text-slate-700' : 'text-slate-300'}>{stage.name}</span>
-                          <span className={getStageScheduleSummary(stage).overdue.length > 0 ? 'text-red-400 font-semibold' : (isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold')}>
-                            {getStageDurationDays(stage)} дн. {getStageScheduleSummary(stage).worst ? `• ${getStageScheduleSummary(stage).worst.text}` : ''}
+                          <span className={summary.overdue.length > 0 ? 'text-red-400 font-semibold text-right' : nearestUpcoming ? 'text-amber-300 font-semibold text-right' : (isLightTheme ? 'text-slate-900 font-semibold text-right' : 'text-slate-100 font-semibold text-right')}>
+                            {getStageDurationDays(stage)} дн. {summary.worst ? `• ${summary.worst.text}` : nearestUpcoming ? `• ${nearestUpcoming.text}` : ''}
                           </span>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
