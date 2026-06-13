@@ -103,6 +103,8 @@ const sendServerError = (res, message = 'Internal server error') => (
   res.status(500).json({ error: message })
 );
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const DEFAULT_BOOTSTRAP_ADMIN_USERNAME = 'olegvillomi';
 const DEFAULT_BOOTSTRAP_ADMIN_PASSWORD = '154879';
 
@@ -360,6 +362,21 @@ app.use('/api', (req, res, next) => {
 });
 
 // --- TELEGRAM API AUTH FLOW ---
+const waitForTelegramAuthStep = async (userId, expectedSteps, timeoutMs = 12000) => {
+  const acceptedSteps = Array.isArray(expectedSteps) ? expectedSteps : [expectedSteps];
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const state = await context.runWithContext({ userId }, () => ({
+      error: getAuthError(),
+      step: getAuthStep()
+    }));
+    if (state.error) return state;
+    if (acceptedSteps.includes(state.step)) return state;
+    await sleep(350);
+  }
+  return { step: null, error: null };
+};
+
 app.post('/api/auth/start', async (req, res) => {
   try {
     let client = getClient();
@@ -401,24 +418,41 @@ app.post('/api/auth/start', async (req, res) => {
 
 app.post('/api/auth/phone', async (req, res) => {
   const { phone } = req.body;
-  const result = await context.runWithContext({ userId: req.userId }, () => resolveAuthStep('phoneNumber', phone));
+  const resolvePhone = () => context.runWithContext(
+    { userId: req.userId },
+    () => resolveAuthStep('phoneNumber', phone)
+  );
+
+  let result = await resolvePhone();
+  if (!result) {
+    const readyState = await waitForTelegramAuthStep(req.userId, 'phone', 12000);
+    if (readyState.error) {
+      return res.status(400).json({ success: false, error: readyState.error });
+    }
+    if (readyState.step === 'phone') {
+      result = await resolvePhone();
+    }
+  }
+
   if (result && typeof result === 'object') {
     return res.status(result.success ? 200 : 400).json(result);
   }
   if (!result) {
     const error = await context.runWithContext({ userId: req.userId }, () => getAuthError());
-    return res.status(400).json({ success: false, error: error || 'No active phone request' });
+    return res.status(409).json({
+      success: false,
+      error: error || 'Telegram ще готує запит номера. Зачекайте кілька секунд і спробуйте ще раз.',
+      waitingFor: 'phone'
+    });
   }
-  const state = await context.runWithContext({ userId: req.userId }, () => ({
-    error: getAuthError(),
-    step: getAuthStep()
-  }));
+
+  const state = await waitForTelegramAuthStep(req.userId, ['code', 'password'], 15000);
   if (state.error) {
     return res.status(400).json({ success: false, error: state.error });
   }
   return res.status(202).json({
     success: true,
-    waitingFor: state.step || 'phone',
+    waitingFor: state.step || 'code',
     message: 'Phone accepted'
   });
 });

@@ -113,10 +113,12 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
                 }
             } catch (_) {}
             const maybeRace = String(phoneData?.message || phoneData?.error || '').toLowerCase().includes('no active phone request');
-            lastPhoneError = phoneData?.error || phoneData?.message || 'Номер не прийнято. Спробуйте ще раз.';
+            lastPhoneError = maybeRace
+                ? 'Telegram ще готує підключення. Зачекайте кілька секунд і спробуйте ще раз.'
+                : phoneData?.error || phoneData?.message || 'Номер не прийнято. Спробуйте ще раз.';
             if (maybeRace) {
                 await tryStartFlow();
-                await sleep(350);
+                await sleep(700);
                 continue;
             }
             await sleep(350);
