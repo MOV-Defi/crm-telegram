@@ -2409,7 +2409,7 @@ function App({ currentUser: initialUser }) {
                   amount: String(amount),
                   currency: entryCurrency,
                   usdRate: Number.isFinite(usdRate) && usdRate > 0 ? String(usdRate) : '',
-                  paymentMethod: entryType === 'expense' ? projectFinanceDraft.paymentMethod : '',
+                  paymentMethod: projectFinanceDraft.paymentMethod || 'cashless',
                   paymentDate: projectFinanceDraft.paymentDate || todayIso,
                   note: projectFinanceDraft.note
               })
@@ -9539,7 +9539,7 @@ function App({ currentUser: initialUser }) {
                       <div className="grid grid-cols-1 gap-3">
                         <div className={`rounded-lg border p-2 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/50'}`}>
                           <div className={`text-xs mb-2 ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>Додати дохід</div>
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
                             <input
                               type="number"
                               min="0"
@@ -9556,6 +9556,14 @@ function App({ currentUser: initialUser }) {
                             >
                               <option value="UAH">грн</option>
                               <option value="USD">$</option>
+                            </select>
+                            <select
+                              value={projectFinanceDraft.paymentMethod}
+                              onChange={(e) => setProjectFinanceDraft((prev) => ({ ...prev, paymentMethod: e.target.value }))}
+                              className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
+                            >
+                              <option value="cashless">Безготівковий рахунок</option>
+                              <option value="cash">Готівка</option>
                             </select>
                             {projectFinanceNeedsRate && (
                               <input
@@ -9662,11 +9670,9 @@ function App({ currentUser: initialUser }) {
                                 <span className={`text-xs px-2 py-0.5 rounded-full border ${String(entry.type) === 'expense' ? 'border-red-500/40 text-red-400' : 'border-emerald-500/40 text-emerald-400'}`}>
                                   {String(entry.type) === 'expense' ? 'Витрата' : 'Отримано'}
                                 </span>
-                                {String(entry.type) === 'expense' && (
-                                  <span className="text-xs px-2 py-0.5 rounded-full border border-slate-500/40 text-slate-300">
-                                    {getPaymentMethodLabel(entry.paymentMethod)}
-                                  </span>
-                                )}
+                                <span className="text-xs px-2 py-0.5 rounded-full border border-slate-500/40 text-slate-300">
+                                  {getPaymentMethodLabel(entry.paymentMethod)}
+                                </span>
                                 <span className={`text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{Number(parseMoneyValue(entry.amount)).toLocaleString('uk-UA')} {entry.currency === 'USD' ? '$' : 'грн'}</span>
                               </div>
                               <button type="button" onClick={() => handleDeleteProjectFinanceEntry(entry.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10">Видалити</button>
