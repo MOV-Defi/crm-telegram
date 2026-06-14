@@ -5429,18 +5429,12 @@ function App({ currentUser: initialUser }) {
               avgIncomeUah: 0,
               avgIncomeUsd: 0,
               totalIncomeUah: 0,
-              totalExpenseUah: 0,
-              totalIncomeResultUah: 0,
-              totalIncomeUsd: 0,
-              totalExpenseUsd: 0,
-              totalIncomeResultUsd: 0
+              totalIncomeUsd: 0
           };
       }
       let totalDays = 0;
       let totalIncomeUah = 0;
-      let totalExpenseUah = 0;
       let totalIncomeUsd = 0;
-      let totalExpenseUsd = 0;
       closedProjects.forEach((project) => {
           totalDays += getProjectTotalDays(project);
           const entries = Array.isArray(project?.financeEntries) ? project.financeEntries : [];
@@ -5448,32 +5442,50 @@ function App({ currentUser: initialUser }) {
               const amount = parseMoneyValue(entry?.amount);
               const usdRate = parseMoneyValue(entry?.usdRate);
               const isExpense = String(entry?.type || '') === 'expense';
-              const convertedUah = convertCurrencyAmount(amount, entry?.currency, 'UAH', usdRate);
-              const convertedUsd = convertCurrencyAmount(amount, entry?.currency, 'USD', usdRate);
-              if (isExpense) {
-                  totalExpenseUah += convertedUah;
-                  totalExpenseUsd += convertedUsd;
-              } else {
-                  totalIncomeUah += convertedUah;
-                  totalIncomeUsd += convertedUsd;
-              }
+              if (isExpense) return;
+              totalIncomeUah += convertCurrencyAmount(amount, entry?.currency, 'UAH', usdRate);
+              totalIncomeUsd += convertCurrencyAmount(amount, entry?.currency, 'USD', usdRate);
           });
       });
-      const totalIncomeResultUah = totalIncomeUah - totalExpenseUah;
-      const totalIncomeResultUsd = totalIncomeUsd - totalExpenseUsd;
       const count = closedProjects.length;
       return {
           count,
           avgDays: count ? Math.round(totalDays / count) : 0,
-          avgIncomeUah: count ? (totalIncomeResultUah / count) : 0,
-          avgIncomeUsd: count ? (totalIncomeResultUsd / count) : 0,
+          avgIncomeUah: count ? (totalIncomeUah / count) : 0,
+          avgIncomeUsd: count ? (totalIncomeUsd / count) : 0,
           totalIncomeUah,
-          totalExpenseUah,
-          totalIncomeResultUah,
-          totalIncomeUsd,
-          totalExpenseUsd,
-          totalIncomeResultUsd
+          totalIncomeUsd
       };
+  })();
+  const projectsOverviewStats = (() => {
+      const statusCounts = projects.reduce((acc, project) => {
+          const status = String(project?.status || 'planning').toLowerCase();
+          acc[status] = Number(acc[status] || 0) + 1;
+          return acc;
+      }, { planning: 0, active: 0, done: 0, cancelled: 0 });
+      let activeWithOverdue = 0;
+      let outstandingUah = 0;
+      let outstandingUsd = 0;
+      projects.forEach((project) => {
+          if (String(project?.status || '').toLowerCase() === 'active' && getProjectScheduleSummary(project).overdue.length > 0) {
+              activeWithOverdue += 1;
+          }
+          const projectCurrency = String(project?.projectValueCurrency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH';
+          const projectValue = parseMoneyValue(project?.projectValue || project?.budgetPlan || 0);
+          const entries = Array.isArray(project?.financeEntries) ? project.financeEntries : [];
+          const paidInProjectCurrency = entries
+              .filter((entry) => String(entry?.type || '') !== 'expense')
+              .reduce((sum, entry) => sum + convertCurrencyAmount(
+                  parseMoneyValue(entry?.amount),
+                  entry?.currency,
+                  projectCurrency,
+                  parseMoneyValue(entry?.usdRate)
+              ), 0);
+          const outstanding = Math.max(projectValue - paidInProjectCurrency, 0);
+          if (projectCurrency === 'USD') outstandingUsd += outstanding;
+          else outstandingUah += outstanding;
+      });
+      return { statusCounts, activeWithOverdue, outstandingUah, outstandingUsd };
   })();
   const availableProjectUsers = projectUsers.filter((user) => !selectedProjectMembers.some((member) => Number(member.userId) === Number(user.id)));
   const currentUsernameLower = String(currentUser || '').trim().toLowerCase();
@@ -9013,38 +9025,44 @@ function App({ currentUser: initialUser }) {
               </select>
             </div>
             <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
-              <div className={`text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Статистика закритих проєктів</div>
-              <div className={`text-[11px] mb-2 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Рахується по проєктах зі статусом “Завершений”: середні дні та середній дохід (дохід мінус витрати).</div>
-              {closedProjectsStats.count === 0 ? (
-                <div className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Ще немає закритих проєктів зі статусом "done".</div>
-              ) : (
-                <div className="space-y-2 text-xs">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
-                      <div className="text-slate-500">К-сть закритих</div>
-                      <div className={`font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{closedProjectsStats.count}</div>
-                    </div>
-                    <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
-                      <div className="text-slate-500">Сер. днів</div>
-                      <div className={`font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{closedProjectsStats.avgDays} дн.</div>
-                    </div>
+              <div className={`text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Зведена статистика</div>
+              <div className={`text-[11px] mb-2 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Середній дохід рахується тільки по завершених проєктах без віднімання витрат.</div>
+              <div className="space-y-2 text-xs">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                    <div className="text-slate-500">К-сть завершених</div>
+                    <div className={`font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{closedProjectsStats.count}</div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
-                      <div className="text-slate-500">Сер. дохід ₴</div>
-                      <div className={`${closedProjectsStats.avgIncomeUah >= 0 ? 'text-emerald-500' : 'text-red-500'} font-semibold`}>
-                        ₴ {Number(closedProjectsStats.avgIncomeUah || 0).toLocaleString('uk-UA')}
-                      </div>
-                    </div>
-                    <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
-                      <div className="text-slate-500">Сер. дохід $</div>
-                      <div className={`${closedProjectsStats.avgIncomeUsd >= 0 ? 'text-emerald-400' : 'text-red-400'} font-semibold`}>
-                        $ {Number(closedProjectsStats.avgIncomeUsd || 0).toLocaleString('uk-UA')}
-                      </div>
-                    </div>
+                  <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                    <div className="text-slate-500">Сер. тривалість</div>
+                    <div className={`font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{closedProjectsStats.count ? `${closedProjectsStats.avgDays} дн.` : '—'}</div>
                   </div>
                 </div>
-              )}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                    <div className="text-slate-500">Сер. дохід ₴</div>
+                    <div className="text-emerald-500 font-semibold">₴ {Number(closedProjectsStats.avgIncomeUah || 0).toLocaleString('uk-UA')}</div>
+                  </div>
+                  <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                    <div className="text-slate-500">Сер. дохід $</div>
+                    <div className="text-emerald-400 font-semibold">$ {Number(closedProjectsStats.avgIncomeUsd || 0).toLocaleString('uk-UA')}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                    <div className="text-slate-500">Активні з прострочкою</div>
+                    <div className={projectsOverviewStats.activeWithOverdue > 0 ? 'text-red-400 font-semibold' : 'text-emerald-400 font-semibold'}>{projectsOverviewStats.activeWithOverdue}</div>
+                  </div>
+                  <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                    <div className="text-slate-500">Статуси</div>
+                    <div className={`font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>планування {projectsOverviewStats.statusCounts.planning || 0} / активні {projectsOverviewStats.statusCounts.active || 0} / завершені {projectsOverviewStats.statusCounts.done || 0}</div>
+                  </div>
+                </div>
+                <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                  <div className="text-slate-500">Клієнти мають доплатити</div>
+                  <div className="text-amber-400 font-semibold">₴ {Number(projectsOverviewStats.outstandingUah || 0).toLocaleString('uk-UA')} / $ {Number(projectsOverviewStats.outstandingUsd || 0).toLocaleString('uk-UA')}</div>
+                </div>
+              </div>
             </div>
             </>
             )}
@@ -10029,6 +10047,17 @@ function App({ currentUser: initialUser }) {
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Зведення по всіх проєктах</div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                        <div><span className="text-slate-500">Завершені:</span> <span className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{closedProjectsStats.count}</span></div>
+                        <div><span className="text-slate-500">Сер. дохід:</span> <span className="text-emerald-400 font-semibold">₴ {Number(closedProjectsStats.avgIncomeUah || 0).toLocaleString('uk-UA')}</span></div>
+                        <div><span className="text-slate-500">Сер. тривалість:</span> <span className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{closedProjectsStats.avgDays} дн.</span></div>
+                        <div><span className="text-slate-500">Активні з прострочкою:</span> <span className={projectsOverviewStats.activeWithOverdue > 0 ? 'text-red-400 font-semibold' : 'text-emerald-400 font-semibold'}>{projectsOverviewStats.activeWithOverdue}</span></div>
+                        <div className="col-span-2"><span className="text-slate-500">Статуси:</span> <span className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>планування {projectsOverviewStats.statusCounts.planning || 0} / активні {projectsOverviewStats.statusCounts.active || 0} / завершені {projectsOverviewStats.statusCounts.done || 0}</span></div>
+                        <div className="col-span-2"><span className="text-slate-500">Клієнти мають доплатити:</span> <span className="text-amber-400 font-semibold">₴ {Number(projectsOverviewStats.outstandingUah || 0).toLocaleString('uk-UA')} / $ {Number(projectsOverviewStats.outstandingUsd || 0).toLocaleString('uk-UA')}</span></div>
+                      </div>
+                    </div>
                     <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
                       <div className="text-slate-500">Статус проєкту</div>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
