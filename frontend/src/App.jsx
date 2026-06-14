@@ -9447,6 +9447,7 @@ function App({ currentUser: initialUser }) {
                       <span className="px-2 py-1 rounded-full border border-blue-500/40 text-blue-300 bg-blue-500/10">План етапу</span>
                       <span className="px-2 py-1 rounded-full border border-amber-500/40 text-amber-300 bg-amber-500/10">План підетапу</span>
                       <span className="px-2 py-1 rounded-full border border-emerald-500/40 text-emerald-300 bg-emerald-500/10">Факт</span>
+                      <span className="px-2 py-1 rounded-full border border-lime-500/40 text-lime-300 bg-lime-500/10">Випередження</span>
                       <span className="px-2 py-1 rounded-full border border-red-500/40 text-red-300 bg-red-500/10">Прострочка</span>
                     </div>
                     <div className={`rounded-xl border p-3 ${isLightTheme ? 'border-slate-200 bg-slate-50' : 'border-slate-700 bg-slate-900/40'}`}>
@@ -9478,17 +9479,23 @@ function App({ currentUser: initialUser }) {
                                       const stagePlanStart = stage.planStart || stage.planDate;
                                       const stageFactStart = stage.factStart || stage.factDate || '';
                                       const stageFactEnd = stage.factEnd || '';
-                                      const liveStart = toIsoDate(stageFactStart || stagePlanStart);
-                                      const liveEnd = toIsoDate(stageFactEnd) || (liveStart && liveStart <= todayIso ? todayIso : liveStart);
+                                      const planStart = toIsoDate(stagePlanStart);
+                                      const planEnd = toIsoDate(stage.planEnd || stagePlanStart);
+                                      const factStart = toIsoDate(stageFactStart);
+                                      const factEnd = toIsoDate(stageFactEnd);
+                                      const liveStart = factStart || planStart;
+                                      const liveEnd = factEnd || (liveStart && liveStart <= todayIso ? todayIso : liveStart);
                                       const inPlan = isDateInRange(day.iso, stagePlanStart, stage.planEnd);
                                       const inFact = isDateInRange(day.iso, liveStart, liveEnd);
-                                      const planEnd = toIsoDate(stage.planEnd || stagePlanStart);
-                                      const missingFactEnd = !toIsoDate(stageFactEnd);
+                                      const missingFactEnd = !factEnd;
+                                      const isAheadCell = inFact && ((factStart && planStart && factStart < planStart && day.iso < planStart) || (factEnd && planEnd && factEnd < planEnd && day.iso <= factEnd));
                                       const isOverdueCell = missingFactEnd && planEnd && planEnd < todayIso && day.iso > planEnd && day.iso <= todayIso;
                                       return (
                                         <div key={`cal-stage-${stage.id}-${day.iso}`} className={`h-7 border ${
                                           isOverdueCell
                                             ? (isLightTheme ? 'bg-red-200 border-red-300' : 'bg-red-500/50 border-red-500/70')
+                                            : isAheadCell
+                                              ? (isLightTheme ? 'bg-lime-300 border-lime-400' : 'bg-lime-500/60 border-lime-500/70')
                                             : inFact
                                               ? (isLightTheme ? 'bg-emerald-300 border-emerald-400' : 'bg-emerald-500/60 border-emerald-500/70')
                                               : inPlan
@@ -9517,17 +9524,23 @@ function App({ currentUser: initialUser }) {
                                         const taskPlanEnd = task.planEnd || task.plannedDate;
                                         const taskFactStart = task.factStart || '';
                                         const taskFactEnd = task.factEnd || task.completedAt || '';
-                                        const liveStart = toIsoDate(taskFactStart || taskPlanStart);
-                                        const liveEnd = toIsoDate(taskFactEnd) || (liveStart && liveStart <= todayIso ? todayIso : liveStart);
+                                        const planStart = toIsoDate(taskPlanStart);
+                                        const planEnd = toIsoDate(taskPlanEnd || taskPlanStart);
+                                        const factStart = toIsoDate(taskFactStart);
+                                        const factEnd = toIsoDate(taskFactEnd);
+                                        const liveStart = factStart || planStart;
+                                        const liveEnd = factEnd || (liveStart && liveStart <= todayIso ? todayIso : liveStart);
                                         const inPlan = isDateInRange(day.iso, taskPlanStart, taskPlanEnd);
                                         const inFact = isDateInRange(day.iso, liveStart, liveEnd);
-                                        const planEnd = toIsoDate(taskPlanEnd || taskPlanStart);
-                                        const missingFactEnd = !toIsoDate(taskFactEnd);
+                                        const missingFactEnd = !factEnd;
+                                        const isAheadCell = inFact && ((factStart && planStart && factStart < planStart && day.iso < planStart) || (factEnd && planEnd && factEnd < planEnd && day.iso <= factEnd));
                                         const isOverdueCell = missingFactEnd && planEnd && planEnd < todayIso && day.iso > planEnd && day.iso <= todayIso;
                                         return (
                                           <div key={`cal-task-cell-${stage.id}-${idx}-${day.iso}`} className={`h-6 border transition ${
                                             isOverdueCell
                                               ? (isLightTheme ? 'bg-red-200 border-red-300' : 'bg-red-500/50 border-red-500/70')
+                                              : isAheadCell
+                                                ? (isLightTheme ? 'bg-lime-300 border-lime-400' : 'bg-lime-500/60 border-lime-500/70')
                                               : inFact
                                                 ? (isLightTheme ? 'bg-emerald-300 border-emerald-400' : 'bg-emerald-500/60 border-emerald-500/70')
                                                 : inPlan
