@@ -9437,8 +9437,8 @@ function App({ currentUser: initialUser }) {
                                       const inPlan = isDateInRange(day.iso, stage.planStart || stage.planDate, stage.planEnd);
                                       const inFact = isDateInRange(day.iso, stage.factStart || stage.factDate, stage.factEnd || stage.factStart || stage.factDate);
                                       const planEnd = toIsoDate(stage.planEnd || stage.planStart || stage.planDate);
-                                      const missingFact = !toIsoDate(stage.factEnd || stage.factStart || stage.factDate);
-                                      const isOverdueCell = inPlan && missingFact && planEnd && planEnd < todayIso;
+                                      const missingFactEnd = !toIsoDate(stage.factEnd);
+                                      const isOverdueCell = missingFactEnd && planEnd && planEnd < todayIso && day.iso > planEnd && day.iso <= todayIso;
                                       return (
                                         <div key={`cal-stage-${stage.id}-${day.iso}`} className={`h-7 border ${
                                           isOverdueCell
@@ -9474,7 +9474,8 @@ function App({ currentUser: initialUser }) {
                                         const inPlan = isDateInRange(day.iso, taskPlanStart, taskPlanEnd);
                                         const inFact = isDateInRange(day.iso, taskFactStart, taskFactEnd);
                                         const planEnd = toIsoDate(taskPlanEnd || taskPlanStart);
-                                        const isOverdueCell = inPlan && !toIsoDate(task.factEnd || task.completedAt) && planEnd && planEnd < todayIso;
+                                        const missingFactEnd = !toIsoDate(task.factEnd || task.completedAt);
+                                        const isOverdueCell = missingFactEnd && planEnd && planEnd < todayIso && day.iso > planEnd && day.iso <= todayIso;
                                         return (
                                           <div key={`cal-task-cell-${stage.id}-${idx}-${day.iso}`} className={`h-6 border transition ${
                                             isOverdueCell
