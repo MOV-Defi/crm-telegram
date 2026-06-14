@@ -9475,10 +9475,15 @@ function App({ currentUser: initialUser }) {
                                 <div className={`w-72 shrink-0 px-2 py-1 text-sm font-semibold ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>{stage.name}</div>
                                   <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${calendarDays.length}, minmax(${Math.round(24 * calendarZoom)}px, 1fr))` }}>
                                     {calendarDays.map((day) => {
-                                      const inPlan = isDateInRange(day.iso, stage.planStart || stage.planDate, stage.planEnd);
-                                      const inFact = isDateInRange(day.iso, stage.factStart || stage.factDate, stage.factEnd || stage.factStart || stage.factDate);
-                                      const planEnd = toIsoDate(stage.planEnd || stage.planStart || stage.planDate);
-                                      const missingFactEnd = !toIsoDate(stage.factEnd);
+                                      const stagePlanStart = stage.planStart || stage.planDate;
+                                      const stageFactStart = stage.factStart || stage.factDate || '';
+                                      const stageFactEnd = stage.factEnd || '';
+                                      const liveStart = toIsoDate(stageFactStart || stagePlanStart);
+                                      const liveEnd = toIsoDate(stageFactEnd) || (liveStart && liveStart <= todayIso ? todayIso : liveStart);
+                                      const inPlan = isDateInRange(day.iso, stagePlanStart, stage.planEnd);
+                                      const inFact = isDateInRange(day.iso, liveStart, liveEnd);
+                                      const planEnd = toIsoDate(stage.planEnd || stagePlanStart);
+                                      const missingFactEnd = !toIsoDate(stageFactEnd);
                                       const isOverdueCell = missingFactEnd && planEnd && planEnd < todayIso && day.iso > planEnd && day.iso <= todayIso;
                                       return (
                                         <div key={`cal-stage-${stage.id}-${day.iso}`} className={`h-7 border ${
@@ -9511,11 +9516,13 @@ function App({ currentUser: initialUser }) {
                                         const taskPlanStart = task.planStart || task.plannedDate;
                                         const taskPlanEnd = task.planEnd || task.plannedDate;
                                         const taskFactStart = task.factStart || '';
-                                        const taskFactEnd = task.factEnd || task.completedAt || taskFactStart;
+                                        const taskFactEnd = task.factEnd || task.completedAt || '';
+                                        const liveStart = toIsoDate(taskFactStart || taskPlanStart);
+                                        const liveEnd = toIsoDate(taskFactEnd) || (liveStart && liveStart <= todayIso ? todayIso : liveStart);
                                         const inPlan = isDateInRange(day.iso, taskPlanStart, taskPlanEnd);
-                                        const inFact = isDateInRange(day.iso, taskFactStart, taskFactEnd);
+                                        const inFact = isDateInRange(day.iso, liveStart, liveEnd);
                                         const planEnd = toIsoDate(taskPlanEnd || taskPlanStart);
-                                        const missingFactEnd = !toIsoDate(task.factEnd || task.completedAt);
+                                        const missingFactEnd = !toIsoDate(taskFactEnd);
                                         const isOverdueCell = missingFactEnd && planEnd && planEnd < todayIso && day.iso > planEnd && day.iso <= todayIso;
                                         return (
                                           <div key={`cal-task-cell-${stage.id}-${idx}-${day.iso}`} className={`h-6 border transition ${
