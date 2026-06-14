@@ -2688,9 +2688,11 @@ function App({ currentUser: initialUser }) {
 
   const isTaskInDailyDigest = (task, dayValue) => {
       if (!task || task.status === 'done') return false;
-      return String(task.planDate || '') === dayValue
-          || (!!task.dueDate && String(task.dueDate) < dayValue)
-          || task.status === 'in_progress';
+      const status = String(task.status || 'plan');
+      return status === 'plan'
+          || status === 'in_progress'
+          || String(task.planDate || '') === dayValue
+          || (!!task.dueDate && String(task.dueDate) < dayValue);
   };
 
   const buildDailyDigestText = (dailyTasks, dayValue) => {

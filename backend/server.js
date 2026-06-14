@@ -625,7 +625,8 @@ const isTaskInDailyDigest = (task, today) => {
   if (!task || isTaskDone(task)) return false;
   const planDate = getTaskDateValue(task.planDate);
   const dueDate = getTaskDateValue(task.dueDate);
-  return planDate === today || (!!dueDate && dueDate < today) || getTaskStatusValue(task) === 'in_progress';
+  const status = getTaskStatusValue(task);
+  return status === 'plan' || status === 'in_progress' || planDate === today || (!!dueDate && dueDate < today);
 };
 const getTaskStatusLabel = (task) => {
   const status = getTaskStatusValue(task);
