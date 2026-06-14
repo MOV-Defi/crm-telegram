@@ -5098,6 +5098,18 @@ function App({ currentUser: initialUser }) {
       done: { label: 'Завершено', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
       skipped: { label: 'Пропущено', className: 'bg-slate-800 text-slate-400 border-slate-700' }
   };
+  const getProjectStatusMeta = (project) => {
+      const key = String(project?.status || 'planning').toLowerCase();
+      return projectStatusMeta[key] || projectStatusMeta.planning;
+  };
+  const isProjectClosed = (project) => String(project?.status || '').toLowerCase() === 'done' && !!toIsoDate(project?.factEnd);
+  const getProjectClosedLabel = (project) => {
+      const date = toIsoDate(project?.factEnd);
+      if (!date) return getProjectStatusMeta(project).label;
+      const planEnd = toIsoDate(project?.planEnd);
+      const timing = planEnd ? getDeadlineMeta(planEnd, date, 'Завершення') : null;
+      return timing?.text || `Завершено: ${formatStageDateBadge(date)}`;
+  };
   const normalizedProjectSearch = projectSearchQuery.trim().toLowerCase();
   const filteredProjects = projects.filter((project) => {
       const haystack = `${project.number || ''} ${project.title || ''} ${project.clientName || ''} ${project.owner || ''}`.toLowerCase();
@@ -9045,18 +9057,26 @@ function App({ currentUser: initialUser }) {
               const scheduleSummary = getProjectScheduleSummary(project);
               const overdueCount = scheduleSummary.overdue.length;
               const nearestUpcoming = scheduleSummary.upcoming[0] || null;
+              const statusMeta = getProjectStatusMeta(project);
+              const closedProject = isProjectClosed(project);
               return (
                 <button key={project.id} onClick={() => setSelectedProjectId(project.id)} className={`w-full text-left rounded-xl border p-3 ${selectedProjectId === project.id ? 'border-blue-500 bg-blue-500/10' : (isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/70')}`}>
                   <div className="text-xs text-slate-500">№ {project.number}</div>
                   <div className={`text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{project.title}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
-                    <span className="text-slate-500">Етапи: {doneCount}/{stages.length}</span>
-                    {overdueCount > 0 && (
+                    {closedProject ? (
+                      <span className={`px-2 py-0.5 rounded-full border text-xs ${statusMeta.className}`}>
+                        {getProjectClosedLabel(project)}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">Етапи: {doneCount}/{stages.length}</span>
+                    )}
+                    {!closedProject && overdueCount > 0 && (
                       <span className="px-2 py-0.5 rounded-full border border-red-500/40 text-red-300 bg-red-500/10">
                         Прострочено: {overdueCount}
                       </span>
                     )}
-                    {nearestUpcoming && (
+                    {!closedProject && nearestUpcoming && (
                       <span className="px-2 py-0.5 rounded-full border border-amber-500/40 text-amber-300 bg-amber-500/10">
                         {nearestUpcoming.text}
                       </span>
@@ -9966,6 +9986,8 @@ function App({ currentUser: initialUser }) {
                 <div className={`rounded-2xl border p-4 ${projectPanelClass}`}>
                   <div className={`text-xl font-semibold mb-3 ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Інформація</div>
                   <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div><div className="text-slate-500">Статус</div><div><span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${getProjectStatusMeta(selectedProject).className}`}>{getProjectStatusMeta(selectedProject).label}</span></div></div>
+                    <div><div className="text-slate-500">Факт завершення</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProject.factEnd || '—'}</div></div>
                     <div><div className="text-slate-500">Потужність</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProject.powerKw || '—'} кВт</div></div>
                     <div><div className="text-slate-500">Відповідальний</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProject.owner || '—'}</div></div>
                     <div><div className="text-slate-500">Днів по проєкту</div><div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{selectedProjectTotalDays || 0}</div></div>
@@ -10006,6 +10028,15 @@ function App({ currentUser: initialUser }) {
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                      <div className="text-slate-500">Статус проєкту</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${getProjectStatusMeta(selectedProject).className}`}>
+                          {getProjectStatusMeta(selectedProject).label}
+                        </span>
+                        {selectedProject.factEnd && <span className={isLightTheme ? 'text-slate-700 font-semibold' : 'text-slate-100 font-semibold'}>Факт завершення: {selectedProject.factEnd}</span>}
+                      </div>
+                    </div>
                     <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
                       <div className="text-slate-500">Загальна вартість проєкту</div>
                       <div className={`${isLightTheme ? 'text-slate-900' : 'text-slate-100'} text-2xl font-bold`}>
