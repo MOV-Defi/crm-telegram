@@ -5426,14 +5426,14 @@ function App({ currentUser: initialUser }) {
           return {
               count: 0,
               avgDays: 0,
-              avgProfitUah: 0,
-              avgProfitUsd: 0,
+              avgIncomeUah: 0,
+              avgIncomeUsd: 0,
               totalIncomeUah: 0,
               totalExpenseUah: 0,
-              totalProfitUah: 0,
+              totalIncomeResultUah: 0,
               totalIncomeUsd: 0,
               totalExpenseUsd: 0,
-              totalProfitUsd: 0
+              totalIncomeResultUsd: 0
           };
       }
       let totalDays = 0;
@@ -5459,20 +5459,20 @@ function App({ currentUser: initialUser }) {
               }
           });
       });
-      const totalProfitUah = totalIncomeUah - totalExpenseUah;
-      const totalProfitUsd = totalIncomeUsd - totalExpenseUsd;
+      const totalIncomeResultUah = totalIncomeUah - totalExpenseUah;
+      const totalIncomeResultUsd = totalIncomeUsd - totalExpenseUsd;
       const count = closedProjects.length;
       return {
           count,
           avgDays: count ? Math.round(totalDays / count) : 0,
-          avgProfitUah: count ? (totalProfitUah / count) : 0,
-          avgProfitUsd: count ? (totalProfitUsd / count) : 0,
+          avgIncomeUah: count ? (totalIncomeResultUah / count) : 0,
+          avgIncomeUsd: count ? (totalIncomeResultUsd / count) : 0,
           totalIncomeUah,
           totalExpenseUah,
-          totalProfitUah,
+          totalIncomeResultUah,
           totalIncomeUsd,
           totalExpenseUsd,
-          totalProfitUsd
+          totalIncomeResultUsd
       };
   })();
   const availableProjectUsers = projectUsers.filter((user) => !selectedProjectMembers.some((member) => Number(member.userId) === Number(user.id)));
@@ -9013,7 +9013,8 @@ function App({ currentUser: initialUser }) {
               </select>
             </div>
             <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
-              <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Статистика закритих проєктів</div>
+              <div className={`text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>Статистика закритих проєктів</div>
+              <div className={`text-[11px] mb-2 ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Рахується по проєктах зі статусом “Завершений”: середні дні та середній дохід (дохід мінус витрати).</div>
               {closedProjectsStats.count === 0 ? (
                 <div className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Ще немає закритих проєктів зі статусом "done".</div>
               ) : (
@@ -9030,15 +9031,15 @@ function App({ currentUser: initialUser }) {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
-                      <div className="text-slate-500">Сер. залишок ₴</div>
-                      <div className={`${closedProjectsStats.avgProfitUah >= 0 ? 'text-emerald-500' : 'text-red-500'} font-semibold`}>
-                        ₴ {Number(closedProjectsStats.avgProfitUah || 0).toLocaleString('uk-UA')}
+                      <div className="text-slate-500">Сер. дохід ₴</div>
+                      <div className={`${closedProjectsStats.avgIncomeUah >= 0 ? 'text-emerald-500' : 'text-red-500'} font-semibold`}>
+                        ₴ {Number(closedProjectsStats.avgIncomeUah || 0).toLocaleString('uk-UA')}
                       </div>
                     </div>
                     <div className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
-                      <div className="text-slate-500">Сер. залишок $</div>
-                      <div className={`${closedProjectsStats.avgProfitUsd >= 0 ? 'text-emerald-400' : 'text-red-400'} font-semibold`}>
-                        $ {Number(closedProjectsStats.avgProfitUsd || 0).toLocaleString('uk-UA')}
+                      <div className="text-slate-500">Сер. дохід $</div>
+                      <div className={`${closedProjectsStats.avgIncomeUsd >= 0 ? 'text-emerald-400' : 'text-red-400'} font-semibold`}>
+                        $ {Number(closedProjectsStats.avgIncomeUsd || 0).toLocaleString('uk-UA')}
                       </div>
                     </div>
                   </div>
