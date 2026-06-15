@@ -179,7 +179,7 @@ function App({ currentUser: initialUser }) {
           return false;
       }
   });
-  
+
   // Додано стани для чату
   const [selectedDialog, setSelectedDialog] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -214,7 +214,7 @@ function App({ currentUser: initialUser }) {
   const scrollAttemptTimeoutsRef = useRef([]);
   const highlightTimeoutRef = useRef(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState(null);
-  
+
   const [contacts, setContacts] = useState([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [creditManagers, setCreditManagers] = useState([]);
@@ -232,7 +232,7 @@ function App({ currentUser: initialUser }) {
       linkedChatIds: []
   });
   const [editingCreditManagerId, setEditingCreditManagerId] = useState(null);
-  
+
   const [folders, setFolders] = useState([]);
   const [activeFolderId, setActiveFolderId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -401,7 +401,7 @@ function App({ currentUser: initialUser }) {
   const [loadingLogisticsOptions, setLoadingLogisticsOptions] = useState(false);
   const [savingPickupTemplate, setSavingPickupTemplate] = useState(false);
   const [savingDeliveryTemplate, setSavingDeliveryTemplate] = useState(false);
-  
+
   const [tags, setTags] = useState([]);
   const [assignments, setAssignments] = useState([]);
 
@@ -410,10 +410,10 @@ function App({ currentUser: initialUser }) {
   const [tagModalUserId, setTagModalUserId] = useState(null);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#3b82f6');
-  
+
   const [showAddChatModalForTag, setShowAddChatModalForTag] = useState(null);
   const [tagChatSearchQuery, setTagChatSearchQuery] = useState('');
-  
+
   // New features state
   const [fullscreenImage, setFullscreenImage] = useState(null);
   const [showForwardModal, setShowForwardModal] = useState(null);
@@ -432,7 +432,7 @@ function App({ currentUser: initialUser }) {
   // Message Pinning State
   const [showPinnedMessages, setShowPinnedMessages] = useState(false);
   const [pinnedMessagesList, setPinnedMessagesList] = useState([]);
-  
+
   // Create Group State
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [newGroupTitle, setNewGroupTitle] = useState('');
@@ -871,7 +871,7 @@ function App({ currentUser: initialUser }) {
           localStorage.setItem('tgcrm-auto-download-video', autoDownloadVideos ? '1' : '0');
       } catch (_) {}
   }, [autoDownloadVideos]);
-  
+
   const handleCreateTag = async () => {
       if(!newTagName) return;
       try {
@@ -926,7 +926,7 @@ function App({ currentUser: initialUser }) {
 
   const handleTogglePin = async (chatId, isPinned) => {
       const currentFolder = activeFolderId === null ? 'main' : String(activeFolderId);
-      
+
       try {
           // Optimistic UI updates
           if (isPinned) {
@@ -973,7 +973,7 @@ function App({ currentUser: initialUser }) {
               console.log("Settings saved, checking auth status...");
               setApiConfigured(true);
               setShowSettingsModal(false);
-              
+
               const statusRes = await fetch(`${API_URL}/auth/status`);
               const statusData = await statusRes.json();
               console.log("Auth status data:", statusData);
@@ -983,10 +983,10 @@ function App({ currentUser: initialUser }) {
               }
               setLoading(false);
           }
-      } catch (e) { 
+      } catch (e) {
           console.error("Save settings error:", e);
           setLoading(false);
-          alert("Помилка підключення до сервера: " + (e.message || String(e))); 
+          alert("Помилка підключення до сервера: " + (e.message || String(e)));
       }
   };
 
@@ -1070,29 +1070,29 @@ function App({ currentUser: initialUser }) {
   const handleBulkSendInitial = () => {
       setBulkError(null);
       setBulkResult(null);
-      
+
       if (!bulkMessage.trim()) return setBulkError("Введіть текст повідомлення!");
-      
+
       let targets = [];
       if (!bulkTagId) {
           targets = contacts.map(c => String(c.id));
       } else {
           targets = assignments.filter(a => a.tag_id === Number(bulkTagId)).map(a => a.chat_id);
       }
-      
+
       if (targets.length === 0) return setBulkError("Для цього тегу ще не призначено жодного діалогу. Спочатку призначте тег комусь!");
-      
+
       // Замість вікна, що зникає, показуємо підтвердження прямо в інтерфейсі
       setBulkConfirmTargets(targets);
   };
 
   const executeBulkSend = async () => {
       if (!bulkConfirmTargets || bulkConfirmTargets.length === 0) return;
-      
+
       setBulkLoading(true);
       setBulkResult(null);
       setBulkError(null);
-      
+
       try {
           const res = await fetch(`${API_URL}/bulk/send`, {
               method: 'POST',
@@ -1163,7 +1163,7 @@ function App({ currentUser: initialUser }) {
           setLoadingOlderMessages(false);
       }
   };
-  
+
   const handleMessagesScroll = (e) => {
       const { scrollTop, scrollHeight, clientHeight } = e.target;
       if (scrollHeight - scrollTop - clientHeight > 150) {
@@ -1359,7 +1359,7 @@ function App({ currentUser: initialUser }) {
           initialScrollDone.current = true;
           return;
       }
-      
+
       if (!initialScrollDone.current) {
           // Force immediate scroll for first load
           setTimeout(() => {
@@ -1373,7 +1373,7 @@ function App({ currentUser: initialUser }) {
 
       const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
       const isNearBottom = scrollHeight - scrollTop - clientHeight < 300;
-      
+
       if (isNearBottom) {
           messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
       }
@@ -1441,7 +1441,7 @@ function App({ currentUser: initialUser }) {
                     if (Array.isArray(data)) setDialogs(data.sort((a,b) => b.date - a.date));
                 })
                 .catch(console.error);
-                
+
               fetch(`${API_URL}/chat/folders?v=${Date.now()}`, { cache: 'no-store' })
                 .then(res => res.json())
                 .then(data => {
@@ -1708,7 +1708,7 @@ function App({ currentUser: initialUser }) {
 
   const handleSendMessage = async () => {
       if ((!messageInput.trim() && messageFiles.length === 0) || !selectedDialog) return;
-      
+
       const msgToSend = messageInput;
       const filesToSend = [...messageFiles];
       const isEditing = !!editingMessage;
@@ -1872,7 +1872,7 @@ function App({ currentUser: initialUser }) {
     }, 0);
   };
 
-  const filteredParticipants = participants.filter(p => 
+  const filteredParticipants = participants.filter(p =>
     (p.username || '').toLowerCase().includes((mentionQuery || '').toLowerCase()) ||
     (p.firstName || '').toLowerCase().includes((mentionQuery || '').toLowerCase()) ||
     (p.lastName || '').toLowerCase().includes((mentionQuery || '').toLowerCase())
@@ -4490,7 +4490,7 @@ function App({ currentUser: initialUser }) {
           if (pinA && pinB) return pinB.pinned_at - pinA.pinned_at;
           if (pinA && !pinB) return -1;
           if (!pinA && pinB) return 1;
-          
+
           return b.date - a.date;
       });
   }, [dialogs, folders, activeFolderId, searchQuery, localPins]);
@@ -4843,7 +4843,7 @@ function App({ currentUser: initialUser }) {
                 console.error(error);
             }
         });
-        
+
       // Fetch participants for mentions (only for groups/channels)
       if (dialog.isGroup || dialog.isChannel) {
           const participantsController = new AbortController();
@@ -5995,7 +5995,7 @@ function App({ currentUser: initialUser }) {
                     <span className={navLabelClass}>Папки</span>
                 </button>
             </div>
-            
+
             <div className="mt-auto pt-4 flex flex-col gap-2">
                 <button onClick={openTelegramSettings} className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 hover:bg-slate-800 text-slate-400 hover:text-slate-200`}>
                     <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -6183,9 +6183,9 @@ function App({ currentUser: initialUser }) {
       <div className="app-dialogs-sidebar bg-slate-900 border-r border-slate-700/50 flex flex-col z-10 min-h-0">
           <div className="p-4 border-b border-slate-700/50 bg-slate-900/80 backdrop-blur-md sticky top-0 z-10 flex flex-col gap-3 shrink-0">
               <div className="flex gap-2 items-center">
-                  <input 
-                      type="text" 
-                      placeholder="Пошук..." 
+                  <input
+                      type="text"
+                      placeholder="Пошук..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="flex-1 bg-slate-800 text-sm border border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-blue-500 transition"
@@ -6199,7 +6199,7 @@ function App({ currentUser: initialUser }) {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v6h6M20 20v-6h-6M20 9a8 8 0 00-14.2-3M4 15a8 8 0 0014.2 3" />
                       </svg>
                   </button>
-                  <button 
+                  <button
                       onClick={() => setShowCreateGroupModal(true)}
                       disabled={!apiConfigured || !isAuthenticated}
                       className="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition shadow-lg shadow-blue-500/20"
@@ -6212,14 +6212,14 @@ function App({ currentUser: initialUser }) {
               </div>
               {/* Folders Tab */}
               <div className="folders-strip flex gap-2 overflow-x-auto overflow-y-hidden pb-1">
-                  <button 
+                  <button
                       onClick={() => setActiveFolderId(null)}
                       className={`whitespace-nowrap px-3 py-1.5 rounded-full text-[11px] font-medium transition ${activeFolderId === null ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'}`}
                   >
                       Всі чати
                   </button>
                   {folders.map(folder => (
-                      <button 
+                      <button
                           key={folder.id}
                           onClick={() => setActiveFolderId(folder.id)}
                           className={`whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium transition ${activeFolderId === folder.id ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'}`}
@@ -6242,7 +6242,7 @@ function App({ currentUser: initialUser }) {
                       const dialogTopics = chatTopicsByDialogId[String(dialog.id)] || [];
                       const hasTopicToggle = type === 'dialog' && (dialog.isGroup || dialog.isChannel) && Array.isArray(dialogTopics) && dialogTopics.length > 0;
                       return (
-                  <div 
+                  <div
                       key={key}
                       onClick={() => {
                           if (type === 'topic' && topic) {
@@ -6286,10 +6286,10 @@ function App({ currentUser: initialUser }) {
                               {assignments.filter(a => a.chat_id === String(dialog.id)).slice(0, 3).map(a => {
                                   const t = tags.find(x => x.id === a.tag_id);
                                   return t ? (
-                                      <div 
-                                          key={t.id} 
+                                      <div
+                                          key={t.id}
                                           data-tooltip={t.name}
-                                          className="w-2 h-2 rounded-full cursor-help hover:scale-125 transition-transform" 
+                                          className="w-2 h-2 rounded-full cursor-help hover:scale-125 transition-transform"
                                           style={{backgroundColor: t.color}}
                                       ></div>
                                   ) : null;
@@ -6484,7 +6484,7 @@ function App({ currentUser: initialUser }) {
                       </div>
                       </div>
                       <div className="chat-header-actions">
-                          <button 
+                          <button
                               onClick={fetchPinnedMessages}
                               className="action-optional text-xs px-3 py-1.5 rounded-lg transition font-medium border bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:bg-slate-700 flex items-center gap-1 whitespace-nowrap shrink-0"
                               title="Закріплені повідомлення"
@@ -6496,7 +6496,7 @@ function App({ currentUser: initialUser }) {
                               <span className="action-label-short">Закр.</span>
                           </button>
                           {selectedDialog.isGroup && (
-                              <button 
+                              <button
                                   onClick={() => setShowAddMemberModal(true)}
                                   className="text-xs px-3 py-1.5 rounded-lg transition font-medium border bg-blue-600/20 text-blue-400 border-blue-500/30 hover:bg-blue-600/30 flex items-center gap-1 whitespace-nowrap shrink-0"
                               >
@@ -6508,7 +6508,7 @@ function App({ currentUser: initialUser }) {
                               </button>
                           )}
                           {selectedDialog.isGroup && (
-                              <button 
+                              <button
                                   onClick={() => {
                                       setManageMemberSearchQuery('');
                                       setShowManageMembersModal(true);
@@ -6522,7 +6522,7 @@ function App({ currentUser: initialUser }) {
                                   <span className="action-label-short">Учасн.</span>
                               </button>
                           )}
-                          <button 
+                          <button
                               onClick={() => handleTogglePin(selectedDialog.id, !!localPins.find(p => p.folder_id === (activeFolderId === null ? 'main' : String(activeFolderId)) && String(p.chat_id) === String(selectedDialog.id)))}
                               className={`text-xs px-3 py-1.5 rounded-lg transition font-medium border shrink-0 flex items-center gap-1 whitespace-nowrap ${localPins.find(p => p.folder_id === (activeFolderId === null ? 'main' : String(activeFolderId)) && String(p.chat_id) === String(selectedDialog.id)) ? 'bg-yellow-500/20 text-yellow-500 border-yellow-500/30 hover:bg-yellow-500/30' : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:bg-slate-700'}`}
                           >
@@ -6594,7 +6594,7 @@ function App({ currentUser: initialUser }) {
                       {!loadingMessages && loadingOlderMessages && (
                           <div className="text-center py-2 text-slate-500 text-xs animate-pulse">Підвантажуємо старі повідомлення...</div>
                       )}
-                      
+
                       {messages.map((msg, idx) => {
                           const replyTarget = msg.replyTo ? messagesById.get(String(msg.replyTo)) : null;
                           const incomingAvatarPath = msg.senderAvatarPath || (!selectedDialog.isGroup && !selectedDialog.isChannel ? selectedDialog.avatarPath : null);
@@ -6638,41 +6638,41 @@ function App({ currentUser: initialUser }) {
                                   )}
                                    {/* Action Buttons */}
                                   <div className={`absolute top-2 ${msg.out ? 'right-full mr-2' : 'left-full ml-2'} flex gap-1 bg-slate-900 border border-slate-700 rounded-lg p-1 z-10 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity`}>
-                                      <button 
-                                          onClick={() => handleStartReply(msg)} 
-                                          data-tooltip="Відповісти" 
+                                      <button
+                                          onClick={() => handleStartReply(msg)}
+                                          data-tooltip="Відповісти"
                                           className="p-1.5 text-slate-400 hover:text-white rounded-md transition hover:bg-slate-800"
                                       >
                                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 8l-4 4 4 4" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 6v8a4 4 0 01-4 4H6" /></svg>
                                       </button>
                                       {msg.out && (
-                                      <button 
-                                          onClick={() => handleStartEdit(msg)} 
-                                          data-tooltip="Редагувати" 
+                                      <button
+                                          onClick={() => handleStartEdit(msg)}
+                                          data-tooltip="Редагувати"
                                           className="p-1.5 text-slate-400 hover:text-white rounded-md transition hover:bg-slate-800"
                                       >
                                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                                       </button>
                                       )}
-                                      <button 
-                                          onClick={() => handlePinMessage(msg.id, !!pinnedMessagesList.find(pm => pm.id === msg.id))} 
-                                          data-tooltip={pinnedMessagesList.find(pm => pm.id === msg.id) ? "Відкріпити" : "Закріпити"} 
+                                      <button
+                                          onClick={() => handlePinMessage(msg.id, !!pinnedMessagesList.find(pm => pm.id === msg.id))}
+                                          data-tooltip={pinnedMessagesList.find(pm => pm.id === msg.id) ? "Відкріпити" : "Закріпити"}
                                           className={`p-1.5 rounded-md transition hover:bg-slate-800 ${pinnedMessagesList.find(pm => pm.id === msg.id) ? 'text-blue-400' : 'text-slate-400 hover:text-white'}`}
                                       >
                                           <svg className="w-4 h-4" fill={pinnedMessagesList.find(pm => pm.id === msg.id) ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor">
                                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2v8M5 10h14M19 10v1a3 3 0 01-3 3H8a3 3 0 01-3-3v-1M12 14v8" />
                                           </svg>
                                       </button>
-                                      <button 
-                                          onClick={() => setShowForwardModal({ messageIds: [String(msg.id)] })} 
-                                          data-tooltip="Переслати" 
+                                      <button
+                                          onClick={() => setShowForwardModal({ messageIds: [String(msg.id)] })}
+                                          data-tooltip="Переслати"
                                           className="p-1.5 text-slate-400 hover:text-white rounded-md transition hover:bg-slate-800"
                                       >
                                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
                                       </button>
-                                      <button 
-                                          onClick={() => setShowSaveMessageModal({id: msg.id, text: msg.text, mediaPath: msg.mediaPath})} 
-                                          data-tooltip="В нотатки" 
+                                      <button
+                                          onClick={() => setShowSaveMessageModal({id: msg.id, text: msg.text, mediaPath: msg.mediaPath})}
+                                          data-tooltip="В нотатки"
                                           className="p-1.5 text-slate-400 hover:text-yellow-400 rounded-md transition hover:bg-slate-800"
                                       >
                                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -6690,9 +6690,9 @@ function App({ currentUser: initialUser }) {
                                           </svg>
                                       </button>
                                       )}
-                                      <button 
-                                          onClick={() => handleDeleteMessage(msg.id)} 
-                                          data-tooltip="Видалити" 
+                                      <button
+                                          onClick={() => handleDeleteMessage(msg.id)}
+                                          data-tooltip="Видалити"
                                           className="p-1.5 text-slate-400 hover:text-red-500 rounded-md transition hover:bg-slate-800"
                                       >
                                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
@@ -6822,8 +6822,8 @@ function App({ currentUser: initialUser }) {
 
                   {/* Floating Scroll Button */}
                   {showScrollButton && (
-                      <button 
-                          onClick={scrollToBottom} 
+                      <button
+                          onClick={scrollToBottom}
                           className="absolute bottom-24 !right-4 md:!right-6 !left-auto w-11 h-11 bg-blue-600 hover:bg-blue-500 text-white rounded-full shadow-lg shadow-blue-500/20 transition-all transform hover:scale-105 z-[95] flex items-center justify-center animate-bounce"
                           title="Вниз"
                           aria-label="Прокрутити вниз"
@@ -6907,7 +6907,7 @@ function App({ currentUser: initialUser }) {
                                       </div>
                                       <div className="max-h-48 overflow-y-auto">
                                           {filteredParticipants.map((p, idx) => (
-                                              <div 
+                                              <div
                                                   key={p.id}
                                                   onClick={() => insertMention(p)}
                                                   className={`p-2 cursor-pointer flex items-center gap-3 transition ${activeMentionIndex === idx ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
@@ -6924,7 +6924,7 @@ function App({ currentUser: initialUser }) {
                                       </div>
                                   </div>
                               )}
-                              <textarea 
+                              <textarea
                                   id="message-textarea"
                                   value={messageInput}
                                   onChange={handleInputChange}
@@ -7028,7 +7028,7 @@ function App({ currentUser: initialUser }) {
                           </div>
                       </div>
                   </button>
-                  
+
               </div>
           </div>
 
@@ -8444,7 +8444,7 @@ function App({ currentUser: initialUser }) {
                                           <div className="h-px flex-1 bg-slate-800/60"></div>
                                           <span className="text-xs font-medium text-slate-500 px-2 py-1 rounded bg-slate-800/50 uppercase tracking-widest">{items.length} файлів</span>
                                       </div>
-                                      
+
                                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
                                           {items.map((item) => (
                                               <div key={item.id} className="group relative bg-slate-900/50 hover:bg-slate-800/50 border border-slate-700/50 hover:border-blue-500/50 rounded-2xl p-5 transition-all duration-300 flex flex-col gap-4 overflow-hidden">
@@ -8452,7 +8452,7 @@ function App({ currentUser: initialUser }) {
                                                   <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
                                                       <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 3.59L18.41 8H14z" /></svg>
                                                   </div>
-                                                  
+
                                                   <div className="flex-1 space-y-2">
                                                       <div className="flex items-start justify-between gap-3">
                                                           <div className="font-bold text-slate-100 text-lg leading-tight group-hover:text-blue-400 transition-colors">{item.title}</div>
@@ -8463,16 +8463,16 @@ function App({ currentUser: initialUser }) {
                                                   </div>
 
                                                   <div className="flex items-center justify-between pt-2 border-t border-slate-800/50">
-                                                      <a 
-                                                          href={item.file_url} 
-                                                          target="_blank" 
-                                                          rel="noreferrer" 
+                                                      <a
+                                                          href={item.file_url}
+                                                          target="_blank"
+                                                          rel="noreferrer"
                                                           className="flex items-center gap-2 text-sm font-semibold text-blue-400 hover:text-blue-300 transition-colors"
                                                       >
                                                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                                                           Скачати файл
                                                       </a>
-                                                      
+
                                                       {canManageDocuments && (
                                                           <div className="flex gap-2">
                                                               <button onClick={() => handleStartEditDocumentTemplate(item)} className="p-1.5 text-slate-500 hover:text-amber-400 transition-colors" title="Редагувати">
@@ -9688,14 +9688,105 @@ function App({ currentUser: initialUser }) {
                     </div>
                   </div>
                 )}
+                {projectViewTab === 'specification' && (
+                  <div className="space-y-3">
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className={`text-sm font-semibold ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Специфікація проєкту</div>
+                          <div className="text-xs text-slate-500">{selectedProject.specificationSourceName ? `Файл: ${selectedProject.specificationSourceName}` : 'Файл ще не завантажено'}</div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="px-3 py-2 rounded-lg border border-blue-500/40 text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 text-sm cursor-pointer">
+                            {projectSpecificationSaving ? 'Імпорт...' : 'Завантажити .xlsx'}
+                            <input type="file" accept=".xlsx,.xlsm" className="hidden" disabled={projectSpecificationSaving} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleImportProjectSpecification(file); }} />
+                          </label>
+                          <button type="button" onClick={handleAddProjectSpecificationItem} disabled={projectSpecificationSaving} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60">Додати вручну</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 text-xs">
+                      {[
+                        ['Позицій', selectedProjectSpecificationItems.length],
+                        ['Загальна сума', `₴ ${Number(specificationSummary.total || 0).toLocaleString('uk-UA')}`],
+                        ['З ПДВ', `₴ ${Number(specificationSummary.vat || 0).toLocaleString('uk-UA')}`],
+                        ['Без ПДВ', `₴ ${Number(specificationSummary.noVat || 0).toLocaleString('uk-UA')}`],
+                        ['Склад', `₴ ${Number(specificationSummary.stock || 0).toLocaleString('uk-UA')}`],
+                        ['Замовлення', `₴ ${Number(specificationSummary.order || 0).toLocaleString('uk-UA')}`],
+                        ['Перевиставлення', `₴ ${Number(specificationSummary.reinvoice || 0).toLocaleString('uk-UA')}`],
+                        ['Не перевист.', `₴ ${Number(specificationSummary.notReinvoice || 0).toLocaleString('uk-UA')}`]
+                      ].map(([label, value]) => (
+                        <div key={`spec-summary-${label}`} className={`rounded-lg p-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                          <div className="text-slate-500">{label}</div>
+                          <div className={isLightTheme ? 'text-slate-900 font-semibold' : 'text-slate-100 font-semibold'}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {Object.keys(specificationSummary.byEntity || {}).length > 0 && (
+                      <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                        <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>По ФОПах / компаніях</div>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          {Object.entries(specificationSummary.byEntity).map(([entity, amount]) => (
+                            <span key={`spec-entity-${entity}`} className="px-2 py-1 rounded-full border border-slate-500/40 text-slate-300">{entity}: ₴ {Number(amount || 0).toLocaleString('uk-UA')}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className={`rounded-xl border ${projectPanelClass}`}>
+                      <div className="overflow-auto">
+                        <table className="min-w-[2200px] w-full text-xs">
+                          <thead className={isLightTheme ? 'bg-slate-100 text-slate-700' : 'bg-slate-800 text-slate-300'}>
+                            <tr>
+                              {['Назва', 'Тип / марка', 'Код', 'Виробник', 'Країна', 'Од.', 'К-сть', 'Джерело', 'На кого замовляємо', 'Валюта', 'Ціна', 'Курс', 'Ціна грн', 'Сума грн', 'ПДВ', 'Перевист.', 'Статус', 'Примітка', ''].map((head) => (
+                                <th key={`spec-head-${head}`} className="px-2 py-2 text-left font-semibold border-b border-slate-700/50">{head}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedProjectSpecificationItems.length === 0 && (
+                              <tr><td colSpan={19} className="px-3 py-8 text-center text-slate-500">Завантажте Excel або додайте позицію вручну</td></tr>
+                            )}
+                            {selectedProjectSpecificationItems.map((item) => {
+                              const priceUah = getSpecificationItemUnitPriceUah(item);
+                              const totalUah = getSpecificationItemTotalUah(item);
+                              const inputClass = `w-full border rounded-md px-2 py-1 ${projectInputClass}`;
+                              return (
+                              <tr key={item.id} className={isLightTheme ? 'border-t border-slate-200' : 'border-t border-slate-800'}>
+                                <td className="p-1 min-w-[260px]"><input value={item.name || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { name: e.target.value })} className={inputClass} /></td>
+                                <td className="p-1 min-w-[180px]"><input value={item.typeMark || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { typeMark: e.target.value })} className={inputClass} /></td>
+                                <td className="p-1 min-w-[120px]"><input value={item.code || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { code: e.target.value })} className={inputClass} /></td>
+                                <td className="p-1 min-w-[150px]"><input value={item.manufacturer || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { manufacturer: e.target.value })} className={inputClass} /></td>
+                                <td className="p-1 min-w-[110px]"><input value={item.country || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { country: e.target.value })} className={inputClass} /></td>
+                                <td className="p-1 min-w-[80px]"><input value={item.unit || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { unit: e.target.value })} className={inputClass} /></td>
+                                <td className="p-1 min-w-[90px]"><input type="number" min="0" step="0.001" value={item.qty || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { qty: e.target.value })} className={inputClass} /></td>
+                                <td className="p-1 min-w-[130px]"><select value={item.source || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { source: e.target.value })} className={inputClass}><option value="">—</option><option value="stock">Склад</option><option value="order">Замовлення</option></select></td>
+                                <td className="p-1 min-w-[180px]"><input value={item.orderEntity || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { orderEntity: e.target.value })} placeholder={item.source === 'order' ? 'ФОП / компанія' : ''} className={inputClass} /></td>
+                                <td className="p-1 min-w-[95px]"><select value={item.currency || 'UAH'} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { currency: e.target.value })} className={inputClass}><option value="UAH">грн</option><option value="USD">USD</option><option value="EUR">EUR</option></select></td>
+                                <td className="p-1 min-w-[110px]"><input type="number" min="0" step="0.01" value={item.unitPrice || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { unitPrice: e.target.value })} className={inputClass} /></td>
+                                <td className="p-1 min-w-[100px]"><input type="number" min="0" step="0.0001" value={item.exchangeRate || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { exchangeRate: e.target.value })} disabled={(item.currency || 'UAH') === 'UAH'} className={inputClass} /></td>
+                                <td className="p-1 min-w-[100px] text-cyan-400 font-semibold">₴ {Number(priceUah || 0).toLocaleString('uk-UA')}</td>
+                                <td className="p-1 min-w-[110px] text-emerald-400 font-semibold">₴ {Number(totalUah || 0).toLocaleString('uk-UA')}</td>
+                                <td className="p-1 min-w-[80px] text-center"><input type="checkbox" checked={!!item.vat} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { vat: e.target.checked })} /></td>
+                                <td className="p-1 min-w-[95px] text-center"><input type="checkbox" checked={!!item.reinvoice} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { reinvoice: e.target.checked })} /></td>
+                                <td className="p-1 min-w-[130px]"><select value={item.status || 'new'} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { status: e.target.value })} className={inputClass}><option value="new">Не куплено</option><option value="ordered">Замовлено</option><option value="received">Отримано</option><option value="stock">Зі складу</option></select></td>
+                                <td className="p-1 min-w-[180px]"><input value={item.note || ''} onChange={(e) => handleUpdateProjectSpecificationItem(item.id, { note: e.target.value })} className={inputClass} /></td>
+                                <td className="p-1 min-w-[80px]"><button type="button" onClick={() => handleDeleteProjectSpecificationItem(item.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 hover:bg-red-500/10">Видалити</button></td>
+                              </tr>
+                            );})}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {projectViewTab === 'finance' && (
                   <div className="space-y-3">
                     <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
                       <div className="flex items-center justify-between gap-2 mb-2">
                         <div className={`text-sm font-semibold ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Параметри проєкту</div>
-                        
+
                       </div>
-                      
+
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                         <input
                           type="number"
@@ -10312,7 +10403,7 @@ function App({ currentUser: initialUser }) {
           </h2>
           <div className="max-w-2xl bg-slate-900 border border-slate-700/50 rounded-2xl shadow-xl p-6">
               <p className="text-slate-400 mb-4 text-sm">Цей модуль дозволяє відправляти повідомлення вибраній аудиторії (по тегам) з безпечною затримкою.</p>
-              
+
               <div className="space-y-4">
                   <div>
                       <label className="block text-sm font-medium text-slate-300 mb-1">Цільова аудиторія (Теги)</label>
@@ -10330,18 +10421,18 @@ function App({ currentUser: initialUser }) {
                           Готувати розсилку
                       </button>
                   </div>
-                  
+
                   {/* Повідомлення про помилки або успіх */}
                   {bulkError && <div className="mt-4 p-3 bg-red-500/10 border border-red-500/50 rounded-xl text-red-400 text-sm font-medium flex items-center gap-2">
                        <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                        {bulkError}
                   </div>}
-                  
+
                   {bulkResult && <div className="mt-4 p-3 bg-green-500/10 border border-green-500/50 rounded-xl text-green-400 text-sm font-medium flex items-center gap-2">
                       <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                       {bulkResult}
                   </div>}
-                  
+
                   {/* Внутрішнє вікно підтвердження */}
                   {bulkConfirmTargets && (
                      <div className="mt-6 p-5 bg-yellow-500/10 border border-yellow-500/40 rounded-2xl flex flex-col items-center">
@@ -10350,7 +10441,7 @@ function App({ currentUser: initialUser }) {
                          </div>
                          <h3 className="text-lg font-bold text-slate-200 mb-1">Остаточне підтвердження</h3>
                          <p className="text-slate-400 text-sm mb-4 text-center">Ви збираєтесь відправити це повідомлення <strong>{bulkConfirmTargets.length}</strong> контактам. Зворотнього шляху не буде!</p>
-                         
+
                          <div className="flex gap-3 w-full max-w-xs">
                              <button onClick={() => setBulkConfirmTargets(null)} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition font-medium">
                                  Скасувати
@@ -10720,7 +10811,7 @@ function App({ currentUser: initialUser }) {
                       Кому переслати? ({Array.isArray(showForwardModal?.messageIds) ? showForwardModal.messageIds.length : 0})
                   </h3>
                   <input type="text" placeholder="Пошук чату..." value={forwardSearchQuery} onChange={(e) => setForwardSearchQuery(e.target.value)} className="w-full bg-slate-800 text-sm border border-slate-700 rounded-lg px-4 py-2 mb-4 outline-none focus:border-blue-500 transition" />
-                  
+
                   <div className="flex-1 overflow-y-auto pr-2 space-y-2 scrollbar-hide">
                       {dialogs.filter(d => !forwardSearchQuery || d.name.toLowerCase().includes(forwardSearchQuery.toLowerCase()))
                           .slice(0, 50).map(chat => (
@@ -10763,7 +10854,7 @@ function App({ currentUser: initialUser }) {
              <div className="p-4 space-y-2">
                  {folders.length === 0 && <p className="text-slate-500 text-sm text-center py-4">Немає папок</p>}
                  {folders.map(folder => (
-                     <div key={folder.id} 
+                     <div key={folder.id}
                           onClick={() => setSelectedFolderForManage({...folder, includePeers: folder.includePeers || []})}
                           className={`p-3 rounded-xl border transition cursor-pointer flex items-center gap-3 ${selectedFolderForManage?.id === folder.id ? 'bg-blue-500/10 border-blue-500/50' : 'bg-slate-800/50 border-slate-700 hover:border-slate-600'}`}>
                           <svg className="w-5 h-5 shrink-0 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
@@ -10772,7 +10863,7 @@ function App({ currentUser: initialUser }) {
                  ))}
              </div>
           </div>
-          
+
           {/* Right Panel: Manage Selected Folder */}
           <div className="flex-1 bg-[#0b101e] h-full flex flex-col overflow-y-auto hidden md:flex relative p-6">
              {selectedFolderForManage ? (
@@ -10786,7 +10877,7 @@ function App({ currentUser: initialUser }) {
                              <button onClick={() => handleSaveFolder(selectedFolderForManage)} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition text-sm font-medium shadow-lg shadow-blue-500/20">Зберегти в Telegram</button>
                          </div>
                      </div>
-                     
+
 
                      <div className="flex flex-col gap-3">
                          <div className="flex items-center justify-between mt-4">
@@ -10795,7 +10886,7 @@ function App({ currentUser: initialUser }) {
                                  + Додати чати
                              </button>
                          </div>
-                         
+
                          {(selectedFolderForManage.includePeers || []).length === 0 ? (
                              <p className="text-slate-500 text-sm py-4 bg-slate-900/50 border border-slate-800/80 rounded-xl px-4 text-center">Конкретні чати ще не додані.</p>
                          ) : (
@@ -10865,7 +10956,7 @@ function App({ currentUser: initialUser }) {
              <div className="p-4 space-y-2">
                  {tags.length === 0 && <p className="text-slate-500 text-sm text-center py-4">Немає тегів</p>}
                  {tags.map(tag => (
-                     <div key={tag.id} 
+                     <div key={tag.id}
                           onClick={() => setSelectedTagForManage(tag)}
                           className={`p-3 rounded-xl border transition cursor-pointer flex items-center gap-3 ${selectedTagForManage?.id === tag.id ? 'bg-blue-500/10 border-blue-500/50' : 'bg-slate-800/50 border-slate-700 hover:border-slate-600'}`}>
                           <div className="w-4 h-4 rounded-full shadow-sm shrink-0" style={{backgroundColor: tag.color}}></div>
@@ -10877,7 +10968,7 @@ function App({ currentUser: initialUser }) {
                  ))}
              </div>
           </div>
-          
+
           {/* Right Panel: Manage Selected Tag */}
           <div className="flex-1 bg-[#0b101e] h-full flex flex-col overflow-y-auto hidden md:flex relative p-6">
              {selectedTagForManage ? (
@@ -10889,7 +10980,7 @@ function App({ currentUser: initialUser }) {
                          </div>
                          <button onClick={() => handleDeleteTag(selectedTagForManage.id)} className="px-4 py-2 bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 transition text-sm font-medium border border-red-500/20">Видалити Тег</button>
                      </div>
-                     
+
                      <div className="flex flex-col gap-3">
                          <div className="flex items-center justify-between">
                              <h3 className="text-lg font-semibold text-slate-300">Присвоєні клієнти/чати ({assignments.filter(a => a.tag_id === selectedTagForManage.id).length}):</h3>
@@ -10897,7 +10988,7 @@ function App({ currentUser: initialUser }) {
                                  + Додати контакти
                              </button>
                          </div>
-                         
+
                          {assignments.filter(a => a.tag_id === selectedTagForManage.id).length === 0 ? (
                              <p className="text-slate-500 text-sm py-4 bg-slate-900/50 border border-slate-800/80 rounded-xl px-4 text-center">Цей тег ще нікому не призначено.</p>
                          ) : (
@@ -10944,7 +11035,7 @@ function App({ currentUser: initialUser }) {
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>
                   <h3 className="text-xl font-semibold text-white mb-4">Теги клієнта</h3>
-                  
+
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-2 mb-4 scrollbar-hide">
                       {tags.length === 0 && <div className="text-sm text-slate-500">Немає доступних тегів. Створіть перший!</div>}
                       {tags.map(tag => {
@@ -10962,7 +11053,7 @@ function App({ currentUser: initialUser }) {
                           );
                       })}
                   </div>
-                  
+
                   <div className="border-t border-slate-700 pt-4 mt-2">
                       <p className="text-xs text-slate-400 mb-2">Створити новий тег</p>
                       <div className="flex gap-2">
@@ -10985,21 +11076,21 @@ function App({ currentUser: initialUser }) {
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>
                   <h3 className="text-xl font-semibold text-white mb-4">Додати чат або контакт до тегу</h3>
-                  
-                  <input 
-                      type="text" 
-                      placeholder="Пошук (ім'я, username або телефон)..." 
+
+                  <input
+                      type="text"
+                      placeholder="Пошук (ім'я, username або телефон)..."
                       value={tagChatSearchQuery}
                       onChange={(e) => setTagChatSearchQuery(e.target.value)}
                       className="w-full bg-slate-800 text-sm border border-slate-700 rounded-lg px-4 py-2 mb-4 outline-none focus:border-blue-500 transition"
                   />
-                  
+
                   <div className="flex-1 overflow-y-auto pr-2 space-y-2 scrollbar-hide">
                       {dialogs.concat(contacts.filter(c => !dialogs.find(d => String(d.id) === String(c.id))))
                           .filter(chat => {
                               const isAssigned = assignments.some(a => a.tag_id === showAddChatModalForTag && String(a.chat_id) === String(chat.id));
                               if (isAssigned) return false;
-                              
+
                               if (!tagChatSearchQuery) return true;
                               const q = tagChatSearchQuery.toLowerCase();
                               const isGroupSearch = (q === 'група' && chat.isGroup);
@@ -11047,21 +11138,21 @@ function App({ currentUser: initialUser }) {
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>
                   <h3 className="text-xl font-semibold text-white mb-4">Додати чат до папки</h3>
-                  
-                  <input 
-                      type="text" 
-                      placeholder="Пошук (ім'я, username або телефон)..." 
+
+                  <input
+                      type="text"
+                      placeholder="Пошук (ім'я, username або телефон)..."
                       value={folderChatSearchQuery}
                       onChange={(e) => setFolderChatSearchQuery(e.target.value)}
                       className="w-full bg-slate-800 text-sm border border-slate-700 rounded-lg px-4 py-2 mb-4 outline-none focus:border-blue-500 transition"
                   />
-                  
+
                   <div className="flex-1 overflow-y-auto pr-2 space-y-2 scrollbar-hide">
                       {dialogs.concat(contacts.filter(c => !dialogs.find(d => String(d.id) === String(c.id))))
                           .filter(chat => {
                               const isAssigned = (selectedFolderForManage?.includePeers || []).some(id => String(id) === String(chat.id));
                               if (isAssigned) return false;
-                              
+
                               if (!folderChatSearchQuery) return true;
                               const q = folderChatSearchQuery.toLowerCase();
                               const isGroupSearch = (q === 'група' && chat.isGroup);
@@ -11091,7 +11182,7 @@ function App({ currentUser: initialUser }) {
                                   </div>
                                   <button onClick={() => {
                                       setSelectedFolderForManage({
-                                          ...selectedFolderForManage, 
+                                          ...selectedFolderForManage,
                                           includePeers: [...(selectedFolderForManage.includePeers || []), String(chat.id)]
                                       });
                                   }} className="text-xs px-3 py-1.5 rounded-md transition font-medium bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-500/20 shadow-md cursor-pointer shrink-0 leading-none">
@@ -11117,7 +11208,7 @@ function App({ currentUser: initialUser }) {
                        </svg>
                        Закріплені повідомлення
                   </h3>
-                  
+
                   <div className="flex-1 overflow-y-auto pr-2 space-y-3 scrollbar-hide">
                       {pinnedMessagesList.length === 0 ? (
                           <p className="text-center text-slate-500 py-10">В цьому чаті немає закріплених повідомлень.</p>
@@ -11127,7 +11218,7 @@ function App({ currentUser: initialUser }) {
                                   <div className="text-xs text-blue-400 mb-1">{new Date(msg.date * 1000).toLocaleString()}</div>
                                   <p className="text-sm text-slate-200 line-clamp-3 italic whitespace-pre-wrap">"{msg.text || '[Медіа]'}"</p>
                                   <div className="flex justify-end gap-2 mt-2">
-                                      <button 
+                                      <button
                                           onClick={() => {
                                               jumpToMessageInCurrentDialog(msg.id);
                                               setShowPinnedMessages(false);
@@ -11136,7 +11227,7 @@ function App({ currentUser: initialUser }) {
                                       >
                                           Перейти
                                       </button>
-                                      <button 
+                                      <button
                                           onClick={() => handlePinMessage(msg.id, true)}
                                           className="text-xs text-red-400 hover:underline"
                                       >
@@ -11159,35 +11250,35 @@ function App({ currentUser: initialUser }) {
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>
                   <h3 className="text-xl font-semibold text-white mb-4">Створити групу</h3>
-                  
+
                   <div className="space-y-4">
                       <div>
                           <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Назва групи</label>
-                          <input 
-                              type="text" 
-                              value={newGroupTitle} 
-                              onChange={e => setNewGroupTitle(e.target.value)} 
-                              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 outline-none focus:border-blue-500 transition" 
+                          <input
+                              type="text"
+                              value={newGroupTitle}
+                              onChange={e => setNewGroupTitle(e.target.value)}
+                              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 outline-none focus:border-blue-500 transition"
                               placeholder="Введіть назву..."
                           />
                       </div>
-                      
+
                       <div>
                           <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Учасники ({newGroupMembers.length})</label>
-                          <input 
-                              type="text" 
-                              placeholder="Пошук контактів..." 
-                              value={groupSearchQuery} 
-                              onChange={e => setGroupSearchQuery(e.target.value)} 
+                          <input
+                              type="text"
+                              placeholder="Пошук контактів..."
+                              value={groupSearchQuery}
+                              onChange={e => setGroupSearchQuery(e.target.value)}
                               className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500 transition mb-2"
                           />
-                          
+
                           <div className="max-h-60 overflow-y-auto space-y-1 pr-1 scrollbar-hide">
                               {contacts.filter(c => !groupSearchQuery || (c.firstName + ' ' + (c.lastName||'')).toLowerCase().includes(groupSearchQuery.toLowerCase()))
                                   .map(contact => {
                                       const isSelected = newGroupMembers.includes(String(contact.id)) || newGroupMembers.includes(contact.username);
                                       return (
-                                          <div key={contact.id} 
+                                          <div key={contact.id}
                                                onClick={() => {
                                                    const id = contact.username || String(contact.id);
                                                    if (isSelected) setNewGroupMembers(prev => prev.filter(m => m !== id));
@@ -11209,8 +11300,8 @@ function App({ currentUser: initialUser }) {
                               }
                           </div>
                       </div>
-                      
-                      <button 
+
+                      <button
                           onClick={handleCreateGroup}
                           disabled={!newGroupTitle || newGroupMembers.length === 0}
                           className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-xl transition shadow-lg shadow-blue-500/20"
@@ -11230,15 +11321,15 @@ function App({ currentUser: initialUser }) {
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>
                   <h3 className="text-xl font-semibold text-white mb-4">Додати учасника</h3>
-                  
-                  <input 
-                      type="text" 
-                      placeholder="Пошук контактів..." 
-                      value={addMemberSearchQuery} 
-                      onChange={e => setAddMemberSearchQuery(e.target.value)} 
+
+                  <input
+                      type="text"
+                      placeholder="Пошук контактів..."
+                      value={addMemberSearchQuery}
+                      onChange={e => setAddMemberSearchQuery(e.target.value)}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500 transition mb-4"
                   />
-                  
+
                   <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-hide">
                       {contacts.filter(c => !addMemberSearchQuery || (c.firstName + ' ' + (c.lastName||'')).toLowerCase().includes(addMemberSearchQuery.toLowerCase()))
                           .map(contact => (
@@ -11250,7 +11341,7 @@ function App({ currentUser: initialUser }) {
                                       <span className="text-sm font-medium text-slate-200">{contact.firstName} {contact.lastName}</span>
                                       {contact.username && <span className="text-xs text-slate-500">@{contact.username}</span>}
                                   </div>
-                                  <button 
+                                  <button
                                       onClick={() => handleAddMemberToGroup(contact.username || contact.id)}
                                       className="px-4 py-1.5 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg transition text-xs font-medium border border-blue-500/20"
                                   >
@@ -11454,7 +11545,7 @@ function App({ currentUser: initialUser }) {
                        Налаштування API
                   </h3>
                   <p className="text-slate-400 text-xs mb-6 italic">Ви можете отримати ці дані на сайті <a href="https://my.telegram.org/" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">my.telegram.org</a>. Вони необхідні для підключення до серверів Telegram.</p>
-                  
+
                   <div className="space-y-4 mb-6">
                       <div>
                           <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">API ID</label>
