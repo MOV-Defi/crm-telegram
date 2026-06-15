@@ -9298,7 +9298,7 @@ function App({ currentUser: initialUser }) {
                         </button>
                         {isExpanded && (
                         <div className={`px-3 pb-3 border-t ${isLightTheme ? 'border-slate-200' : 'border-slate-700/80'}`}>
-                          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mt-3">
+                          <div className="grid grid-cols-1 md:grid-cols-6 gap-2 mt-3">
                             <label className="flex flex-col gap-1">
                               <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Статус</span>
                               <select value={stage.status || 'pending'} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { status: e.target.value })} className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}>
@@ -9324,6 +9324,16 @@ function App({ currentUser: initialUser }) {
                               <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Факт фініш</span>
                               <input type="date" value={normalizeDateInputValue(stage.factEnd)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { factEnd: e.target.value })} title="Фактичне завершення етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
                             </label>
+                            <div className="flex flex-col gap-1">
+                              <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Не враховувати</span>
+                              <button
+                                type="button"
+                                onClick={() => handleProjectStageUpdate(selectedProject.id, stage.id, { status: isSkipped ? 'pending' : 'skipped' })}
+                                className={`border rounded-lg px-3 py-2 text-sm font-semibold transition ${isSkipped ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20' : 'border-slate-500/40 text-slate-300 bg-slate-700/30 hover:bg-slate-700/60'}`}
+                              >
+                                {isSkipped ? 'Повернути етап' : 'Вимкнути етап'}
+                              </button>
+                            </div>
                           </div>
                           {!isSkipped && stageScheduleSummary.items.length > 0 && (
                             <div className="mt-2 flex flex-wrap gap-2">
