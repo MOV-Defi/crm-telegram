@@ -2448,7 +2448,7 @@ function App({ currentUser: initialUser }) {
           ...selectedProjectSpecificationItems,
           {
               id: 'manual_' + Date.now(),
-              name: '', typeMark: '', code: '', manufacturer: '', country: '', unit: 'шт.', qty: '1',
+              name: 'Нова позиція', typeMark: '', code: '', manufacturer: '', country: '', unit: 'шт.', qty: '1',
               source: '', orderEntity: '', currency: 'UAH', unitPrice: '', exchangeRate: '',
               vat: false, reinvoice: false, note: '', status: 'new'
           }
@@ -9703,6 +9703,17 @@ function App({ currentUser: initialUser }) {
                           </label>
                           <button type="button" onClick={handleAddProjectSpecificationItem} disabled={projectSpecificationSaving} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60">Додати вручну</button>
                         </div>
+                      </div>
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const file = Array.from(e.dataTransfer.files || []).find((item) => /\.(xlsx|xlsm)$/i.test(item.name));
+                          if (file) handleImportProjectSpecification(file);
+                        }}
+                        className={`mt-3 rounded-xl border border-dashed px-4 py-5 text-center text-sm transition ${projectSpecificationSaving ? 'opacity-60 pointer-events-none' : ''} ${isLightTheme ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-blue-500/40 bg-blue-500/10 text-blue-200'}`}
+                      >
+                        Перетягніть Excel-файл сюди для завантаження специфікації
                       </div>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 text-xs">
