@@ -1,8 +1,14 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const AdmZip = require('adm-zip');
 const db = require('../db');
+const runtimePaths = require('../runtime-paths');
+const { parseXlsxRows } = require('../warehouse-file-items');
 
 const router = express.Router();
+const upload = multer({ dest: runtimePaths.mediaDir });
 
 const DEFAULT_PROJECT_STAGE_TEMPLATES = [
   { name: 'Договір', tasks: ['Підготовка договору', 'Узгодження умов', 'Підписання договору'] },
@@ -143,6 +149,85 @@ const getDeadlineExportLabel = (plannedRaw, actualRaw, label = 'Стан') => {
 };
 
 const getProjectTaskTimingExportLabel = (task) => getDeadlineExportLabel(task?.dueAt, task?.completedAt, 'Задача');
+
+const parseNumberString = (value) => {
+  const raw = String(value || '').replace(/\s+/g, '').replace(',', '.').trim();
+  const num = Number.parseFloat(raw);
+  return Number.isFinite(num) ? String(num) : '';
+};
+
+const getSpecCell = (row, index) => String(row?.[index] || '').replace(/\s+/g, ' ').trim();
+
+const isSpecQtyValue = (value) => /^\d+(?:[.,]\d+)?$/.test(String(value || '').replace(/\s+/g, '').trim());
+
+const normalizeSpecificationItem = (item, index = 0) => {
+  const currencyRaw = String(item?.currency || 'UAH').trim().toUpperCase();
+  const sourceRaw = String(item?.source || '').trim().toLowerCase();
+  const statusRaw = String(item?.status || '').trim().toLowerCase();
+  const id = String(item?.id || ('spec_' + Date.now() + '_' + index + '_' + Math.random().toString(36).slice(2, 7))).trim();
+  return {
+    id,
+    name: String(item?.name || '').trim().slice(0, 500),
+    typeMark: String(item?.typeMark || '').trim().slice(0, 240),
+    code: String(item?.code || '').trim().slice(0, 160),
+    manufacturer: String(item?.manufacturer || '').trim().slice(0, 180),
+    country: String(item?.country || '').trim().slice(0, 120),
+    unit: String(item?.unit || '').trim().slice(0, 60),
+    qty: parseNumberString(item?.qty),
+    source: sourceRaw === 'stock' || sourceRaw === 'order' ? sourceRaw : '',
+    orderEntity: String(item?.orderEntity || '').trim().slice(0, 240),
+    currency: currencyRaw === 'USD' || currencyRaw === 'EUR' ? currencyRaw : 'UAH',
+    unitPrice: parseNumberString(item?.unitPrice),
+    exchangeRate: parseNumberString(item?.exchangeRate),
+    vat: item?.vat === true || String(item?.vat || '').toLowerCase() === 'true',
+    reinvoice: item?.reinvoice === true || String(item?.reinvoice || '').toLowerCase() === 'true',
+    note: String(item?.note || '').trim().slice(0, 500),
+    status: ['new', 'ordered', 'received', 'stock'].includes(statusRaw) ? statusRaw : 'new'
+  };
+};
+
+const normalizeSpecificationItems = (items) => (
+  (Array.isArray(items) ? items : [])
+    .map((item, index) => normalizeSpecificationItem(item, index))
+    .filter((item) => item.name || item.typeMark || item.code)
+    .slice(0, 1000)
+);
+
+const parseSpecificationItemsFromXlsx = (filePath) => {
+  const rows = parseXlsxRows(filePath);
+  const items = [];
+  rows.forEach((row, index) => {
+    const name = getSpecCell(row, 2);
+    const typeMark = getSpecCell(row, 3);
+    const code = getSpecCell(row, 4);
+    const manufacturer = getSpecCell(row, 5);
+    const country = getSpecCell(row, 6);
+    const unit = getSpecCell(row, 7);
+    const qty = getSpecCell(row, 8);
+    const note = getSpecCell(row, 10) || getSpecCell(row, 9);
+    const unitPrice = getSpecCell(row, 11);
+    const joined = row.map((cell) => String(cell || '').toLowerCase()).join(' ');
+    if (!name || !isSpecQtyValue(qty)) return;
+    if (/найменування|обладнання, матеріалу|к-сть|позиція/.test(joined)) return;
+    if (/^(всього|итого|разом|total)\b/i.test(name)) return;
+    items.push(normalizeSpecificationItem({
+      id: 'spec_' + Date.now() + '_' + index,
+      name, typeMark, code, manufacturer, country, unit, qty,
+      source: '', orderEntity: '', currency: 'UAH', unitPrice, exchangeRate: '',
+      vat: false, reinvoice: false, note, status: 'new'
+    }, index));
+  });
+  return items.slice(0, 1000);
+};
+
+const getProjectSpecificationItems = (row) => {
+  try {
+    const parsed = JSON.parse(String(row?.specification_items_json || '[]'));
+    return normalizeSpecificationItems(parsed);
+  } catch (_) {
+    return [];
+  }
+};
 
 const normalizeProjectTaskStatus = (value) => {
   const status = String(value || '').trim();
@@ -318,6 +403,8 @@ const toProjectDto = (row, stages, members, financeEntries, tasks, notes) => ({
   budgetPlan: row.budget_plan || '',
   paidAmount: row.paid_amount || '',
   expensesFact: row.expenses_fact || '',
+  specificationItems: getProjectSpecificationItems(row),
+  specificationSourceName: row.specification_source_name || '',
   financeEntries: Array.isArray(financeEntries) ? financeEntries : [],
   tasks: Array.isArray(tasks) ? tasks : [],
   notes: Array.isArray(notes) ? notes : [],
@@ -777,6 +864,54 @@ router.post('/', (req, res) => {
   } catch (error) {
     console.error('projects create error:', error);
     return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/:id/specification/import', upload.single('file'), (req, res) => {
+  let uploadedPath = req.file?.path || '';
+  try {
+    const projectId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(projectId)) return res.status(400).json({ error: 'Некоректний ID проєкту' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+    if (!req.file) return res.status(400).json({ error: 'Завантажте Excel-файл специфікації' });
+    const originalName = req.file.originalname || 'specification.xlsx';
+    const ext = path.extname(originalName || '').toLowerCase();
+    if (ext !== '.xlsx' && ext !== '.xlsm') {
+      return res.status(400).json({ error: 'Поки підтримується тільки .xlsx / .xlsm' });
+    }
+    const items = parseSpecificationItemsFromXlsx(req.file.path);
+    db.central.prepare('UPDATE projects SET specification_items_json = ?, specification_source_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(JSON.stringify(items), originalName, projectId);
+    const project = loadProjectForUser(projectId, req.userId);
+    return res.json({ project, importedCount: items.length });
+  } catch (error) {
+    console.error('projects specification import error:', error);
+    return res.status(500).json({ error: 'Не вдалося імпортувати специфікацію' });
+  } finally {
+    if (uploadedPath) {
+      try { fs.unlinkSync(uploadedPath); } catch (_) {}
+    }
+  }
+});
+
+router.patch('/:id/specification', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(projectId)) return res.status(400).json({ error: 'Некоректний ID проєкту' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+    const items = normalizeSpecificationItems(req.body?.items);
+    const sourceName = Object.prototype.hasOwnProperty.call(req.body || {}, 'sourceName')
+      ? String(req.body?.sourceName || '').trim().slice(0, 240)
+      : current.specification_source_name;
+    db.central.prepare('UPDATE projects SET specification_items_json = ?, specification_source_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(JSON.stringify(items), sourceName || null, projectId);
+    const project = loadProjectForUser(projectId, req.userId);
+    return res.json({ project });
+  } catch (error) {
+    console.error('projects specification patch error:', error);
+    return res.status(500).json({ error: 'Не вдалося зберегти специфікацію' });
   }
 });
 

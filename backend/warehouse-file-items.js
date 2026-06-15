@@ -230,6 +230,7 @@ const parseWarehouseItemNamesFromFile = (filePath, originalName = '') => (
 );
 
 module.exports = {
+  parseXlsxRows,
   parseWarehouseItemNamesFromFile,
   parseWarehouseItemsFromFile
 };

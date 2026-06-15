@@ -312,6 +312,7 @@ function App({ currentUser: initialUser }) {
   const [selectedCalendarTaskKey, setSelectedCalendarTaskKey] = useState('');
   const [projectFinanceDraft, setProjectFinanceDraft] = useState({ type: 'income', amount: '', currency: 'UAH', usdRate: '', paymentMethod: 'cashless', paymentDate: '', note: '' });
   const [projectFinanceSaving, setProjectFinanceSaving] = useState(false);
+  const [projectSpecificationSaving, setProjectSpecificationSaving] = useState(false);
   const [showFinanceStatsExpanded, setShowFinanceStatsExpanded] = useState(false);
   const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', startAt: '', dueAt: '', assignedUserId: '', telegramReminder: false });
   const [projectTaskSaving, setProjectTaskSaving] = useState(false);
@@ -2382,6 +2383,82 @@ function App({ currentUser: initialUser }) {
           await loadProjects();
           console.error('update project stage error:', error);
       }
+  };
+
+  const handleSaveProjectSpecificationItems = async (nextItems, sourceName = undefined) => {
+      if (!selectedProject?.id) return;
+      setProjectSpecificationSaving(true);
+      const payload = { items: Array.isArray(nextItems) ? nextItems : [] };
+      if (sourceName !== undefined) payload.sourceName = sourceName;
+      setProjects((prev) => prev.map((project) => (
+          project.id === selectedProject.id
+            ? { ...project, specificationItems: payload.items, ...(sourceName !== undefined ? { specificationSourceName: sourceName } : {}) }
+            : project
+      )));
+      try {
+          const res = await fetch(buildApiUrlWithToken('/projects/' + selectedProject.id + '/specification'), {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+          });
+          const data = await parseApiJson(res, 'Не вдалося зберегти специфікацію');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          }
+      } catch (error) {
+          alert(error?.message || 'Не вдалося зберегти специфікацію');
+          await loadProjects();
+      } finally {
+          setProjectSpecificationSaving(false);
+      }
+  };
+
+  const handleImportProjectSpecification = async (file) => {
+      if (!selectedProject?.id || !file) return;
+      setProjectSpecificationSaving(true);
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+          const res = await fetch(buildApiUrlWithToken('/projects/' + selectedProject.id + '/specification/import'), {
+              method: 'POST',
+              body: formData
+          });
+          const data = await parseApiJson(res, 'Не вдалося імпортувати специфікацію');
+          if (data?.project) {
+              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          } else {
+              await loadProjects();
+          }
+      } catch (error) {
+          alert(error?.message || 'Не вдалося імпортувати специфікацію');
+      } finally {
+          setProjectSpecificationSaving(false);
+      }
+  };
+
+  const handleUpdateProjectSpecificationItem = (itemId, patch) => {
+      const nextItems = selectedProjectSpecificationItems.map((item) => (
+          item.id === itemId ? { ...item, ...patch } : item
+      ));
+      handleSaveProjectSpecificationItems(nextItems);
+  };
+
+  const handleAddProjectSpecificationItem = () => {
+      const nextItems = [
+          ...selectedProjectSpecificationItems,
+          {
+              id: 'manual_' + Date.now(),
+              name: '', typeMark: '', code: '', manufacturer: '', country: '', unit: 'шт.', qty: '1',
+              source: '', orderEntity: '', currency: 'UAH', unitPrice: '', exchangeRate: '',
+              vat: false, reinvoice: false, note: '', status: 'new'
+          }
+      ];
+      handleSaveProjectSpecificationItems(nextItems);
+  };
+
+  const handleDeleteProjectSpecificationItem = (itemId) => {
+      const nextItems = selectedProjectSpecificationItems.filter((item) => item.id !== itemId);
+      handleSaveProjectSpecificationItems(nextItems);
   };
 
   const handleAddProjectFinanceEntry = async (typeOverride = null) => {
@@ -5134,6 +5211,7 @@ function App({ currentUser: initialUser }) {
   const selectedProjectSkippedStages = selectedProjectStages.filter((stage) => isStageSkipped(stage));
   const selectedProjectMembers = Array.isArray(selectedProject?.members) ? selectedProject.members : [];
   const selectedProjectFinanceEntries = Array.isArray(selectedProject?.financeEntries) ? selectedProject.financeEntries : [];
+  const selectedProjectSpecificationItems = Array.isArray(selectedProject?.specificationItems) ? selectedProject.specificationItems : [];
   const selectedProjectTasks = Array.isArray(selectedProject?.tasks) ? selectedProject.tasks : [];
   const selectedProjectNotes = Array.isArray(selectedProject?.notes) ? selectedProject.notes : [];
   const normalizeStageTasks = (tasks) => {
@@ -5373,6 +5451,28 @@ function App({ currentUser: initialUser }) {
           acc[method] = Number(acc[method] || 0) + amount;
           return acc;
       }, { cash: 0, cashless: 0 });
+
+  const getSpecificationItemUnitPriceUah = (item) => {
+      const price = parseMoneyValue(item?.unitPrice);
+      const currency = String(item?.currency || 'UAH').toUpperCase();
+      if (currency === 'UAH') return price;
+      const rate = parseMoneyValue(item?.exchangeRate);
+      return rate > 0 ? price * rate : 0;
+  };
+  const getSpecificationItemTotalUah = (item) => parseMoneyValue(item?.qty) * getSpecificationItemUnitPriceUah(item);
+  const specificationSummary = selectedProjectSpecificationItems.reduce((acc, item) => {
+      const total = getSpecificationItemTotalUah(item);
+      acc.total += total;
+      if (item?.vat) acc.vat += total;
+      else acc.noVat += total;
+      if (item?.source === 'stock') acc.stock += total;
+      if (item?.source === 'order') acc.order += total;
+      if (item?.reinvoice) acc.reinvoice += total;
+      else acc.notReinvoice += total;
+      const entity = String(item?.orderEntity || '').trim();
+      if (entity) acc.byEntity[entity] = Number(acc.byEntity[entity] || 0) + total;
+      return acc;
+  }, { total: 0, vat: 0, noVat: 0, stock: 0, order: 0, reinvoice: 0, notReinvoice: 0, byEntity: {} });
   const projectFinanceNeedsRate = String(projectFinanceDraft.currency || 'UAH').toUpperCase() !== selectedProjectFinanceCurrency;
   const selectedProjectOutstanding = (() => {
       const due = selectedProjectValueRaw - selectedProjectIncomeInProjectCurrency;
@@ -9214,6 +9314,7 @@ function App({ currentUser: initialUser }) {
                   <button type="button" onClick={() => setProjectViewTab('stages')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'stages' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Етапи</button>
                   <button type="button" onClick={() => setProjectViewTab('calendar')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'calendar' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Календар</button>
                   <button type="button" onClick={() => setProjectViewTab('finance')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'finance' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Фінанси</button>
+                  <button type="button" onClick={() => setProjectViewTab('specification')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'specification' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Специфікація</button>
                   <button type="button" onClick={() => setProjectViewTab('tasks')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'tasks' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Задачі</button>
                   <button type="button" onClick={() => setProjectViewTab('notes')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'notes' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Нотатки</button>
                   <button type="button" onClick={() => handleExportProjectFile(selectedProject)} className="px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 text-sm">Експорт файлу</button>

@@ -170,6 +170,8 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     budget_plan TEXT,
     paid_amount TEXT,
     expenses_fact TEXT,
+    specification_items_json TEXT NOT NULL DEFAULT '[]',
+    specification_source_name TEXT,
     created_by_user_id INTEGER NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -306,6 +308,8 @@ ensureCentralColumn('project_stages', 'fact_date', 'TEXT');
 ensureCentralColumn('project_stages', 'stage_tasks_json', "TEXT NOT NULL DEFAULT '[]'");
 ensureCentralColumn('projects', 'project_value', 'TEXT');
 ensureCentralColumn('projects', 'project_value_currency', "TEXT NOT NULL DEFAULT 'UAH'");
+ensureCentralColumn('projects', 'specification_items_json', "TEXT NOT NULL DEFAULT '[]'");
+ensureCentralColumn('projects', 'specification_source_name', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'currency', "TEXT NOT NULL DEFAULT 'UAH'");
 ensureCentralColumn('project_finance_entries', 'usd_rate', 'TEXT');
 ensureCentralColumn('project_finance_entries', 'payment_method', 'TEXT');
