@@ -9298,16 +9298,7 @@ function App({ currentUser: initialUser }) {
                         </button>
                         {isExpanded && (
                         <div className={`px-3 pb-3 border-t ${isLightTheme ? 'border-slate-200' : 'border-slate-700/80'}`}>
-                          <div className="grid grid-cols-1 md:grid-cols-6 gap-2 mt-3">
-                            <label className="flex flex-col gap-1">
-                              <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Статус</span>
-                              <select value={stage.status || 'pending'} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { status: e.target.value })} className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}>
-                                <option value="pending">Очікується</option>
-                                <option value="in_progress">В процесі</option>
-                                <option value="done">Завершено</option>
-                                <option value="skipped">Не потрібно</option>
-                              </select>
-                            </label>
+                          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mt-3">
                             <label className="flex flex-col gap-1">
                               <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>План старт</span>
                               <input type="date" value={normalizeDateInputValue(stage.planStart || stage.planDate)} onChange={(e) => handleProjectStageUpdate(selectedProject.id, stage.id, { planStart: e.target.value, planDate: e.target.value })} title="Плановий початок етапу" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
