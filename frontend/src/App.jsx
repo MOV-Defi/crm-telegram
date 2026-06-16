@@ -313,6 +313,8 @@ function App({ currentUser: initialUser }) {
   const [projectFinanceDraft, setProjectFinanceDraft] = useState({ type: 'income', amount: '', currency: 'UAH', usdRate: '', paymentMethod: 'cashless', paymentDate: '', note: '' });
   const [projectFinanceSaving, setProjectFinanceSaving] = useState(false);
   const [projectSpecificationSaving, setProjectSpecificationSaving] = useState(false);
+  const [projectInvoiceSaving, setProjectInvoiceSaving] = useState(false);
+  const [projectInvoiceDraft, setProjectInvoiceDraft] = useState({ comment: '', isPaid: false, paidBy: '', paidAt: '' });
   const [showFinanceStatsExpanded, setShowFinanceStatsExpanded] = useState(false);
   const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', startAt: '', dueAt: '', assignedUserId: '', telegramReminder: false });
   const [projectTaskSaving, setProjectTaskSaving] = useState(false);
@@ -2459,6 +2461,59 @@ function App({ currentUser: initialUser }) {
   const handleDeleteProjectSpecificationItem = (itemId) => {
       const nextItems = selectedProjectSpecificationItems.filter((item) => item.id !== itemId);
       handleSaveProjectSpecificationItems(nextItems);
+  };
+
+  const handleAddProjectInvoice = async (file) => {
+      if (!selectedProject?.id || !file) return;
+      setProjectInvoiceSaving(true);
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('comment', projectInvoiceDraft.comment || '');
+      formData.append('isPaid', projectInvoiceDraft.isPaid ? 'true' : 'false');
+      formData.append('paidBy', projectInvoiceDraft.paidBy || '');
+      formData.append('paidAt', projectInvoiceDraft.paidAt || '');
+      try {
+          const res = await fetch(buildApiUrlWithToken('/projects/' + selectedProject.id + '/invoices'), { method: 'POST', body: formData });
+          const data = await parseApiJson(res, 'Не вдалося додати рахунок');
+          if (data?.project) setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          setProjectInvoiceDraft({ comment: '', isPaid: false, paidBy: '', paidAt: '' });
+      } catch (error) {
+          alert(error?.message || 'Не вдалося додати рахунок');
+      } finally {
+          setProjectInvoiceSaving(false);
+      }
+  };
+
+  const handleUpdateProjectInvoice = async (invoiceId, patch) => {
+      if (!selectedProject?.id || !invoiceId) return;
+      setProjects((prev) => prev.map((project) => {
+          if (project.id !== selectedProject.id) return project;
+          const invoices = Array.isArray(project.invoices) ? project.invoices.map((invoice) => (invoice.id === invoiceId ? { ...invoice, ...patch } : invoice)) : [];
+          return { ...project, invoices };
+      }));
+      try {
+          const res = await fetch(buildApiUrlWithToken('/projects/' + selectedProject.id + '/invoices/' + invoiceId), {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(patch)
+          });
+          const data = await parseApiJson(res, 'Не вдалося оновити рахунок');
+          if (data?.project) setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+      } catch (error) {
+          alert(error?.message || 'Не вдалося оновити рахунок');
+          await loadProjects();
+      }
+  };
+
+  const handleDeleteProjectInvoice = async (invoiceId) => {
+      if (!selectedProject?.id || !invoiceId) return;
+      try {
+          const res = await fetch(buildApiUrlWithToken('/projects/' + selectedProject.id + '/invoices/' + invoiceId), { method: 'DELETE' });
+          const data = await parseApiJson(res, 'Не вдалося видалити рахунок');
+          if (data?.project) setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+      } catch (error) {
+          alert(error?.message || 'Не вдалося видалити рахунок');
+      }
   };
 
   const handleAddProjectFinanceEntry = async (typeOverride = null) => {
@@ -5214,6 +5269,7 @@ function App({ currentUser: initialUser }) {
   const selectedProjectSpecificationItems = Array.isArray(selectedProject?.specificationItems) ? selectedProject.specificationItems : [];
   const selectedProjectTasks = Array.isArray(selectedProject?.tasks) ? selectedProject.tasks : [];
   const selectedProjectNotes = Array.isArray(selectedProject?.notes) ? selectedProject.notes : [];
+  const selectedProjectInvoices = Array.isArray(selectedProject?.invoices) ? selectedProject.invoices : [];
   const normalizeStageTasks = (tasks) => {
       if (!Array.isArray(tasks)) return [];
       return tasks.map((task) => {
@@ -9315,6 +9371,7 @@ function App({ currentUser: initialUser }) {
                   <button type="button" onClick={() => setProjectViewTab('calendar')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'calendar' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Календар</button>
                   <button type="button" onClick={() => setProjectViewTab('finance')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'finance' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Фінанси</button>
                   <button type="button" onClick={() => setProjectViewTab('specification')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'specification' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Специфікація</button>
+                  <button type="button" onClick={() => setProjectViewTab('invoices')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'invoices' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Рахунки</button>
                   <button type="button" onClick={() => setProjectViewTab('tasks')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'tasks' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Задачі</button>
                   <button type="button" onClick={() => setProjectViewTab('notes')} className={`px-3 py-1.5 rounded-lg border text-sm ${projectViewTab === 'notes' ? 'bg-blue-600 text-white border-blue-600' : projectInputClass}`}>Нотатки</button>
                   <button type="button" onClick={() => handleExportProjectFile(selectedProject)} className="px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 text-sm">Експорт файлу</button>
@@ -10137,6 +10194,56 @@ function App({ currentUser: initialUser }) {
                                 <button type="button" onClick={() => handleDeleteProjectTask(task.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10">Видалити</button>
                               </div>
                             </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {projectViewTab === 'invoices' && (
+                  <div className="space-y-3">
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Додати рахунок / накладну</div>
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+                        onDrop={(e) => { e.preventDefault(); const file = Array.from(e.dataTransfer.files || [])[0]; if (file) handleAddProjectInvoice(file); }}
+                        className={`rounded-xl border border-dashed px-4 py-5 text-center text-sm transition ${projectInvoiceSaving ? 'opacity-60 pointer-events-none' : ''} ${isLightTheme ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-blue-500/40 bg-blue-500/10 text-blue-200'}`}
+                      >
+                        Перетягніть файл рахунку або накладної сюди
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mt-3">
+                        <input value={projectInvoiceDraft.comment} onChange={(e) => setProjectInvoiceDraft((prev) => ({ ...prev, comment: e.target.value }))} placeholder="Коментар" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                        <input value={projectInvoiceDraft.paidBy} onChange={(e) => setProjectInvoiceDraft((prev) => ({ ...prev, paidBy: e.target.value }))} placeholder="Від кого оплачено" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                        <input type="date" value={projectInvoiceDraft.paidAt} onChange={(e) => setProjectInvoiceDraft((prev) => ({ ...prev, paidAt: e.target.value }))} className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                        <label className={`border rounded-lg px-3 py-2 text-sm flex items-center gap-2 ${projectInputClass}`}><input type="checkbox" checked={projectInvoiceDraft.isPaid} onChange={(e) => setProjectInvoiceDraft((prev) => ({ ...prev, isPaid: e.target.checked }))} /> Оплачено</label>
+                      </div>
+                      <div className="mt-2 flex justify-end">
+                        <label className="px-3 py-2 rounded-lg border border-blue-500/40 text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 text-sm cursor-pointer">
+                          {projectInvoiceSaving ? 'Завантаження...' : 'Вибрати файл'}
+                          <input type="file" className="hidden" disabled={projectInvoiceSaving} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleAddProjectInvoice(file); }} />
+                        </label>
+                      </div>
+                    </div>
+                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
+                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Журнал рахунків</div>
+                      {!selectedProjectInvoices.length && <div className="text-sm text-slate-500">Поки немає завантажених рахунків</div>}
+                      <div className="space-y-2">
+                        {selectedProjectInvoices.map((invoice) => (
+                          <div key={`project-invoice-${invoice.id}`} className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/60'}`}>
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <a href={buildUploadUrl(invoice.filePath)} target="_blank" rel="noreferrer" className="text-blue-300 hover:text-blue-200 font-semibold break-all">{invoice.fileName || 'Файл рахунку'}</a>
+                                <div className="text-xs text-slate-500 mt-1">{invoice.createdByUsername || '—'} • {invoice.createdAt ? new Date(invoice.createdAt).toLocaleString('uk-UA') : '—'}</div>
+                              </div>
+                              <div className={`px-2 py-0.5 rounded-full border text-xs ${invoice.isPaid ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-amber-500/40 text-amber-300 bg-amber-500/10'}`}>{invoice.isPaid ? 'Оплачено' : 'Не оплачено'}</div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mt-3">
+                              <input value={invoice.comment || ''} onChange={(e) => handleUpdateProjectInvoice(invoice.id, { comment: e.target.value })} placeholder="Коментар" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                              <input value={invoice.paidBy || ''} onChange={(e) => handleUpdateProjectInvoice(invoice.id, { paidBy: e.target.value })} placeholder="Від кого оплачено" className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                              <input type="date" value={invoice.paidAt || ''} onChange={(e) => handleUpdateProjectInvoice(invoice.id, { paidAt: e.target.value })} className={`border rounded-lg px-3 py-2 text-sm ${projectInputClass}`} />
+                              <label className={`border rounded-lg px-3 py-2 text-sm flex items-center gap-2 ${projectInputClass}`}><input type="checkbox" checked={!!invoice.isPaid} onChange={(e) => handleUpdateProjectInvoice(invoice.id, { isPaid: e.target.checked })} /> Оплачено</label>
+                            </div>
+                            <div className="mt-2 flex justify-end"><button type="button" onClick={() => handleDeleteProjectInvoice(invoice.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs">Видалити</button></div>
                           </div>
                         ))}
                       </div>

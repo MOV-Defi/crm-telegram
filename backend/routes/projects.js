@@ -67,6 +67,16 @@ const escapeXml = (value) => String(value || '')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&apos;');
 
+const decodeMultipartFileName = (value) => {
+  const raw = String(value || '');
+  try {
+    const decoded = Buffer.from(raw, 'latin1').toString('utf8');
+    return /[�]/.test(decoded) ? raw : decoded;
+  } catch (_) {
+    return raw;
+  }
+};
+
 const safeFileNameSegment = (value) => String(value || '')
   .normalize('NFKC')
   .replace(/[\\/:*?"<>|]+/g, '_')
@@ -335,6 +345,29 @@ const getProjectTasks = (projectId) => (
   }))
 );
 
+const getProjectInvoices = (projectId) => (
+  db.central.prepare(`
+    SELECT pi.id, pi.project_id, pi.file_name, pi.file_path, pi.comment, pi.is_paid, pi.paid_by, pi.paid_at,
+           pi.created_by_user_id, u.username AS created_by_username, pi.created_at, pi.updated_at
+    FROM project_invoices pi
+    LEFT JOIN users u ON u.id = pi.created_by_user_id
+    WHERE pi.project_id = ?
+    ORDER BY pi.created_at DESC, pi.id DESC
+  `).all(projectId).map((row) => ({
+    id: row.id,
+    projectId: row.project_id,
+    fileName: row.file_name || '',
+    filePath: row.file_path || '',
+    comment: row.comment || '',
+    isPaid: Number(row.is_paid || 0) === 1,
+    paidBy: row.paid_by || '',
+    paidAt: row.paid_at || '',
+    createdByUserId: row.created_by_user_id || null,
+    createdByUsername: row.created_by_username || '',
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }))
+);
 const getProjectNotes = (projectId) => (
   db.central.prepare(`
     SELECT pn.id, pn.project_id, pn.body, pn.created_by_user_id, u.username AS created_by_username, pn.created_at, pn.updated_at
@@ -384,7 +417,7 @@ const getProjectNotificationRows = (userId, limit = 80) => (
   }))
 );
 
-const toProjectDto = (row, stages, members, financeEntries, tasks, notes) => ({
+const toProjectDto = (row, stages, members, financeEntries, tasks, notes, invoices = []) => ({
   id: row.id,
   number: row.number || '',
   title: row.title || '',
@@ -408,6 +441,7 @@ const toProjectDto = (row, stages, members, financeEntries, tasks, notes) => ({
   financeEntries: Array.isArray(financeEntries) ? financeEntries : [],
   tasks: Array.isArray(tasks) ? tasks : [],
   notes: Array.isArray(notes) ? notes : [],
+  invoices: Array.isArray(invoices) ? invoices : [],
   createdByUserId: row.created_by_user_id,
   createdAt: row.created_at || null,
   updatedAt: row.updated_at || null,
@@ -483,7 +517,8 @@ const loadProjectForUser = (projectId, userId) => {
     getProjectMembers(projectId),
     getProjectFinanceEntries(projectId),
     getProjectTasks(projectId),
-    getProjectNotes(projectId)
+    getProjectNotes(projectId),
+    getProjectInvoices(projectId)
   );
 };
 
@@ -758,7 +793,8 @@ router.get('/', (req, res) => {
       getProjectMembers(row.id),
       getProjectFinanceEntries(row.id),
       getProjectTasks(row.id),
-      getProjectNotes(row.id)
+      getProjectNotes(row.id),
+      getProjectInvoices(row.id)
     ));
     return res.json({ projects });
   } catch (error) {
@@ -1274,6 +1310,89 @@ router.delete('/:projectId/tasks/:taskId', (req, res) => {
   } catch (error) {
     console.error('projects task delete error:', error);
     return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/:id/invoices', upload.single('file'), (req, res) => {
+  let tempPath = req.file?.path || '';
+  try {
+    const projectId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(projectId)) return res.status(400).json({ error: 'Некоректний ID проєкту' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+    if (!req.file) return res.status(400).json({ error: 'Завантажте файл рахунку або накладної' });
+    const originalName = decodeMultipartFileName(req.file.originalname || 'invoice.bin');
+    const ext = path.extname(originalName) || '.bin';
+    const storedName = 'project-invoice-' + projectId + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + ext;
+    const finalPath = path.join(runtimePaths.mediaDir, storedName);
+    fs.renameSync(req.file.path, finalPath);
+    tempPath = '';
+    const publicPath = '/uploads/media/' + storedName;
+    const comment = String(req.body?.comment || '').trim();
+    const isPaid = String(req.body?.isPaid || '').toLowerCase() === 'true' || String(req.body?.isPaid || '') === '1';
+    const paidBy = String(req.body?.paidBy || '').trim();
+    const paidAt = String(req.body?.paidAt || '').trim();
+    db.central.prepare(`
+      INSERT INTO project_invoices (project_id, file_name, file_path, comment, is_paid, paid_by, paid_at, created_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(projectId, originalName, publicPath, comment || null, isPaid ? 1 : 0, paidBy || null, paidAt || null, req.userId);
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    return res.status(201).json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects invoice create error:', error);
+    return res.status(500).json({ error: 'Не вдалося додати рахунок' });
+  } finally {
+    if (tempPath) { try { fs.unlinkSync(tempPath); } catch (_) {} }
+  }
+});
+
+router.patch('/:projectId/invoices/:invoiceId', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.projectId, 10);
+    const invoiceId = Number.parseInt(req.params.invoiceId, 10);
+    if (!Number.isFinite(projectId) || !Number.isFinite(invoiceId)) return res.status(400).json({ error: 'Некоректні параметри' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+    const existing = db.central.prepare('SELECT id FROM project_invoices WHERE id = ? AND project_id = ?').get(invoiceId, projectId);
+    if (!existing) return res.status(404).json({ error: 'Рахунок не знайдено' });
+    const sets = [];
+    const values = [];
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'comment')) { sets.push('comment = ?'); values.push(String(req.body?.comment || '').trim() || null); }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'isPaid')) { sets.push('is_paid = ?'); values.push(req.body?.isPaid ? 1 : 0); }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'paidBy')) { sets.push('paid_by = ?'); values.push(String(req.body?.paidBy || '').trim() || null); }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'paidAt')) { sets.push('paid_at = ?'); values.push(String(req.body?.paidAt || '').trim() || null); }
+    if (!sets.length) return res.json({ project: loadProjectForUser(projectId, req.userId) });
+    sets.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(invoiceId, projectId);
+    db.central.prepare(`UPDATE project_invoices SET ${sets.join(', ')} WHERE id = ? AND project_id = ?`).run(...values);
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    return res.json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects invoice patch error:', error);
+    return res.status(500).json({ error: 'Не вдалося оновити рахунок' });
+  }
+});
+
+router.delete('/:projectId/invoices/:invoiceId', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.projectId, 10);
+    const invoiceId = Number.parseInt(req.params.invoiceId, 10);
+    if (!Number.isFinite(projectId) || !Number.isFinite(invoiceId)) return res.status(400).json({ error: 'Некоректні параметри' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+    const existing = db.central.prepare('SELECT file_path FROM project_invoices WHERE id = ? AND project_id = ?').get(invoiceId, projectId);
+    if (!existing) return res.status(404).json({ error: 'Рахунок не знайдено' });
+    db.central.prepare('DELETE FROM project_invoices WHERE id = ? AND project_id = ?').run(invoiceId, projectId);
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    const marker = '/uploads/media/';
+    if (String(existing.file_path || '').startsWith(marker)) {
+      const diskPath = path.join(runtimePaths.mediaDir, String(existing.file_path).slice(marker.length));
+      try { if (fs.existsSync(diskPath)) fs.unlinkSync(diskPath); } catch (_) {}
+    }
+    return res.json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects invoice delete error:', error);
+    return res.status(500).json({ error: 'Не вдалося видалити рахунок' });
   }
 });
 

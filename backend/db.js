@@ -238,6 +238,21 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     FOREIGN KEY (assigned_user_id) REFERENCES users(id) ON DELETE SET NULL,
     FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
   );
+  CREATE TABLE IF NOT EXISTS project_invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    file_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    comment TEXT,
+    is_paid INTEGER NOT NULL DEFAULT 0,
+    paid_by TEXT,
+    paid_at TEXT,
+    created_by_user_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+  );
   CREATE TABLE IF NOT EXISTS project_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL,
@@ -420,6 +435,7 @@ safeDbWrite(centralDb, 'project indexes', () => {
     CREATE INDEX IF NOT EXISTS idx_project_members_user_id ON project_members(user_id);
     CREATE INDEX IF NOT EXISTS idx_project_members_project_id ON project_members(project_id);
     CREATE INDEX IF NOT EXISTS idx_project_stages_project_id ON project_stages(project_id);
+    CREATE INDEX IF NOT EXISTS idx_project_invoices_project_id ON project_invoices(project_id);
     CREATE INDEX IF NOT EXISTS idx_project_finance_entries_project_id ON project_finance_entries(project_id);
     CREATE INDEX IF NOT EXISTS idx_project_tasks_project_id ON project_tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_project_tasks_assigned_user_id ON project_tasks(assigned_user_id);
