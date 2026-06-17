@@ -2449,16 +2449,13 @@ function App({ currentUser: initialUser }) {
   };
 
   const handleAddProjectSpecificationItem = () => {
-      const nextItems = [
-          ...selectedProjectSpecificationItems,
-          {
-              id: 'manual_' + Date.now(),
-              name: 'Нова позиція', typeMark: '', code: '', manufacturer: '', country: '', unit: 'шт.', qty: '1',
-              source: '', orderEntity: '', currency: 'UAH', unitPrice: '', exchangeRate: '',
-              vat: false, reinvoice: false, note: '', status: 'new'
-          }
-      ];
-      handleSaveProjectSpecificationItems(nextItems);
+      const manualItem = {
+          id: 'manual_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+          name: 'Нова позиція', typeMark: '', code: '', manufacturer: '', country: '', unit: 'шт.', qty: '1',
+          source: '', orderEntity: '', currency: 'UAH', unitPrice: '', exchangeRate: '',
+          vat: false, reinvoice: false, note: '', status: 'new'
+      };
+      handleSaveProjectSpecificationItems([manualItem, ...selectedProjectSpecificationItems]);
   };
 
   const handleDeleteProjectSpecificationItem = (itemId) => {
