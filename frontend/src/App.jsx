@@ -202,6 +202,8 @@ function App({ currentUser: initialUser }) {
   const warehouseItemPatchSeqRef = useRef({});
   const projectStagePatchSeqRef = useRef({});
   const projectPatchSeqRef = useRef({});
+  const projectSpecificationSaveSeqRef = useRef({});
+  const projectInvoicePatchSeqRef = useRef({});
   const activeDialogIdRef = useRef(null);
   const dialogFetchControllersRef = useRef({
       messages: null,
@@ -2392,29 +2394,35 @@ function App({ currentUser: initialUser }) {
 
   const handleSaveProjectSpecificationItems = async (nextItems, sourceName = undefined) => {
       if (!selectedProject?.id) return;
+      const projectId = selectedProject.id;
+      const requestKey = String(projectId);
+      const nextSeq = Number(projectSpecificationSaveSeqRef.current[requestKey] || 0) + 1;
+      projectSpecificationSaveSeqRef.current[requestKey] = nextSeq;
       setProjectSpecificationSaving(true);
       const payload = { items: Array.isArray(nextItems) ? nextItems : [] };
       if (sourceName !== undefined) payload.sourceName = sourceName;
       setProjects((prev) => prev.map((project) => (
-          project.id === selectedProject.id
+          project.id === projectId
             ? { ...project, specificationItems: payload.items, ...(sourceName !== undefined ? { specificationSourceName: sourceName } : {}) }
             : project
       )));
       try {
-          const res = await fetch(buildApiUrlWithToken('/projects/' + selectedProject.id + '/specification'), {
+          const res = await fetch(buildApiUrlWithToken('/projects/' + projectId + '/specification'), {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
           });
           const data = await parseApiJson(res, 'Не вдалося зберегти специфікацію');
+          if (projectSpecificationSaveSeqRef.current[requestKey] !== nextSeq) return;
           if (data?.project) {
-              setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+              setProjects((prev) => prev.map((project) => (project.id === projectId ? data.project : project)));
           }
       } catch (error) {
+          if (projectSpecificationSaveSeqRef.current[requestKey] !== nextSeq) return;
           alert(error?.message || 'Не вдалося зберегти специфікацію');
           await loadProjects();
       } finally {
-          setProjectSpecificationSaving(false);
+          if (projectSpecificationSaveSeqRef.current[requestKey] === nextSeq) setProjectSpecificationSaving(false);
       }
   };
 
@@ -2486,20 +2494,27 @@ function App({ currentUser: initialUser }) {
 
   const handleUpdateProjectInvoice = async (invoiceId, patch) => {
       if (!selectedProject?.id || !invoiceId) return;
+      const projectId = selectedProject.id;
+      const patchKey = Object.keys(patch || {}).sort().join(',') || 'invoice';
+      const requestKey = projectId + ':' + invoiceId + ':' + patchKey;
+      const nextSeq = Number(projectInvoicePatchSeqRef.current[requestKey] || 0) + 1;
+      projectInvoicePatchSeqRef.current[requestKey] = nextSeq;
       setProjects((prev) => prev.map((project) => {
-          if (project.id !== selectedProject.id) return project;
+          if (project.id !== projectId) return project;
           const invoices = Array.isArray(project.invoices) ? project.invoices.map((invoice) => (invoice.id === invoiceId ? { ...invoice, ...patch } : invoice)) : [];
           return { ...project, invoices };
       }));
       try {
-          const res = await fetch(buildApiUrlWithToken('/projects/' + selectedProject.id + '/invoices/' + invoiceId), {
+          const res = await fetch(buildApiUrlWithToken('/projects/' + projectId + '/invoices/' + invoiceId), {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(patch)
           });
           const data = await parseApiJson(res, 'Не вдалося оновити рахунок');
-          if (data?.project) setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? data.project : project)));
+          if (projectInvoicePatchSeqRef.current[requestKey] !== nextSeq) return;
+          if (data?.project) setProjects((prev) => prev.map((project) => (project.id === projectId ? data.project : project)));
       } catch (error) {
+          if (projectInvoicePatchSeqRef.current[requestKey] !== nextSeq) return;
           alert(error?.message || 'Не вдалося оновити рахунок');
           await loadProjects();
       }
