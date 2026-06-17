@@ -890,6 +890,47 @@ ensureRequestTemplate({
   ])
 });
 
+
+ensureRequestTemplate({
+  code: 'commissioning_request',
+  title: 'Пусконалагоджувальні роботи',
+  description: 'Заявка на пусконалагоджувальні роботи з основним обладнанням, монтажником і потрібною датою.',
+  bodyTemplate: `Доброго дня. Потрібні пусконалагоджувальні роботи.
+
+Проєкт: {{project_name}}
+
+Основне обладнання:
+• Інвертор: {{inverter_model}}
+• Акумулятори: {{battery_model_count}}
+• PV: {{pv_availability}}
+
+Хто виконав монтаж: {{installer_name}}
+Дата, на коли потрібно: {{required_date}}
+
+Додатковий коментар:
+{{additional_comment}}`,
+  fieldsJson: JSON.stringify([
+    { key: 'project_name', label: 'Назва проєкту', type: 'text', required: true, placeholder: 'Назва проєкту' },
+    { key: 'inverter_model', label: 'Модель інвертора', type: 'text', required: true, placeholder: 'Наприклад: Deye SUN-12K...' },
+    { key: 'battery_model_count', label: 'Модель та кількість акумуляторів', type: 'textarea', required: true, placeholder: 'Наприклад: Dyness Tower T17 x 2 шт.' },
+    {
+      key: 'pv_availability',
+      label: 'Наявність PV',
+      type: 'select',
+      required: true,
+      defaultValue: 'Є',
+      options: [
+        { value: 'Є', label: 'Є' },
+        { value: 'Немає', label: 'Немає' },
+        { value: 'Потрібно уточнити', label: 'Потрібно уточнити' }
+      ]
+    },
+    { key: 'installer_name', label: 'Хто виконав монтаж', type: 'text', required: true, placeholder: 'ПІБ / бригада / підрядник' },
+    { key: 'required_date', label: 'Дата, на коли потрібно', type: 'date', required: true, placeholder: 'Оберіть дату' },
+    { key: 'additional_comment', label: 'Додатковий коментар', type: 'textarea', required: false, placeholder: 'Уточнення по доступу, контактам, особливостям обладнання' }
+  ])
+});
+
 ensureRequestTemplate({
   code: 'tk_delivery_request',
   title: 'Доставка ТК',

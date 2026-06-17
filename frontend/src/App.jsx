@@ -7811,6 +7811,13 @@ function App({ currentUser: initialUser }) {
                                                       <option key={option.value} value={option.value}>{option.label}</option>
                                                   ))}
                                               </select>
+                                          ) : field.type === 'date' ? (
+                                              <input
+                                                  type="date"
+                                                  value={requestFormValues[field.key] ?? ''}
+                                                  onChange={(e) => handleRequestFieldChange(field.key, e.target.value)}
+                                                  className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition"
+                                              />
                                           ) : field.type === 'multi_contact_mentions' ? (
                                               <div className="rounded-2xl border border-slate-700 bg-slate-800/40 p-4 space-y-3">
                                                   <div className="flex flex-wrap gap-2">
