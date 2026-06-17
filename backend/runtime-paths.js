@@ -20,10 +20,12 @@ ensureDir(dataRoot);
 const uploadsDir = path.join(dataRoot, 'uploads');
 const avatarsDir = path.join(uploadsDir, 'avatars');
 const mediaDir = path.join(uploadsDir, 'media');
+const projectsDir = path.join(uploadsDir, 'projects');
 
 ensureDir(uploadsDir);
 ensureDir(avatarsDir);
 ensureDir(mediaDir);
+ensureDir(projectsDir);
 
 // Отримання шляхів для конкретного тенанта (користувача)
 const getTenantDir = (userId) => {
@@ -50,5 +52,7 @@ module.exports = {
   // Для старої сумісності (якщо десь напряму імпортується)
   uploadsDir,
   avatarsDir,
-  mediaDir
+  mediaDir,
+  projectsDir,
+  ensureDir
 };

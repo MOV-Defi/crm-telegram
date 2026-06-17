@@ -10,6 +10,58 @@ const { parseXlsxRows } = require('../warehouse-file-items');
 const router = express.Router();
 const upload = multer({ dest: runtimePaths.mediaDir });
 
+const normalizeUploadPublicPath = (value) => {
+  const publicPath = String(value || '').trim();
+  if (!publicPath.startsWith('/uploads/')) return null;
+  const relativePath = publicPath.replace(/^\/uploads\//, '');
+  if (!relativePath || relativePath.includes('..')) return null;
+  const diskPath = path.resolve(runtimePaths.uploadsDir, relativePath);
+  const uploadsRoot = path.resolve(runtimePaths.uploadsDir);
+  if (diskPath !== uploadsRoot && !diskPath.startsWith(uploadsRoot + path.sep)) return null;
+  return { publicPath, diskPath };
+};
+
+const sanitizeStoredFileName = (name) => {
+  const safe = String(name || 'invoice.bin')
+    .replace(/[\/\:*?"<>|]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return safe || 'invoice.bin';
+};
+
+const getProjectInvoiceDir = (projectId) => {
+  const invoiceDir = path.join(runtimePaths.projectsDir, String(projectId), 'invoices');
+  runtimePaths.ensureDir(invoiceDir);
+  return invoiceDir;
+};
+
+const buildProjectInvoiceFileTarget = (projectId, originalName) => {
+  const safeOriginal = sanitizeStoredFileName(originalName);
+  const ext = path.extname(safeOriginal) || '.bin';
+  const base = path.basename(safeOriginal, ext).slice(0, 80).trim() || 'invoice';
+  const storedName = base + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + ext;
+  const invoiceDir = getProjectInvoiceDir(projectId);
+  return {
+    storedName,
+    diskPath: path.join(invoiceDir, storedName),
+    publicPath: '/uploads/projects/' + projectId + '/invoices/' + encodeURIComponent(storedName).replace(/%2F/gi, '/')
+  };
+};
+
+const saveProjectInvoiceRecord = ({ projectId, fileName, filePath, comment, isPaid, paidBy, paidAt, userId }) => {
+  db.central.prepare(`
+      INSERT INTO project_invoices (project_id, file_name, file_path, comment, is_paid, paid_by, paid_at, created_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(projectId, fileName, filePath, comment || null, isPaid ? 1 : 0, paidBy || null, paidAt || null, userId);
+  db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+};
+
+const deletePublicUploadFile = (publicPath) => {
+  const resolved = normalizeUploadPublicPath(publicPath);
+  if (!resolved) return;
+  try { if (fs.existsSync(resolved.diskPath)) fs.unlinkSync(resolved.diskPath); } catch (_) {}
+};
+
 const DEFAULT_PROJECT_STAGE_TEMPLATES = [
   { name: 'Договір', tasks: ['Підготовка договору', 'Узгодження умов', 'Підписання договору'] },
   { name: 'Авансування', tasks: ['Виставлення рахунку', 'Контроль оплати', 'Підтвердження надходження'] },
@@ -1321,28 +1373,58 @@ router.post('/:id/invoices', upload.single('file'), (req, res) => {
     const current = getAccessibleProjectRow(projectId, req.userId);
     if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
     if (!req.file) return res.status(400).json({ error: 'Завантажте файл рахунку або накладної' });
+
     const originalName = decodeMultipartFileName(req.file.originalname || 'invoice.bin');
-    const ext = path.extname(originalName) || '.bin';
-    const storedName = 'project-invoice-' + projectId + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + ext;
-    const finalPath = path.join(runtimePaths.mediaDir, storedName);
-    fs.renameSync(req.file.path, finalPath);
+    const target = buildProjectInvoiceFileTarget(projectId, originalName);
+    fs.renameSync(req.file.path, target.diskPath);
     tempPath = '';
-    const publicPath = '/uploads/media/' + storedName;
-    const comment = String(req.body?.comment || '').trim();
-    const isPaid = String(req.body?.isPaid || '').toLowerCase() === 'true' || String(req.body?.isPaid || '') === '1';
-    const paidBy = String(req.body?.paidBy || '').trim();
-    const paidAt = String(req.body?.paidAt || '').trim();
-    db.central.prepare(`
-      INSERT INTO project_invoices (project_id, file_name, file_path, comment, is_paid, paid_by, paid_at, created_by_user_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).run(projectId, originalName, publicPath, comment || null, isPaid ? 1 : 0, paidBy || null, paidAt || null, req.userId);
-    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    saveProjectInvoiceRecord({
+      projectId,
+      fileName: originalName,
+      filePath: target.publicPath,
+      comment: String(req.body?.comment || '').trim(),
+      isPaid: String(req.body?.isPaid || '').toLowerCase() === 'true' || String(req.body?.isPaid || '') === '1',
+      paidBy: String(req.body?.paidBy || '').trim(),
+      paidAt: String(req.body?.paidAt || '').trim(),
+      userId: req.userId
+    });
     return res.status(201).json({ project: loadProjectForUser(projectId, req.userId) });
   } catch (error) {
     console.error('projects invoice create error:', error);
     return res.status(500).json({ error: 'Не вдалося додати рахунок' });
   } finally {
     if (tempPath) { try { fs.unlinkSync(tempPath); } catch (_) {} }
+  }
+});
+
+router.post('/:id/invoices/from-upload', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(projectId)) return res.status(400).json({ error: 'Некоректний ID проєкту' });
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    const sourcePath = String(req.body?.mediaPath || req.body?.filePath || '').trim();
+    const source = normalizeUploadPublicPath(sourcePath);
+    if (!source || !fs.existsSync(source.diskPath)) return res.status(400).json({ error: 'Файл з чату не знайдено на сервері' });
+
+    const originalName = decodeMultipartFileName(String(req.body?.mediaName || req.body?.fileName || path.basename(source.diskPath) || 'invoice.bin'));
+    const target = buildProjectInvoiceFileTarget(projectId, originalName);
+    fs.copyFileSync(source.diskPath, target.diskPath);
+    saveProjectInvoiceRecord({
+      projectId,
+      fileName: originalName,
+      filePath: target.publicPath,
+      comment: String(req.body?.comment || '').trim(),
+      isPaid: String(req.body?.isPaid || '').toLowerCase() === 'true' || String(req.body?.isPaid || '') === '1',
+      paidBy: String(req.body?.paidBy || '').trim(),
+      paidAt: String(req.body?.paidAt || '').trim(),
+      userId: req.userId
+    });
+    return res.status(201).json({ project: loadProjectForUser(projectId, req.userId) });
+  } catch (error) {
+    console.error('projects invoice from upload error:', error);
+    return res.status(500).json({ error: 'Не вдалося додати файл з чату до проєкту' });
   }
 });
 
@@ -1384,11 +1466,7 @@ router.delete('/:projectId/invoices/:invoiceId', (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Рахунок не знайдено' });
     db.central.prepare('DELETE FROM project_invoices WHERE id = ? AND project_id = ?').run(invoiceId, projectId);
     db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
-    const marker = '/uploads/media/';
-    if (String(existing.file_path || '').startsWith(marker)) {
-      const diskPath = path.join(runtimePaths.mediaDir, String(existing.file_path).slice(marker.length));
-      try { if (fs.existsSync(diskPath)) fs.unlinkSync(diskPath); } catch (_) {}
-    }
+    deletePublicUploadFile(existing.file_path);
     return res.json({ project: loadProjectForUser(projectId, req.userId) });
   } catch (error) {
     console.error('projects invoice delete error:', error);

@@ -426,6 +426,9 @@ function App({ currentUser: initialUser }) {
   const [chatNoteText, setChatNoteText] = useState('');
   const [showSaveMessageModal, setShowSaveMessageModal] = useState(null);
   const [messageNoteComment, setMessageNoteComment] = useState('');
+  const [showAddChatInvoiceModal, setShowAddChatInvoiceModal] = useState(null);
+  const [chatInvoiceDraft, setChatInvoiceDraft] = useState({ projectId: '', comment: '', isPaid: false, paidBy: '', paidAt: '' });
+  const [chatInvoiceSaving, setChatInvoiceSaving] = useState(false);
   const [savedMessagesList, setSavedMessagesList] = useState([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
   const [allChatNotes, setAllChatNotes] = useState([]);
@@ -5062,6 +5065,55 @@ function App({ currentUser: initialUser }) {
       focusComposer();
   };
 
+
+  const handleOpenAddChatInvoiceModal = (msg) => {
+      if (!msg?.mediaPath || String(msg.mediaPath || '').startsWith('blob:')) {
+          alert('Спочатку завантажте файл з Telegram на сервер');
+          return;
+      }
+      const firstProjectId = projects[0]?.id ? String(projects[0].id) : '';
+      setShowAddChatInvoiceModal({
+          messageId: msg.id,
+          mediaPath: msg.mediaPath,
+          mediaName: msg.mediaName || getMediaLabel(msg),
+          text: msg.text || ''
+      });
+      setChatInvoiceDraft({ projectId: firstProjectId, comment: msg.text || '', isPaid: false, paidBy: '', paidAt: '' });
+      if (!projects.length) loadProjects();
+  };
+
+  const handleAddChatInvoiceToProject = async () => {
+      if (!showAddChatInvoiceModal?.mediaPath) return;
+      const projectId = String(chatInvoiceDraft.projectId || '').trim();
+      if (!projectId) {
+          alert('Оберіть проєкт');
+          return;
+      }
+      setChatInvoiceSaving(true);
+      try {
+          const res = await fetch(buildApiUrlWithToken('/projects/' + projectId + '/invoices/from-upload'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  mediaPath: showAddChatInvoiceModal.mediaPath,
+                  mediaName: showAddChatInvoiceModal.mediaName,
+                  comment: chatInvoiceDraft.comment || '',
+                  isPaid: !!chatInvoiceDraft.isPaid,
+                  paidBy: chatInvoiceDraft.paidBy || '',
+                  paidAt: chatInvoiceDraft.paidAt || ''
+              })
+          });
+          const data = await parseApiJson(res, 'Не вдалося додати файл з чату до проєкту');
+          if (data?.project) setProjects((prev) => prev.map((project) => (project.id === data.project.id ? data.project : project)));
+          setShowAddChatInvoiceModal(null);
+          setChatInvoiceDraft({ projectId: '', comment: '', isPaid: false, paidBy: '', paidAt: '' });
+      } catch (error) {
+          alert(error?.message || 'Не вдалося додати файл з чату до проєкту');
+      } finally {
+          setChatInvoiceSaving(false);
+      }
+  };
+
   const handleSaveMessageNote = async () => {
        try {
            await fetch(`${API_URL}/notes/saved`, {
@@ -6744,6 +6796,15 @@ function App({ currentUser: initialUser }) {
                                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7l9-4 9 4-9 4-9-4zm0 5l9 4 9-4m-18 5l9 4 9-4" />
                                           </svg>
+                                      </button>
+                                      )}
+                                      {msg.mediaPath && !String(msg.mediaPath || '').startsWith('blob:') && (
+                                      <button
+                                          onClick={() => handleOpenAddChatInvoiceModal(msg)}
+                                          data-tooltip="В рахунки проєкту"
+                                          className="p-1.5 text-slate-400 hover:text-cyan-300 rounded-md transition hover:bg-slate-800"
+                                      >
+                                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V7.414a1 1 0 00-.293-.707l-3.414-3.414A1 1 0 0014.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-6 4h6" /></svg>
                                       </button>
                                       )}
                                       <button
@@ -10688,6 +10749,38 @@ function App({ currentUser: initialUser }) {
                   <textarea value={chatNoteText} onChange={e => setChatNoteText(e.target.value)} rows="6" className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-blue-500 resize-none" placeholder="Пишіть свої коментарі тут..."></textarea>
                   <button onClick={handleSaveChatNote} className="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl transition shadow-lg shadow-blue-500/20">
                       Зберегти коментарі
+                  </button>
+              </div>
+          </div>
+      )}
+
+
+      {showAddChatInvoiceModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 shadow-2xl rounded-2xl w-full max-w-lg p-6 relative flex flex-col">
+                  <button onClick={() => setShowAddChatInvoiceModal(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                  <h3 className="text-xl font-semibold text-white mb-4">Додати файл у рахунки проєкту</h3>
+                  <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700 mb-4 text-sm text-slate-300 break-all">
+                      {showAddChatInvoiceModal.mediaName || 'Файл з чату'}
+                  </div>
+                  <div className="space-y-3">
+                      <select value={chatInvoiceDraft.projectId} onChange={(e) => setChatInvoiceDraft((prev) => ({ ...prev, projectId: e.target.value }))} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-cyan-500">
+                          <option value="">Оберіть проєкт</option>
+                          {projects.map((project) => (
+                              <option key={project.id} value={project.id}>{project.title || project.number || ('Проєкт #' + project.id)}</option>
+                          ))}
+                      </select>
+                      <textarea value={chatInvoiceDraft.comment} onChange={(e) => setChatInvoiceDraft((prev) => ({ ...prev, comment: e.target.value }))} rows="3" className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-cyan-500 resize-none" placeholder="Коментар до рахунку або накладної"></textarea>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <input value={chatInvoiceDraft.paidBy} onChange={(e) => setChatInvoiceDraft((prev) => ({ ...prev, paidBy: e.target.value }))} placeholder="Від кого оплачено" className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-cyan-500" />
+                          <input type="date" value={chatInvoiceDraft.paidAt} onChange={(e) => setChatInvoiceDraft((prev) => ({ ...prev, paidAt: e.target.value }))} className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-cyan-500" />
+                      </div>
+                      <label className="border border-slate-700 bg-slate-800 rounded-xl px-4 py-3 text-sm text-slate-200 flex items-center gap-2"><input type="checkbox" checked={chatInvoiceDraft.isPaid} onChange={(e) => setChatInvoiceDraft((prev) => ({ ...prev, isPaid: e.target.checked }))} /> Оплачено</label>
+                  </div>
+                  <button onClick={handleAddChatInvoiceToProject} disabled={chatInvoiceSaving} className="w-full mt-4 py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-xl transition disabled:opacity-60">
+                      {chatInvoiceSaving ? 'Додаю...' : 'Додати до проєкту'}
                   </button>
               </div>
           </div>
