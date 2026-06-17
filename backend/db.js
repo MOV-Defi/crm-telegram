@@ -913,18 +913,7 @@ ensureRequestTemplate({
     { key: 'project_name', label: 'Назва проєкту', type: 'text', required: true, placeholder: 'Назва проєкту' },
     { key: 'inverter_model', label: 'Модель інвертора', type: 'text', required: true, placeholder: 'Наприклад: Deye SUN-12K...' },
     { key: 'battery_model_count', label: 'Модель та кількість акумуляторів', type: 'textarea', required: true, placeholder: 'Наприклад: Dyness Tower T17 x 2 шт.' },
-    {
-      key: 'pv_availability',
-      label: 'Наявність PV',
-      type: 'select',
-      required: true,
-      defaultValue: 'Є',
-      options: [
-        { value: 'Є', label: 'Є' },
-        { value: 'Немає', label: 'Немає' },
-        { value: 'Потрібно уточнити', label: 'Потрібно уточнити' }
-      ]
-    },
+    { key: 'pv_availability', label: 'PV', type: 'textarea', required: true, placeholder: 'Опишіть PV: є/немає, кількість стрінгів, панелі, особливості підключення' },
     { key: 'installer_name', label: 'Хто виконав монтаж', type: 'text', required: true, placeholder: 'ПІБ / бригада / підрядник' },
     { key: 'required_date', label: 'Дата, на коли потрібно', type: 'date', required: true, placeholder: 'Оберіть дату' },
     { key: 'additional_comment', label: 'Додатковий коментар', type: 'textarea', required: false, placeholder: 'Уточнення по доступу, контактам, особливостям обладнання' }
