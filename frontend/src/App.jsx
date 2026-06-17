@@ -282,6 +282,16 @@ function App({ currentUser: initialUser }) {
           return [];
       }
   });
+  const [departments, setDepartments] = useState([]);
+  const [departmentUsers, setDepartmentUsers] = useState([]);
+  const [departmentProjectOptions, setDepartmentProjectOptions] = useState([]);
+  const [loadingDepartments, setLoadingDepartments] = useState(false);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState(null);
+  const [departmentDraft, setDepartmentDraft] = useState({ name: '', description: '', color: '#2563eb', leadUserId: '' });
+  const [departmentMemberUserId, setDepartmentMemberUserId] = useState('');
+  const [departmentTaskDraft, setDepartmentTaskDraft] = useState({ title: '', description: '', status: 'plan', priority: 'normal', startAt: '', dueAt: '', assignedUserId: '', projectId: '' });
+  const [departmentTaskFilter, setDepartmentTaskFilter] = useState('all');
+  const [departmentTaskSearch, setDepartmentTaskSearch] = useState('');
   const [projects, setProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [projectsError, setProjectsError] = useState('');
@@ -3088,6 +3098,146 @@ function App({ currentUser: initialUser }) {
       }
   };
 
+
+  const applyDepartmentState = (data) => {
+      const nextDepartments = Array.isArray(data?.departments) ? data.departments : [];
+      setDepartments(nextDepartments);
+      setDepartmentUsers(Array.isArray(data?.users) ? data.users : []);
+      setDepartmentProjectOptions(Array.isArray(data?.projects) ? data.projects : []);
+      setSelectedDepartmentId((prev) => {
+          if (prev && nextDepartments.some((department) => String(department.id) === String(prev))) return prev;
+          return nextDepartments[0]?.id || null;
+      });
+  };
+
+  const loadDepartments = async () => {
+      setLoadingDepartments(true);
+      try {
+          const res = await fetch(buildApiUrlWithToken('/departments?v=' + Date.now()), { cache: 'no-store' });
+          const data = await parseApiJson(res, 'Не вдалося завантажити відділи');
+          applyDepartmentState(data);
+      } catch (error) {
+          console.error('load departments error:', error);
+      } finally {
+          setLoadingDepartments(false);
+      }
+  };
+
+  const createDepartment = async () => {
+      const payload = {
+          name: departmentDraft.name,
+          description: departmentDraft.description,
+          color: departmentDraft.color,
+          leadUserId: departmentDraft.leadUserId || null
+      };
+      if (!String(payload.name || '').trim()) {
+          alert('Вкажіть назву відділу');
+          return;
+      }
+      try {
+          const res = await fetch(buildApiUrlWithToken('/departments'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+          });
+          const data = await parseApiJson(res, 'Не вдалося створити відділ');
+          applyDepartmentState(data);
+          setDepartmentDraft({ name: '', description: '', color: '#2563eb', leadUserId: '' });
+      } catch (error) {
+          alert(error?.message || 'Не вдалося створити відділ');
+      }
+  };
+
+  const deleteDepartment = async (departmentId) => {
+      if (!departmentId || !window.confirm('Видалити відділ? Задачі цього відділу також будуть приховані.')) return;
+      try {
+          const res = await fetch(buildApiUrlWithToken('/departments/' + departmentId), { method: 'DELETE' });
+          const data = await parseApiJson(res, 'Не вдалося видалити відділ');
+          applyDepartmentState(data);
+      } catch (error) {
+          alert(error?.message || 'Не вдалося видалити відділ');
+      }
+  };
+
+  const addDepartmentMember = async () => {
+      if (!selectedDepartmentId || !departmentMemberUserId) return;
+      try {
+          const res = await fetch(buildApiUrlWithToken('/departments/' + selectedDepartmentId + '/members'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId: departmentMemberUserId })
+          });
+          const data = await parseApiJson(res, 'Не вдалося додати учасника');
+          applyDepartmentState(data);
+          setDepartmentMemberUserId('');
+      } catch (error) {
+          alert(error?.message || 'Не вдалося додати учасника');
+      }
+  };
+
+  const removeDepartmentMember = async (userId) => {
+      if (!selectedDepartmentId || !userId) return;
+      try {
+          const res = await fetch(buildApiUrlWithToken('/departments/' + selectedDepartmentId + '/members/' + userId), { method: 'DELETE' });
+          const data = await parseApiJson(res, 'Не вдалося прибрати учасника');
+          applyDepartmentState(data);
+      } catch (error) {
+          alert(error?.message || 'Не вдалося прибрати учасника');
+      }
+  };
+
+  const createDepartmentTask = async () => {
+      if (!selectedDepartmentId) return;
+      if (!String(departmentTaskDraft.title || '').trim()) {
+          alert('Вкажіть назву задачі');
+          return;
+      }
+      try {
+          const res = await fetch(buildApiUrlWithToken('/departments/' + selectedDepartmentId + '/tasks'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(departmentTaskDraft)
+          });
+          const data = await parseApiJson(res, 'Не вдалося створити задачу');
+          applyDepartmentState(data);
+          setDepartmentTaskDraft({ title: '', description: '', status: 'plan', priority: 'normal', startAt: '', dueAt: '', assignedUserId: '', projectId: '' });
+      } catch (error) {
+          alert(error?.message || 'Не вдалося створити задачу');
+      }
+  };
+
+  const updateDepartmentTask = async (task, patch) => {
+      if (!task?.departmentId || !task?.id) return;
+      setDepartments((prev) => prev.map((department) => {
+          if (department.id !== task.departmentId) return department;
+          const tasks = Array.isArray(department.tasks) ? department.tasks.map((item) => (item.id === task.id ? { ...item, ...patch } : item)) : [];
+          return { ...department, tasks };
+      }));
+      try {
+          const res = await fetch(buildApiUrlWithToken('/departments/' + task.departmentId + '/tasks/' + task.id), {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(patch)
+          });
+          const data = await parseApiJson(res, 'Не вдалося оновити задачу');
+          applyDepartmentState(data);
+      } catch (error) {
+          alert(error?.message || 'Не вдалося оновити задачу');
+          await loadDepartments();
+      }
+  };
+
+  const deleteDepartmentTask = async (task) => {
+      if (!task?.departmentId || !task?.id) return;
+      try {
+          const res = await fetch(buildApiUrlWithToken('/departments/' + task.departmentId + '/tasks/' + task.id), { method: 'DELETE' });
+          const data = await parseApiJson(res, 'Не вдалося видалити задачу');
+          applyDepartmentState(data);
+      } catch (error) {
+          alert(error?.message || 'Не вдалося видалити задачу');
+      }
+  };
+
   const sendTaskBotTest = async () => {
       try {
           const res = await fetch(`${API_URL}/settings/bot/test`, {
@@ -3103,6 +3253,7 @@ function App({ currentUser: initialUser }) {
 
   useEffect(() => {
       if (activeTab === 'tasks') loadTaskBotSettings();
+      if (activeTab === 'departments') loadDepartments();
   }, [activeTab]);
 
   const getNormalizedPlaceCount = (values) => {
@@ -5277,6 +5428,38 @@ function App({ currentUser: initialUser }) {
   const movedToTomorrowTasks = tasks.filter((task) => task.planDate === tomorrowTaskDate && task.movedFromDate === todayTaskDate);
   const todayTaskNote = taskDailyNotesByDate[todayTaskDate] || '';
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) || null;
+  const departmentStatusMeta = {
+      plan: { label: 'План', className: 'bg-slate-700/70 text-slate-200 border-slate-600' },
+      in_progress: { label: 'В роботі', className: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+      waiting: { label: 'Очікує', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
+      done: { label: 'Виконано', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' }
+  };
+  const departmentPriorityMeta = {
+      low: { label: 'Низький', className: 'text-slate-400 border-slate-600' },
+      normal: { label: 'Звичайний', className: 'text-blue-300 border-blue-500/30' },
+      high: { label: 'Високий', className: 'text-amber-300 border-amber-500/30' },
+      urgent: { label: 'Терміново', className: 'text-red-300 border-red-500/30' }
+  };
+  const selectedDepartment = departments.find((department) => String(department.id) === String(selectedDepartmentId)) || null;
+  const normalizedDepartmentSearch = departmentTaskSearch.trim().toLowerCase();
+  const todayIsoForDepartments = new Date().toISOString().slice(0, 10);
+  const isDepartmentTaskOverdue = (task) => String(task?.status || '') !== 'done' && !!task?.dueAt && String(task.dueAt).slice(0, 10) < todayIsoForDepartments;
+  const selectedDepartmentTasks = Array.isArray(selectedDepartment?.tasks) ? selectedDepartment.tasks : [];
+  const filteredDepartmentTasks = selectedDepartmentTasks.filter((task) => {
+      const haystack = String((task.title || '') + ' ' + (task.description || '') + ' ' + (task.assignedUsername || '') + ' ' + (task.projectTitle || '')).toLowerCase();
+      if (normalizedDepartmentSearch && !haystack.includes(normalizedDepartmentSearch)) return false;
+      if (departmentTaskFilter === 'overdue') return isDepartmentTaskOverdue(task);
+      if (departmentTaskFilter === 'mine') return String(task.assignedUsername || '') === String(currentUser || '');
+      if (departmentTaskFilter !== 'all') return String(task.status || '') === departmentTaskFilter;
+      return true;
+  });
+  const departmentTasksByStatus = {
+      plan: filteredDepartmentTasks.filter((task) => task.status === 'plan'),
+      in_progress: filteredDepartmentTasks.filter((task) => task.status === 'in_progress'),
+      waiting: filteredDepartmentTasks.filter((task) => task.status === 'waiting'),
+      done: filteredDepartmentTasks.filter((task) => task.status === 'done')
+  };
+  const departmentOverdueCount = selectedDepartmentTasks.filter((task) => isDepartmentTaskOverdue(task)).length;
   const taskStatusMeta = {
       plan: { label: 'План', badge: 'bg-slate-700/70 text-slate-200 border-slate-600', dot: 'bg-slate-400' },
       in_progress: { label: 'В роботі', badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30', dot: 'bg-blue-400' },
@@ -6084,6 +6267,12 @@ function App({ currentUser: initialUser }) {
                     <span className={navLabelClass}>Користувачі</span>
                 </button>
                 )}
+                <button onClick={() => setActiveTab('departments')} data-tooltip="Відділи" className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 ${activeTab === 'departments' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-slate-800 text-slate-300'}` }>
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5V4H2v16h5m10 0v-2a4 4 0 00-4-4H11a4 4 0 00-4 4v2m10 0H7m8-10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    <span className={navLabelClass}>Відділи</span>
+                </button>
                 <button onClick={() => setActiveTab('tasks')} data-tooltip="Задачі" className={`text-left px-3 py-3 rounded-xl transition font-medium flex items-center ${navJustifyClass} gap-3 ${activeTab === 'tasks' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-slate-800 text-slate-300'}`}>
                     <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5h10M9 12h10M9 19h10M4 6h.01M4 12h.01M4 18h.01" />
@@ -8716,6 +8905,164 @@ function App({ currentUser: initialUser }) {
       </div>
       )}
 
+      {activeTab === 'departments' && (
+      <div className="flex-1 flex bg-[#0b101e] overflow-hidden">
+          <div className="w-[340px] shrink-0 border-r border-slate-800 bg-slate-950/60 p-4 overflow-y-auto">
+              <div className="flex items-center justify-between gap-2 mb-4">
+                  <div>
+                      <h2 className="text-xl font-bold text-slate-100">Відділи</h2>
+                      <div className="text-xs text-slate-500">Задачі команд без Telegram</div>
+                  </div>
+                  <button type="button" onClick={loadDepartments} className="px-2 py-1 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 text-xs">Оновити</button>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 mb-4 space-y-2">
+                  <input value={departmentDraft.name} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, name: e.target.value }))} placeholder="Новий відділ" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500" />
+                  <textarea value={departmentDraft.description} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, description: e.target.value }))} placeholder="Опис" rows={2} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500 resize-y" />
+                  <div className="grid grid-cols-[48px_1fr] gap-2">
+                      <input type="color" value={departmentDraft.color} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, color: e.target.value }))} className="h-10 w-full rounded-lg bg-slate-800 border border-slate-700" />
+                      <select value={departmentDraft.leadUserId} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, leadUserId: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500">
+                          <option value="">Керівник</option>
+                          {departmentUsers.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+                      </select>
+                  </div>
+                  <button type="button" onClick={createDepartment} className="w-full px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-500">Створити відділ</button>
+              </div>
+              {loadingDepartments && <div className="text-sm text-slate-500">Завантаження...</div>}
+              <div className="space-y-2">
+                  {departments.map((department) => {
+                      const isSelected = String(department.id) === String(selectedDepartmentId);
+                      const overdue = (Array.isArray(department.tasks) ? department.tasks : []).filter((task) => isDepartmentTaskOverdue(task)).length;
+                      return (
+                          <button key={department.id} type="button" onClick={() => setSelectedDepartmentId(department.id)} className={(isSelected ? 'border-blue-500 bg-blue-500/15' : 'border-slate-800 bg-slate-900/60 hover:bg-slate-900') + ' w-full text-left rounded-xl border p-3 transition'}>
+                              <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                      <div className="flex items-center gap-2">
+                                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: department.color || '#2563eb' }}></span>
+                                          <div className="font-semibold text-slate-100 truncate">{department.name}</div>
+                                      </div>
+                                      <div className="text-xs text-slate-500 mt-1">Учасники: {department.members?.length || 0} / задачі: {department.tasks?.length || 0}</div>
+                                  </div>
+                                  {overdue > 0 && <span className="px-2 py-0.5 rounded-full border border-red-500/40 bg-red-500/10 text-red-300 text-xs">{overdue}</span>}
+                              </div>
+                          </button>
+                      );
+                  })}
+                  {!loadingDepartments && departments.length === 0 && <div className="text-sm text-slate-500">Поки немає відділів</div>}
+              </div>
+          </div>
+          <div className="flex-1 p-4 md:p-6 overflow-y-auto">
+              {!selectedDepartment ? (
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-slate-400">Створіть або оберіть відділ</div>
+              ) : (
+                  <div className="space-y-4">
+                      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-4">
+                              <div>
+                                  <div className="flex items-center gap-3">
+                                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: selectedDepartment.color || '#2563eb' }}></span>
+                                      <h2 className="text-2xl font-bold text-slate-100">{selectedDepartment.name}</h2>
+                                  </div>
+                                  {selectedDepartment.description && <div className="text-sm text-slate-400 mt-1">{selectedDepartment.description}</div>}
+                                  <div className="text-xs text-slate-500 mt-2">Керівник: {selectedDepartment.leadUsername || 'не вказано'} / прострочено: {departmentOverdueCount}</div>
+                              </div>
+                              <button type="button" onClick={() => deleteDepartment(selectedDepartment.id)} className="px-3 py-2 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-500/10 text-sm">Видалити відділ</button>
+                          </div>
+                      </div>
+                      <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-4">
+                          <div className="space-y-4">
+                              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                                  <div className="font-semibold text-slate-100 mb-3">Учасники</div>
+                                  <div className="flex gap-2 mb-3">
+                                      <select value={departmentMemberUserId} onChange={(e) => setDepartmentMemberUserId(e.target.value)} className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500">
+                                          <option value="">Оберіть користувача</option>
+                                          {departmentUsers.filter((user) => !(selectedDepartment.members || []).some((member) => String(member.userId) === String(user.id))).map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+                                      </select>
+                                      <button type="button" onClick={addDepartmentMember} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm">Додати</button>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                      {(selectedDepartment.members || []).map((member) => (
+                                          <span key={member.userId} className="inline-flex items-center gap-2 px-2 py-1 rounded-full border border-slate-700 bg-slate-800 text-slate-200 text-xs">
+                                              {member.username}
+                                              <button type="button" onClick={() => removeDepartmentMember(member.userId)} className="text-slate-500 hover:text-red-300">×</button>
+                                          </span>
+                                      ))}
+                                      {(!selectedDepartment.members || selectedDepartment.members.length === 0) && <div className="text-sm text-slate-500">Немає учасників</div>}
+                                  </div>
+                              </div>
+                              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                                  <div className="font-semibold text-slate-100 mb-3">Нова задача</div>
+                                  <div className="space-y-2">
+                                      <input value={departmentTaskDraft.title} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, title: e.target.value }))} placeholder="Назва задачі" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500" />
+                                      <textarea value={departmentTaskDraft.description} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, description: e.target.value }))} placeholder="Опис" rows={3} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500 resize-y" />
+                                      <div className="grid grid-cols-2 gap-2">
+                                          <select value={departmentTaskDraft.assignedUserId} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, assignedUserId: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500">
+                                              <option value="">Відповідальний</option>
+                                              {departmentUsers.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+                                          </select>
+                                          <select value={departmentTaskDraft.projectId} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, projectId: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500">
+                                              <option value="">Без проєкту</option>
+                                              {departmentProjectOptions.map((project) => <option key={project.id} value={project.id}>{project.title || project.number}</option>)}
+                                          </select>
+                                          <select value={departmentTaskDraft.priority} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, priority: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500">
+                                              <option value="low">Низький</option><option value="normal">Звичайний</option><option value="high">Високий</option><option value="urgent">Терміново</option>
+                                          </select>
+                                          <select value={departmentTaskDraft.status} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, status: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500">
+                                              <option value="plan">План</option><option value="in_progress">В роботі</option><option value="waiting">Очікує</option><option value="done">Виконано</option>
+                                          </select>
+                                          <input type="date" value={departmentTaskDraft.startAt} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, startAt: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500" />
+                                          <input type="date" value={departmentTaskDraft.dueAt} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, dueAt: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500" />
+                                      </div>
+                                      <button type="button" onClick={createDepartmentTask} className="w-full px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-500">Створити задачу</button>
+                                  </div>
+                              </div>
+                          </div>
+                          <div className="space-y-3">
+                              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
+                                  <input value={departmentTaskSearch} onChange={(e) => setDepartmentTaskSearch(e.target.value)} placeholder="Пошук задач" className="min-w-[220px] flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500" />
+                                  <select value={departmentTaskFilter} onChange={(e) => setDepartmentTaskFilter(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500">
+                                      <option value="all">Всі</option><option value="mine">Мої</option><option value="overdue">Прострочені</option><option value="plan">План</option><option value="in_progress">В роботі</option><option value="waiting">Очікує</option><option value="done">Виконано</option>
+                                  </select>
+                              </div>
+                              <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+                                  {['plan', 'in_progress', 'waiting', 'done'].map((statusKey) => (
+                                      <div key={statusKey} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3 min-h-[320px]">
+                                          <div className="flex items-center justify-between gap-2 mb-3">
+                                              <div className="font-semibold text-slate-100">{departmentStatusMeta[statusKey].label}</div>
+                                              <span className="text-xs px-2 py-0.5 rounded-full border border-slate-700 text-slate-300">{departmentTasksByStatus[statusKey].length}</span>
+                                          </div>
+                                          <div className="space-y-2">
+                                              {departmentTasksByStatus[statusKey].map((task) => {
+                                                  const priority = departmentPriorityMeta[task.priority] || departmentPriorityMeta.normal;
+                                                  const overdue = isDepartmentTaskOverdue(task);
+                                                  return (
+                                                      <div key={task.id} className={(overdue ? 'border-red-500/60 bg-red-500/10' : 'border-slate-700 bg-slate-800/70') + ' rounded-xl border p-3 space-y-2'}>
+                                                          <div className="font-semibold text-slate-100 break-words">{task.title}</div>
+                                                          {task.description && <div className="text-sm text-slate-400 whitespace-pre-wrap">{task.description}</div>}
+                                                          <div className="flex flex-wrap gap-1 text-xs">
+                                                              <span className={'px-2 py-0.5 rounded-full border ' + priority.className}>{priority.label}</span>
+                                                              {task.assignedUsername && <span className="px-2 py-0.5 rounded-full border border-slate-600 text-slate-300">{task.assignedUsername}</span>}
+                                                              {task.projectTitle && <span className="px-2 py-0.5 rounded-full border border-blue-500/30 text-blue-300">{task.projectTitle}</span>}
+                                                              {task.dueAt && <span className={(overdue ? 'border-red-500/40 text-red-300' : 'border-slate-600 text-slate-300') + ' px-2 py-0.5 rounded-full border'}>{task.dueAt}</span>}
+                                                          </div>
+                                                          <select value={task.status} onChange={(e) => updateDepartmentTask(task, { status: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-100 text-xs outline-none focus:border-blue-500">
+                                                              <option value="plan">План</option><option value="in_progress">В роботі</option><option value="waiting">Очікує</option><option value="done">Виконано</option>
+                                                          </select>
+                                                          <button type="button" onClick={() => deleteDepartmentTask(task)} className="text-xs text-red-300 hover:text-red-200">Видалити</button>
+                                                      </div>
+                                                  );
+                                              })}
+                                              {departmentTasksByStatus[statusKey].length === 0 && <div className="text-xs text-slate-500">Порожньо</div>}
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              )}
+          </div>
+      </div>
+      )}
       {activeTab === 'tasks' && (
       <div className="flex-1 flex flex-col bg-[#0b101e] relative p-4 md:p-6 overflow-y-auto">
           <h2 className="text-2xl font-bold text-slate-200 mb-6 flex items-center gap-3">

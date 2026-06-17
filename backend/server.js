@@ -524,6 +524,8 @@ const creditManagersRoutes = require('./routes/credit-managers');
 app.use('/api/credit-managers', creditManagersRoutes);
 const projectsRoutes = require('./routes/projects');
 app.use('/api/projects', projectsRoutes);
+const departmentsRoutes = require('./routes/departments');
+app.use('/api/departments', departmentsRoutes);
 
 const TELEGRAM_BOT_API = 'https://api.telegram.org';
 const APP_TIME_ZONE = 'Europe/Kiev';
