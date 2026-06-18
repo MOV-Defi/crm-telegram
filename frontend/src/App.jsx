@@ -4812,21 +4812,37 @@ function App({ currentUser: initialUser }) {
       return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showNotificationCenter, showDirectNotificationCenter, showProjectNotificationCenter]);
 
+  const getNotificationPanelPosition = (preferredButton, panelWidth = 380) => {
+      const viewportWidth = window.innerWidth || 1280;
+      const viewportHeight = window.innerHeight || 720;
+      const nav = document.querySelector('.app-nav-sidebar');
+      const navRect = nav?.getBoundingClientRect?.();
+      const buttonRect = preferredButton?.getBoundingClientRect?.();
+      const anchorRight = Number.isFinite(buttonRect?.right) && buttonRect.width > 0
+          ? buttonRect.right
+          : Number.isFinite(navRect?.right)
+              ? navRect.right
+              : 80;
+      const anchorTop = Number.isFinite(buttonRect?.top) && buttonRect.height > 0
+          ? buttonRect.top
+          : Number.isFinite(navRect?.top)
+              ? navRect.top + 84
+              : 72;
+      const width = Math.min(panelWidth, Math.floor(viewportWidth * 0.9));
+      const desiredLeft = anchorRight + 10;
+      const maxLeft = Math.max(8, viewportWidth - width - 8);
+      const maxTop = Math.max(8, viewportHeight - 180);
+      return {
+          top: Math.min(Math.max(8, anchorTop), maxTop),
+          left: Math.min(Math.max(8, desiredLeft), maxLeft)
+      };
+  };
+
   useEffect(() => {
       if (!showNotificationCenter) return;
 
       const updatePosition = () => {
-          const bell = notificationBellButtonRef.current;
-          if (!bell) return;
-          const rect = bell.getBoundingClientRect();
-          const viewportWidth = window.innerWidth || 1280;
-          const panelWidth = Math.min(420, Math.floor(viewportWidth * 0.8), 380);
-          const desiredLeft = rect.right + 8;
-          const maxLeft = Math.max(8, viewportWidth - panelWidth - 8);
-          setNotificationPanelPosition({
-              top: Math.max(8, rect.top),
-              left: Math.min(desiredLeft, maxLeft)
-          });
+          setNotificationPanelPosition(getNotificationPanelPosition(notificationBellButtonRef.current, 380));
       };
 
       updatePosition();
@@ -4842,17 +4858,7 @@ function App({ currentUser: initialUser }) {
       if (!showDirectNotificationCenter) return;
 
       const updatePosition = () => {
-          const bell = directNotificationBellButtonRef.current;
-          if (!bell) return;
-          const rect = bell.getBoundingClientRect();
-          const viewportWidth = window.innerWidth || 1280;
-          const panelWidth = Math.min(420, Math.floor(viewportWidth * 0.8), 380);
-          const desiredLeft = rect.right + 8;
-          const maxLeft = Math.max(8, viewportWidth - panelWidth - 8);
-          setDirectNotificationPanelPosition({
-              top: Math.max(8, rect.top),
-              left: Math.min(desiredLeft, maxLeft)
-          });
+          setDirectNotificationPanelPosition(getNotificationPanelPosition(directNotificationBellButtonRef.current, 380));
       };
 
       updatePosition();
@@ -4868,17 +4874,7 @@ function App({ currentUser: initialUser }) {
       if (!showProjectNotificationCenter) return;
 
       const updatePosition = () => {
-          const bell = projectNotificationBellButtonRef.current;
-          if (!bell) return;
-          const rect = bell.getBoundingClientRect();
-          const viewportWidth = window.innerWidth || 1280;
-          const panelWidth = Math.min(420, Math.floor(viewportWidth * 0.84), 420);
-          const desiredLeft = rect.right + 8;
-          const maxLeft = Math.max(8, viewportWidth - panelWidth - 8);
-          setProjectNotificationPanelPosition({
-              top: Math.max(8, rect.top),
-              left: Math.min(desiredLeft, maxLeft)
-          });
+          setProjectNotificationPanelPosition(getNotificationPanelPosition(projectNotificationBellButtonRef.current, 420));
       };
 
       updatePosition();
