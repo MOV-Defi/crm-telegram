@@ -4812,6 +4812,13 @@ function App({ currentUser: initialUser }) {
       return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showNotificationCenter, showDirectNotificationCenter, showProjectNotificationCenter]);
 
+  const formatDateTime = (value) => {
+      if (!value) return '';
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return String(value || '');
+      return date.toLocaleString('uk-UA');
+  };
+
   const getNotificationPanelPosition = (preferredButton, panelWidth = 380) => {
       const viewportWidth = window.innerWidth || 1280;
       const viewportHeight = window.innerHeight || 720;
