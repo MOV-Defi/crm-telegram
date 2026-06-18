@@ -5513,6 +5513,17 @@ function App({ currentUser: initialUser }) {
           doneCount: memberTasks.filter((task) => task.status === 'done').length
       };
   });
+  const allDepartmentTasks = departments.flatMap((department) => (Array.isArray(department.tasks) ? department.tasks : []).map((task) => ({
+      ...task,
+      departmentId: department.id,
+      departmentName: department.name,
+      departmentColor: department.color
+  })));
+  const filteredAllDepartmentTasks = allDepartmentTasks.filter((task) => {
+      const haystack = String((task.title || '') + ' ' + (task.description || '') + ' ' + (task.assignedUsername || '') + ' ' + (task.projectTitle || '') + ' ' + (task.departmentName || '')).toLowerCase();
+      return !normalizedDepartmentSearch || haystack.includes(normalizedDepartmentSearch);
+  });
+  const allDepartmentOverdueCount = allDepartmentTasks.filter((task) => isDepartmentTaskOverdue(task)).length;
   const taskStatusMeta = {
       plan: { label: 'План', badge: 'bg-slate-700/70 text-slate-200 border-slate-600', dot: 'bg-slate-400' },
       in_progress: { label: 'В роботі', badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30', dot: 'bg-blue-400' },
@@ -8970,276 +8981,316 @@ function App({ currentUser: initialUser }) {
       )}
 
       {activeTab === 'departments' && (
-      <div className="flex-1 flex flex-col bg-[#e9eef2] text-slate-900 overflow-hidden">
-          <div className="h-[58px] bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
-              <div className="flex items-center gap-4 min-w-0">
-                  <div className="w-9 h-9 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center font-bold">w</div>
+      <div className="flex-1 flex flex-col bg-[#0b101e] text-slate-200 overflow-hidden">
+          <div className="border-b border-slate-800 bg-slate-950/80 px-4 md:px-6 py-4 shrink-0">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0">
-                      <div className="text-xl font-semibold truncate">{selectedDepartment?.name || 'Відділи'}</div>
-                      <div className="hidden md:flex gap-5 text-sm mt-1">
-                          {departmentTabMeta.map((tab) => (
-                              <button key={tab.key} type="button" onClick={() => setDepartmentViewTab(tab.key)} className={(departmentViewTab === tab.key ? 'font-semibold text-slate-900 border-b-2 border-slate-900' : 'text-slate-500 hover:text-slate-900') + ' pb-2'}>{tab.label}</button>
-                          ))}
-                      </div>
+                      <h2 className="text-2xl font-bold text-slate-100 truncate">Відділи</h2>
+                      <div className="text-sm text-slate-400 mt-1">Задачі по відділах, відповідальні, терміни і прострочки</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                      <button type="button" onClick={loadDepartments} className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-sm">Оновити</button>
+                      <input value={departmentTaskSearch} onChange={(e) => setDepartmentTaskSearch(e.target.value)} placeholder="Пошук задач" className="w-[260px] max-md:w-[180px] bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
                   </div>
               </div>
-              <div className="flex items-center gap-3">
-                  <button type="button" onClick={loadDepartments} className="w-8 h-8 rounded-full bg-lime-500 text-white flex items-center justify-center text-xl leading-none shadow-sm">+</button>
-                  <input value={departmentTaskSearch} onChange={(e) => setDepartmentTaskSearch(e.target.value)} placeholder="Пошук" className="hidden md:block w-[260px] bg-slate-100 border border-slate-200 rounded px-3 py-2 text-sm outline-none focus:border-sky-400" />
+              <div className="flex flex-wrap gap-2 mt-4">
+                  {departmentTabMeta.map((tab) => (
+                      <button key={tab.key} type="button" onClick={() => setDepartmentViewTab(tab.key)} className={(departmentViewTab === tab.key ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700') + ' px-4 py-2 rounded-lg border text-sm font-medium transition'}>{tab.label}</button>
+                  ))}
               </div>
           </div>
 
-          <div className="md:hidden bg-white border-b border-slate-200 flex gap-3 px-4 py-2 overflow-x-auto shrink-0 text-sm">
-              {departmentTabMeta.map((tab) => (
-                  <button key={tab.key} type="button" onClick={() => setDepartmentViewTab(tab.key)} className={(departmentViewTab === tab.key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600') + ' px-3 py-1.5 rounded whitespace-nowrap'}>{tab.label}</button>
-              ))}
-          </div>
-
-          <div className="h-10 bg-white border-b border-slate-200 flex items-center gap-3 px-6 shrink-0 text-sm overflow-x-auto">
-              <button type="button" onClick={() => { setDepartmentTaskFilter('overdue'); setDepartmentViewTab('tasks'); }} className="flex items-center gap-2 text-slate-800 whitespace-nowrap">
+          <div className="border-b border-slate-800 bg-slate-950/40 px-4 md:px-6 py-3 shrink-0 flex flex-wrap items-center gap-3 text-sm">
+              <button type="button" onClick={() => { setDepartmentTaskFilter('overdue'); setDepartmentViewTab('tasks'); }} className="inline-flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-red-300">
                   <span>Терміново</span>
-                  <span className="px-2 py-0.5 rounded bg-red-500 text-white text-xs font-semibold">{departmentOverdueCount}</span>
-                  <span className="px-2 py-0.5 rounded bg-sky-500 text-white text-xs font-semibold">{selectedDepartmentTasks.length}</span>
+                  <span className="rounded bg-red-500 px-2 py-0.5 text-xs font-semibold text-white">{allDepartmentOverdueCount}</span>
               </button>
-              <span className="h-5 w-px bg-slate-300"></span>
-              <select value={selectedDepartmentId || ''} onChange={(e) => setSelectedDepartmentId(Number(e.target.value) || null)} className="bg-white border border-slate-200 rounded px-2 py-1 text-slate-600 outline-none focus:border-sky-400">
+              <span className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-300">Всього задач: {allDepartmentTasks.length}</span>
+              <select value={selectedDepartmentId || ''} onChange={(e) => setSelectedDepartmentId(Number(e.target.value) || null)} className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 outline-none focus:border-blue-500">
                   {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
               </select>
-              <select value={departmentTaskFilter} onChange={(e) => { setDepartmentTaskFilter(e.target.value); setDepartmentViewTab('tasks'); }} className="bg-white border border-slate-200 rounded px-2 py-1 text-slate-600 outline-none focus:border-sky-400">
-                  <option value="all">Останні події</option><option value="mine">Мої</option><option value="overdue">Прострочені</option><option value="plan">План</option><option value="in_progress">В роботі</option><option value="waiting">Очікує</option><option value="done">Виконано</option>
+              <select value={departmentTaskFilter} onChange={(e) => { setDepartmentTaskFilter(e.target.value); setDepartmentViewTab('tasks'); }} className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 outline-none focus:border-blue-500">
+                  <option value="all">Усі задачі</option><option value="mine">Мої</option><option value="overdue">Прострочені</option><option value="plan">План</option><option value="in_progress">В роботі</option><option value="waiting">Очікує</option><option value="done">Виконано</option>
               </select>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-4 md:px-8 py-4">
-              {!selectedDepartment ? (
-                  <div className="max-w-[1228px] mx-auto rounded-md bg-white border border-slate-200 p-8 text-slate-500">Створіть або оберіть відділ</div>
+          <div className="flex-1 overflow-y-auto p-4 md:p-6">
+              {!selectedDepartment && departments.length === 0 ? (
+                  <div className="rounded-2xl bg-slate-900 border border-slate-700 p-8 text-slate-400">Створіть перший відділ</div>
               ) : (
-              <div className="max-w-[1228px] mx-auto space-y-3">
-                  {canManageDepartments && (departmentViewTab === 'home' || departmentViewTab === 'people') && (
-                      <div className="bg-white rounded-md border border-slate-200 shadow-sm p-4">
+              <div className="space-y-4">
+                  {departmentViewTab === 'home' && (
+                      <>
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                              {[['Відділів', departments.length], ['Всі задачі', allDepartmentTasks.length], ['В роботі', allDepartmentTasks.filter((task) => task.status === 'in_progress').length], ['Очікує', allDepartmentTasks.filter((task) => task.status === 'waiting').length], ['Прострочено', allDepartmentOverdueCount]].map(([label, value]) => (
+                                  <div key={label} className="rounded-xl bg-slate-900 border border-slate-700 p-4">
+                                      <div className="text-xs text-slate-500">{label}</div>
+                                      <div className="text-2xl font-bold text-slate-100 mt-1">{value}</div>
+                                  </div>
+                              ))}
+                          </div>
+
+                          <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-4">
+                              <div className="rounded-2xl bg-slate-900 border border-slate-700 overflow-hidden">
+                                  <div className="px-4 py-3 border-b border-slate-700 font-semibold text-slate-100">Відділи</div>
+                                  <div className="divide-y divide-slate-800">
+                                      {departments.map((department) => {
+                                          const departmentTasks = Array.isArray(department.tasks) ? department.tasks : [];
+                                          const overdueCount = departmentTasks.filter((task) => isDepartmentTaskOverdue(task)).length;
+                                          return (
+                                              <button key={department.id} type="button" onClick={() => setSelectedDepartmentId(department.id)} className={(String(selectedDepartmentId) === String(department.id) ? 'bg-blue-500/10 border-blue-500/50' : 'hover:bg-slate-800/70 border-transparent') + ' w-full text-left px-4 py-3 border-l-4 transition'}>
+                                                  <div className="flex items-center justify-between gap-3">
+                                                      <div className="min-w-0 flex items-center gap-2">
+                                                          <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: department.color || '#3b82f6' }}></span>
+                                                          <span className="font-semibold text-slate-100 truncate">{department.name}</span>
+                                                      </div>
+                                                      <span className="text-xs text-slate-400">{departmentTasks.length}</span>
+                                                  </div>
+                                                  <div className="mt-1 text-xs text-slate-500">Керівник: {department.leadUsername || 'не вказано'} · Учасники: {department.members?.length || 0}</div>
+                                                  {overdueCount > 0 && <div className="mt-2 inline-flex rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs text-red-300">Прострочено: {overdueCount}</div>}
+                                              </button>
+                                          );
+                                      })}
+                                      {departments.length === 0 && <div className="px-4 py-8 text-center text-slate-500 text-sm">Відділів ще немає</div>}
+                                  </div>
+                              </div>
+
+                              <div className="rounded-2xl bg-slate-900 border border-slate-700 overflow-hidden">
+                                  <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between gap-3">
+                                      <div className="font-semibold text-slate-100">Усі задачі</div>
+                                      <span className="text-xs rounded bg-slate-800 px-2 py-1 text-slate-400">{filteredAllDepartmentTasks.length}</span>
+                                  </div>
+                                  <div className="divide-y divide-slate-800">
+                                      {filteredAllDepartmentTasks.map((task) => {
+                                          const overdue = isDepartmentTaskOverdue(task);
+                                          const status = departmentStatusMeta[task.status] || departmentStatusMeta.plan;
+                                          return (
+                                              <div key={task.departmentId + '-' + task.id} className="grid grid-cols-[1fr_150px_130px_160px] max-lg:grid-cols-1 gap-2 px-4 py-3 hover:bg-slate-800/50">
+                                                  <div className="min-w-0">
+                                                      <div className="font-medium text-slate-100 truncate">{task.title}</div>
+                                                      <div className="text-xs text-slate-500 mt-1">{task.departmentName}{task.projectTitle ? ' · ' + task.projectTitle : ''}</div>
+                                                  </div>
+                                                  <div className="text-sm text-slate-400">{task.assignedUsername || 'Без відповідального'}</div>
+                                                  <div className={overdue ? 'text-sm text-red-300' : 'text-sm text-slate-400'}>{task.dueAt ? (overdue ? 'Простр.: ' : 'До: ') + task.dueAt.slice(5) : 'Без дати'}</div>
+                                                  <div><span className={status.className + ' inline-flex rounded-full border px-2 py-0.5 text-xs'}>{status.label}</span></div>
+                                              </div>
+                                          );
+                                      })}
+                                      {filteredAllDepartmentTasks.length === 0 && <div className="px-4 py-8 text-center text-slate-500 text-sm">Задач немає</div>}
+                                  </div>
+                              </div>
+                          </div>
+                      </>
+                  )}
+
+                  {canManageDepartments && (departmentViewTab === 'people') && (
+                      <div className="rounded-2xl bg-slate-900 border border-slate-700 p-4">
+                          <div className="text-sm font-semibold text-slate-100 mb-3">Створити відділ</div>
                           <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px_140px] gap-3">
-                              <input value={departmentDraft.name} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, name: e.target.value }))} placeholder="Новий відділ" className="bg-white border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-sky-400" />
-                              <select value={departmentDraft.leadUserId} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, leadUserId: e.target.value }))} className="bg-white border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-sky-400">
+                              <input value={departmentDraft.name} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, name: e.target.value }))} placeholder="Новий відділ" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                              <select value={departmentDraft.leadUserId} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, leadUserId: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500">
                                   <option value="">Керівник</option>
                                   {departmentUsers.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
                               </select>
-                              <button type="button" onClick={createDepartment} className="rounded bg-sky-500 hover:bg-sky-600 text-white font-semibold text-sm px-4 py-2">Створити</button>
+                              <button type="button" onClick={createDepartment} className="rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm px-4 py-2">Створити</button>
                           </div>
-                          <textarea value={departmentDraft.description} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, description: e.target.value }))} placeholder="Опис відділу" rows={2} className="mt-3 w-full bg-white border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-sky-400 resize-y" />
+                          <textarea value={departmentDraft.description} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, description: e.target.value }))} placeholder="Опис відділу" rows={2} className="mt-3 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500 resize-y" />
                       </div>
                   )}
 
-                  <div className="bg-white rounded-md border border-slate-200 shadow-sm p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                              <div className="flex items-center gap-2">
-                                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: selectedDepartment.color || '#69b7ef' }}></span>
-                                  <h2 className="text-lg font-semibold">{selectedDepartment.name}</h2>
+                  {selectedDepartment && departmentViewTab !== 'home' && (
+                      <div className="rounded-2xl bg-slate-900 border border-slate-700 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                  <div className="flex items-center gap-2">
+                                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: selectedDepartment.color || '#3b82f6' }}></span>
+                                      <h3 className="text-lg font-semibold text-slate-100">{selectedDepartment.name}</h3>
+                                  </div>
+                                  <div className="text-xs text-slate-500 mt-1">Керівник: {selectedDepartment.leadUsername || 'не вказано'} · Учасники: {selectedDepartment.members?.length || 0} · Задачі: {selectedDepartmentTasks.length}</div>
                               </div>
-                              <div className="text-xs text-slate-500 mt-1">Керівник: {selectedDepartment.leadUsername || 'не вказано'} · Учасники: {selectedDepartment.members?.length || 0} · Задачі: {selectedDepartmentTasks.length}</div>
-                          </div>
-                          <div className="flex flex-wrap gap-2 text-xs">
-                              <span className="px-2 py-1 rounded bg-slate-100 text-slate-600">План: {departmentStatusCounts.plan}</span>
-                              <span className="px-2 py-1 rounded bg-blue-50 text-blue-600">В роботі: {departmentStatusCounts.in_progress}</span>
-                              <span className="px-2 py-1 rounded bg-amber-50 text-amber-600">Очікує: {departmentStatusCounts.waiting}</span>
-                              <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-600">Готово: {departmentStatusCounts.done}</span>
-                              <span className="px-2 py-1 rounded bg-red-50 text-red-600">Прострочено: {departmentStatusCounts.overdue}</span>
-                              {canManageDepartments && <button type="button" onClick={() => deleteDepartment(selectedDepartment.id)} className="px-3 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50">Видалити відділ</button>}
+                              <div className="flex flex-wrap gap-2 text-xs">
+                                  <span className="px-2 py-1 rounded-lg bg-slate-800 text-slate-300">План: {departmentStatusCounts.plan}</span>
+                                  <span className="px-2 py-1 rounded-lg bg-blue-500/10 text-blue-300">В роботі: {departmentStatusCounts.in_progress}</span>
+                                  <span className="px-2 py-1 rounded-lg bg-amber-500/10 text-amber-300">Очікує: {departmentStatusCounts.waiting}</span>
+                                  <span className="px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-300">Готово: {departmentStatusCounts.done}</span>
+                                  <span className="px-2 py-1 rounded-lg bg-red-500/10 text-red-300">Прострочено: {departmentStatusCounts.overdue}</span>
+                                  {canManageDepartments && <button type="button" onClick={() => deleteDepartment(selectedDepartment.id)} className="px-3 py-1 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-500/10">Видалити відділ</button>}
+                              </div>
                           </div>
                       </div>
-                  </div>
+                  )}
 
-                  {(departmentViewTab === 'home' || departmentViewTab === 'tasks') && (
-                      <div className="bg-white rounded-md border border-slate-200 shadow-sm p-4">
-                          <div className="flex items-center gap-3 mb-4">
-                              <div className="text-center font-semibold text-slate-900 border-b-2 border-slate-900 px-3 pb-2">Нова задача</div>
-                              <div className="text-slate-500 px-3 pb-2">Група завдань</div>
-                          </div>
-                          <div className="grid grid-cols-1 xl:grid-cols-[1fr_196px] gap-3 items-start">
-                              <div className="flex border-2 border-sky-300 rounded-md overflow-hidden bg-white">
-                                  <input value={departmentTaskDraft.title} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, title: e.target.value }))} placeholder="Що потрібно зробити?" className="min-w-0 flex-1 px-4 py-3 text-lg outline-none" />
-                                  <div className="w-12 bg-slate-100 text-slate-400 flex items-center justify-center text-lg font-semibold">1</div>
+                  {selectedDepartment && departmentViewTab === 'tasks' && (
+                      <>
+                          <div className="rounded-2xl bg-slate-900 border border-slate-700 p-4">
+                              <div className="font-semibold text-slate-100 mb-3">Нова задача</div>
+                              <div className="grid grid-cols-1 xl:grid-cols-[1fr_180px] gap-3 items-start">
+                                  <input value={departmentTaskDraft.title} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, title: e.target.value }))} placeholder="Що потрібно зробити?" className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 outline-none focus:border-blue-500" />
+                                  <button type="button" onClick={createDepartmentTask} className="h-[48px] rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold px-4">Створити задачу</button>
                               </div>
-                              <button type="button" onClick={createDepartmentTask} className="h-[52px] rounded bg-sky-500 hover:bg-sky-600 text-white font-semibold px-4">Створити задачу</button>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                              <select value={departmentTaskDraft.assignedUserId} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, assignedUserId: e.target.value }))} className="bg-white border border-slate-200 rounded-md px-3 py-3 text-sm outline-none focus:border-sky-400">
-                                  <option value="">Відповідальний</option>
-                                  {departmentUsers.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
-                              </select>
-                              <select value={departmentTaskDraft.status} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, status: e.target.value }))} className="bg-white border border-slate-200 rounded-md px-3 py-3 text-sm outline-none focus:border-sky-400">
-                                  <option value="plan">Без статусу</option><option value="in_progress">В роботі</option><option value="waiting">Очікує</option><option value="done">Виконано</option>
-                              </select>
-                              <div className="bg-white border border-slate-200 rounded-md p-0 overflow-hidden">
-                                  <div className="flex border-b border-slate-200 text-sm text-slate-600">
-                                      <div className="px-4 py-2 border-r border-slate-200">Термін</div>
-                                      <div className="px-4 py-2">Старт-фініш</div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2 p-3">
-                                      <input type="date" value={departmentTaskDraft.startAt} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, startAt: e.target.value }))} className="border border-slate-200 rounded px-2 py-2 text-sm outline-none focus:border-sky-400" />
-                                      <input type="date" value={departmentTaskDraft.dueAt} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, dueAt: e.target.value }))} className="border border-slate-200 rounded px-2 py-2 text-sm outline-none focus:border-sky-400" />
-                                  </div>
-                              </div>
-                              <div className="grid grid-cols-2 gap-2">
-                                  <select value={departmentTaskDraft.projectId} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, projectId: e.target.value }))} className="bg-white border border-slate-200 rounded-md px-3 py-3 text-sm outline-none focus:border-sky-400">
+                              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mt-3">
+                                  <select value={departmentTaskDraft.assignedUserId} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, assignedUserId: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500">
+                                      <option value="">Відповідальний</option>
+                                      {departmentUsers.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+                                  </select>
+                                  <select value={departmentTaskDraft.status} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, status: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500">
+                                      <option value="plan">План</option><option value="in_progress">В роботі</option><option value="waiting">Очікує</option><option value="done">Виконано</option>
+                                  </select>
+                                  <input type="date" value={departmentTaskDraft.startAt} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, startAt: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                                  <input type="date" value={departmentTaskDraft.dueAt} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, dueAt: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500" />
+                                  <select value={departmentTaskDraft.projectId} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, projectId: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500">
                                       <option value="">Проєкт</option>
                                       {departmentProjectOptions.map((project) => <option key={project.id} value={project.id}>{project.title || project.number}</option>)}
                                   </select>
-                                  <select value={departmentTaskDraft.priority} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, priority: e.target.value }))} className="bg-white border border-slate-200 rounded-md px-3 py-3 text-sm outline-none focus:border-sky-400">
+                                  <select value={departmentTaskDraft.priority} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, priority: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500">
                                       <option value="low">Низький</option><option value="normal">Звичайний</option><option value="high">Високий</option><option value="urgent">Терміново</option>
                                   </select>
                               </div>
+                              <textarea value={departmentTaskDraft.description} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, description: e.target.value }))} placeholder="Опис завдання" rows={4} className="mt-3 w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-200 outline-none focus:border-blue-500 resize-y" />
                           </div>
-                          <textarea value={departmentTaskDraft.description} onChange={(e) => setDepartmentTaskDraft((prev) => ({ ...prev, description: e.target.value }))} placeholder="Опис завдання" rows={5} className="mt-4 w-full bg-white border border-slate-200 rounded-md px-4 py-3 text-sm outline-none focus:border-sky-400 resize-y min-h-[120px]" />
-                      </div>
-                  )}
 
-                  {departmentViewTab === 'projects' && (
-                      <div className="bg-white rounded-md border border-slate-200 shadow-sm overflow-hidden">
-                          <div className="px-4 py-3 border-b border-slate-100 font-semibold text-slate-800">Проєкти відділу</div>
-                          {departmentLinkedProjects.map((project) => (
-                              <div key={project.id} className="grid grid-cols-[1fr_120px_120px_120px] max-md:grid-cols-1 gap-3 px-4 py-3 border-b border-dashed border-slate-200">
-                                  <div className="font-medium text-slate-800">{project.title}</div>
-                                  <div className="text-sm text-slate-500">Задач: {project.taskCount}</div>
-                                  <div className="text-sm text-red-500">Простр.: {project.overdueCount}</div>
-                                  <div className="text-sm text-emerald-600">Готово: {project.doneCount}</div>
-                              </div>
-                          ))}
-                          {departmentLinkedProjects.length === 0 && <div className="px-4 py-8 text-center text-slate-400 text-sm">Немає задач, прив'язаних до проєктів</div>}
-                      </div>
-                  )}
-
-                  {departmentViewTab === 'reports' && (
-                      <div className="space-y-3">
-                          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                              {[['Всього', departmentStatusCounts.all], ['План', departmentStatusCounts.plan], ['В роботі', departmentStatusCounts.in_progress], ['Очікує', departmentStatusCounts.waiting], ['Готово', departmentStatusCounts.done], ['Прострочено', departmentStatusCounts.overdue]].map(([label, value]) => (
-                                  <div key={label} className="bg-white rounded-md border border-slate-200 shadow-sm p-4">
-                                      <div className="text-xs text-slate-500">{label}</div>
-                                      <div className="text-2xl font-semibold text-slate-900 mt-1">{value}</div>
-                                  </div>
-                              ))}
-                          </div>
-                          <div className="bg-white rounded-md border border-slate-200 shadow-sm overflow-hidden">
-                              <div className="px-4 py-3 border-b border-slate-100 font-semibold text-slate-800">По людях</div>
-                              {departmentMemberStats.map((member) => (
-                                  <div key={member.userId} className="grid grid-cols-[1fr_100px_100px_100px] max-md:grid-cols-1 gap-3 px-4 py-3 border-b border-dashed border-slate-200">
-                                      <div className="font-medium text-slate-800">{member.username}</div>
-                                      <div className="text-sm text-slate-500">Задач: {member.taskCount}</div>
-                                      <div className="text-sm text-red-500">Простр.: {member.overdueCount}</div>
-                                      <div className="text-sm text-emerald-600">Готово: {member.doneCount}</div>
-                                  </div>
-                              ))}
-                              {departmentMemberStats.length === 0 && <div className="px-4 py-8 text-center text-slate-400 text-sm">У відділі ще немає людей</div>}
-                          </div>
-                      </div>
-                  )}
-
-                  {departmentViewTab === 'calendar' && (
-                      <div className="bg-white rounded-md border border-slate-200 shadow-sm overflow-hidden">
-                          <div className="px-4 py-3 border-b border-slate-100 font-semibold text-slate-800">Календар задач</div>
-                          {departmentCalendarGroups.map(([dateKey, tasksForDate]) => (
-                              <div key={dateKey} className="border-b border-slate-100">
-                                  <div className="px-4 py-2 bg-slate-50 text-sm font-semibold text-slate-700">{dateKey}</div>
-                                  {tasksForDate.map((task) => {
-                                      const overdue = isDepartmentTaskOverdue(task);
-                                      const status = departmentStatusMeta[task.status] || departmentStatusMeta.plan;
-                                      return (
-                                          <div key={task.id} className="grid grid-cols-[1fr_140px_180px] max-md:grid-cols-1 gap-2 px-4 py-3 border-t border-dashed border-slate-200">
-                                              <div className="font-medium text-slate-800">{task.title}</div>
-                                              <div className={overdue ? 'text-sm text-red-500' : 'text-sm text-slate-500'}>{overdue ? 'Прострочено' : status.label}</div>
-                                              <div className="text-sm text-slate-500">{task.assignedUsername || 'Без відповідального'}</div>
-                                          </div>
-                                      );
-                                  })}
-                              </div>
-                          ))}
-                          {departmentCalendarGroups.length === 0 && <div className="px-4 py-8 text-center text-slate-400 text-sm">Немає задач для календаря</div>}
-                      </div>
-                  )}
-
-                  {departmentViewTab === 'people' && (
-                      <div className="bg-white rounded-md border border-slate-200 shadow-sm p-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                              <div className="font-semibold text-slate-800">Люди у відділі</div>
-                              {canManageDepartments && (
-                                  <span className="inline-flex items-center gap-2">
-                                      <select value={departmentMemberUserId} onChange={(e) => setDepartmentMemberUserId(e.target.value)} className="bg-white border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-sky-400">
-                                          <option value="">Додати людину</option>
-                                          {departmentUsers.filter((user) => !(selectedDepartment.members || []).some((member) => String(member.userId) === String(user.id))).map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
-                                      </select>
-                                      <button type="button" onClick={addDepartmentMember} className="px-3 py-1.5 rounded bg-lime-500 text-white text-sm">Додати</button>
-                                  </span>
-                              )}
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                              {departmentMemberStats.map((member) => (
-                                  <div key={member.userId} className="flex items-center justify-between gap-3 rounded border border-slate-200 p-3">
-                                      <div className="flex items-center gap-2 min-w-0">
-                                          <span className="w-8 h-8 rounded-full bg-pink-300 text-white flex items-center justify-center text-xs font-semibold">{String(member.username || '?').slice(0, 2).toUpperCase()}</span>
-                                          <div className="min-w-0">
-                                              <div className="font-medium text-slate-800 truncate">{member.username}</div>
-                                              <div className="text-xs text-slate-500">Задач: {member.taskCount} · Прострочено: {member.overdueCount}</div>
-                                          </div>
-                                      </div>
-                                      {canManageDepartments && <button type="button" onClick={() => removeDepartmentMember(member.userId)} className="text-slate-400 hover:text-red-500 text-xl leading-none">×</button>}
-                                  </div>
-                              ))}
-                          </div>
-                          {departmentMemberStats.length === 0 && <div className="px-4 py-8 text-center text-slate-400 text-sm">У відділі ще немає людей</div>}
-                      </div>
-                  )}
-
-                  {(departmentViewTab === 'home' || departmentViewTab === 'tasks') && (
-                      <>
                           <div className="flex flex-wrap items-center gap-2">
-                              <input value={departmentTaskSearch} onChange={(e) => setDepartmentTaskSearch(e.target.value)} placeholder="Пошук задач" className="md:hidden flex-1 bg-white border border-slate-200 rounded px-3 py-2 text-sm outline-none focus:border-sky-400" />
                               {['all', 'overdue', 'mine', 'plan', 'in_progress', 'waiting', 'done'].map((filterKey) => (
-                                  <button key={filterKey} type="button" onClick={() => setDepartmentTaskFilter(filterKey)} className={(departmentTaskFilter === filterKey ? 'bg-slate-700 text-white' : 'bg-white text-slate-600') + ' px-3 py-1.5 rounded border border-slate-200 text-sm'}>
+                                  <button key={filterKey} type="button" onClick={() => setDepartmentTaskFilter(filterKey)} className={(departmentTaskFilter === filterKey ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-800') + ' px-3 py-1.5 rounded-lg border text-sm'}>
                                       {{ all: 'Всі', overdue: 'Терміново', mine: 'Мої', plan: 'План', in_progress: 'В роботі', waiting: 'Очікує', done: 'Виконано' }[filterKey]}
                                   </button>
                               ))}
                           </div>
 
                           {departmentTaskSections.map(([sectionKey, sectionTitle, sectionTasks, borderClass]) => (
-                              <div key={sectionKey} className={'bg-white rounded-md border border-slate-200 border-l-4 ' + borderClass + ' shadow-sm overflow-hidden'}>
-                                  <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-                                      <div className="font-semibold text-slate-800">{sectionTitle}</div>
-                                      <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-500">{sectionTasks.length}</span>
+                              <div key={sectionKey} className={'rounded-2xl bg-slate-900 border border-slate-700 border-l-4 ' + borderClass + ' overflow-hidden'}>
+                                  <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                                      <div className="font-semibold text-slate-100">{sectionTitle}</div>
+                                      <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400">{sectionTasks.length}</span>
                                   </div>
-                                  <div>
+                                  <div className="divide-y divide-slate-800">
                                       {sectionTasks.map((task) => {
                                           const priority = departmentPriorityMeta[task.priority] || departmentPriorityMeta.normal;
                                           const overdue = isDepartmentTaskOverdue(task);
                                           const status = departmentStatusMeta[task.status] || departmentStatusMeta.plan;
                                           const assigneeInitials = String(task.assignedUsername || '?').slice(0, 2).toUpperCase();
                                           return (
-                                              <div key={task.id} className="grid grid-cols-[70px_34px_1fr_220px] max-md:grid-cols-[56px_28px_1fr] gap-3 items-center px-4 py-2.5 border-b border-dashed border-slate-200 hover:bg-slate-50">
-                                                  <div className={(overdue ? 'text-red-500 border-red-200' : 'text-sky-500 border-sky-200') + ' justify-self-end px-2 py-1 rounded border text-xs whitespace-nowrap'}>{task.dueAt ? (overdue ? '!' : task.dueAt.slice(5)) : '—'}</div>
-                                                  <div className={(task.priority === 'urgent' ? 'bg-red-500' : task.priority === 'high' ? 'bg-orange-500' : 'bg-sky-500') + ' w-6 h-6 rounded text-white flex items-center justify-center text-xs font-bold'}>{task.priority === 'urgent' ? '10' : task.priority === 'high' ? '9' : '8'}</div>
+                                              <div key={task.id} className="grid grid-cols-[76px_34px_1fr_230px] max-md:grid-cols-[56px_28px_1fr] gap-3 items-center px-4 py-3 hover:bg-slate-800/50">
+                                                  <div className={(overdue ? 'text-red-300 border-red-500/40 bg-red-500/10' : 'text-sky-300 border-sky-500/30 bg-sky-500/10') + ' justify-self-end px-2 py-1 rounded-lg border text-xs whitespace-nowrap'}>{task.dueAt ? (overdue ? '!' : task.dueAt.slice(5)) : '—'}</div>
+                                                  <div className={(task.priority === 'urgent' ? 'bg-red-500' : task.priority === 'high' ? 'bg-orange-500' : 'bg-blue-500') + ' w-6 h-6 rounded text-white flex items-center justify-center text-xs font-bold'}>{task.priority === 'urgent' ? '10' : task.priority === 'high' ? '9' : '8'}</div>
                                                   <div className="min-w-0">
-                                                      <div className="font-medium text-slate-800 truncate">{task.title}</div>
+                                                      <div className="font-medium text-slate-100 truncate">{task.title}</div>
                                                       <div className="flex flex-wrap gap-2 mt-1 text-xs text-slate-500">
                                                           <span>{status.label}</span>
                                                           <span className={priority.className + ' border px-1.5 rounded'}>{priority.label}</span>
                                                           {task.projectTitle && <span>{task.projectTitle}</span>}
                                                       </div>
                                                   </div>
-                                                  <div className="max-md:hidden flex items-center justify-end gap-2 text-sm text-slate-700">
+                                                  <div className="max-md:hidden flex items-center justify-end gap-2 text-sm text-slate-300">
                                                       <span className="truncate">{task.assignedUsername || 'Без відповідального'}</span>
-                                                      <span className="w-7 h-7 rounded-full bg-slate-300 text-white flex items-center justify-center text-[10px] font-semibold">{assigneeInitials}</span>
-                                                      <select value={task.status} onChange={(e) => updateDepartmentTask(task, { status: e.target.value })} className="bg-white border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-sky-400">
+                                                      <span className="w-7 h-7 rounded-full bg-slate-700 text-white flex items-center justify-center text-[10px] font-semibold">{assigneeInitials}</span>
+                                                      <select value={task.status} onChange={(e) => updateDepartmentTask(task, { status: e.target.value })} className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-blue-500">
                                                           <option value="plan">План</option><option value="in_progress">В роботі</option><option value="waiting">Очікує</option><option value="done">Виконано</option>
                                                       </select>
                                                   </div>
                                               </div>
                                           );
                                       })}
-                                      {sectionTasks.length === 0 && <div className="px-4 py-8 text-center text-slate-400 text-sm">Порожньо</div>}
+                                      {sectionTasks.length === 0 && <div className="px-4 py-8 text-center text-slate-500 text-sm">Порожньо</div>}
                                   </div>
-                                  <div className="py-3 flex justify-center"><button className="px-3 py-1 rounded-full bg-sky-100 text-slate-600 text-lg leading-none">...</button></div>
                               </div>
                           ))}
                       </>
+                  )}
+
+                  {selectedDepartment && departmentViewTab === 'projects' && (
+                      <div className="rounded-2xl bg-slate-900 border border-slate-700 overflow-hidden">
+                          <div className="px-4 py-3 border-b border-slate-700 font-semibold text-slate-100">Проєкти відділу</div>
+                          {departmentLinkedProjects.map((project) => (
+                              <div key={project.id} className="grid grid-cols-[1fr_120px_120px_120px] max-md:grid-cols-1 gap-3 px-4 py-3 border-b border-slate-800">
+                                  <div className="font-medium text-slate-100">{project.title}</div>
+                                  <div className="text-sm text-slate-400">Задач: {project.taskCount}</div>
+                                  <div className="text-sm text-red-300">Простр.: {project.overdueCount}</div>
+                                  <div className="text-sm text-emerald-300">Готово: {project.doneCount}</div>
+                              </div>
+                          ))}
+                          {departmentLinkedProjects.length === 0 && <div className="px-4 py-8 text-center text-slate-500 text-sm">Немає задач, прив'язаних до проєктів</div>}
+                      </div>
+                  )}
+
+                  {selectedDepartment && departmentViewTab === 'reports' && (
+                      <div className="space-y-4">
+                          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                              {[['Всього', departmentStatusCounts.all], ['План', departmentStatusCounts.plan], ['В роботі', departmentStatusCounts.in_progress], ['Очікує', departmentStatusCounts.waiting], ['Готово', departmentStatusCounts.done], ['Прострочено', departmentStatusCounts.overdue]].map(([label, value]) => (
+                                  <div key={label} className="rounded-xl bg-slate-900 border border-slate-700 p-4">
+                                      <div className="text-xs text-slate-500">{label}</div>
+                                      <div className="text-2xl font-bold text-slate-100 mt-1">{value}</div>
+                                  </div>
+                              ))}
+                          </div>
+                          <div className="rounded-2xl bg-slate-900 border border-slate-700 overflow-hidden">
+                              <div className="px-4 py-3 border-b border-slate-700 font-semibold text-slate-100">По людях</div>
+                              {departmentMemberStats.map((member) => (
+                                  <div key={member.userId} className="grid grid-cols-[1fr_100px_100px_100px] max-md:grid-cols-1 gap-3 px-4 py-3 border-b border-slate-800">
+                                      <div className="font-medium text-slate-100">{member.username}</div>
+                                      <div className="text-sm text-slate-400">Задач: {member.taskCount}</div>
+                                      <div className="text-sm text-red-300">Простр.: {member.overdueCount}</div>
+                                      <div className="text-sm text-emerald-300">Готово: {member.doneCount}</div>
+                                  </div>
+                              ))}
+                              {departmentMemberStats.length === 0 && <div className="px-4 py-8 text-center text-slate-500 text-sm">У відділі ще немає людей</div>}
+                          </div>
+                      </div>
+                  )}
+
+                  {selectedDepartment && departmentViewTab === 'calendar' && (
+                      <div className="rounded-2xl bg-slate-900 border border-slate-700 overflow-hidden">
+                          <div className="px-4 py-3 border-b border-slate-700 font-semibold text-slate-100">Календар задач</div>
+                          {departmentCalendarGroups.map(([dateKey, tasksForDate]) => (
+                              <div key={dateKey} className="border-b border-slate-800">
+                                  <div className="px-4 py-2 bg-slate-800/70 text-sm font-semibold text-slate-300">{dateKey}</div>
+                                  {tasksForDate.map((task) => {
+                                      const overdue = isDepartmentTaskOverdue(task);
+                                      const status = departmentStatusMeta[task.status] || departmentStatusMeta.plan;
+                                      return (
+                                          <div key={task.id} className="grid grid-cols-[1fr_140px_180px] max-md:grid-cols-1 gap-2 px-4 py-3 border-t border-slate-800">
+                                              <div className="font-medium text-slate-100">{task.title}</div>
+                                              <div className={overdue ? 'text-sm text-red-300' : 'text-sm text-slate-400'}>{overdue ? 'Прострочено' : status.label}</div>
+                                              <div className="text-sm text-slate-400">{task.assignedUsername || 'Без відповідального'}</div>
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          ))}
+                          {departmentCalendarGroups.length === 0 && <div className="px-4 py-8 text-center text-slate-500 text-sm">Немає задач для календаря</div>}
+                      </div>
+                  )}
+
+                  {selectedDepartment && departmentViewTab === 'people' && (
+                      <div className="rounded-2xl bg-slate-900 border border-slate-700 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                              <div className="font-semibold text-slate-100">Люди у відділі</div>
+                              {canManageDepartments && (
+                                  <span className="inline-flex items-center gap-2">
+                                      <select value={departmentMemberUserId} onChange={(e) => setDepartmentMemberUserId(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500">
+                                          <option value="">Додати людину</option>
+                                          {departmentUsers.filter((user) => !(selectedDepartment.members || []).some((member) => String(member.userId) === String(user.id))).map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+                                      </select>
+                                      <button type="button" onClick={addDepartmentMember} className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm">Додати</button>
+                                  </span>
+                              )}
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              {departmentMemberStats.map((member) => (
+                                  <div key={member.userId} className="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-800/40 p-3">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                          <span className="w-8 h-8 rounded-full bg-pink-500 text-white flex items-center justify-center text-xs font-semibold">{String(member.username || '?').slice(0, 2).toUpperCase()}</span>
+                                          <div className="min-w-0">
+                                              <div className="font-medium text-slate-100 truncate">{member.username}</div>
+                                              <div className="text-xs text-slate-500">Задач: {member.taskCount} · Прострочено: {member.overdueCount}</div>
+                                          </div>
+                                      </div>
+                                      {canManageDepartments && <button type="button" onClick={() => removeDepartmentMember(member.userId)} className="text-slate-400 hover:text-red-300 text-xl leading-none">×</button>}
+                                  </div>
+                              ))}
+                          </div>
+                          {departmentMemberStats.length === 0 && <div className="px-4 py-8 text-center text-slate-500 text-sm">У відділі ще немає людей</div>}
+                      </div>
                   )}
               </div>
               )}
