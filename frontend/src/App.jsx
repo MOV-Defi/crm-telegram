@@ -2198,6 +2198,12 @@ function App({ currentUser: initialUser }) {
       date.setDate(date.getDate() + 1);
       return date.toISOString().slice(0, 10);
   };
+  const addDaysDateValue = (dateValue, days) => {
+      const date = new Date(String(dateValue || getTodayDateValue()) + 'T00:00:00');
+      if (!Number.isFinite(date.getTime())) return getTodayDateValue();
+      date.setDate(date.getDate() + Number(days || 0));
+      return date.toISOString().slice(0, 10);
+  };
   const getCurrentTimeValue = () => {
       const now = new Date();
       const hh = String(now.getHours()).padStart(2, '0');
@@ -2932,8 +2938,8 @@ function App({ currentUser: initialUser }) {
           title,
           description: '',
           dueDate: '',
-          planDate: getTodayDateValue(),
-          priority: 'medium',
+          planDate: taskDraft.planDate || getTodayDateValue(),
+          priority: taskDraft.priority || 'medium',
           status: 'plan',
           chatId: taskDraft.chatId || '',
           movedFromDate: '',
@@ -5433,6 +5439,37 @@ function App({ currentUser: initialUser }) {
       })
       .slice(0, 3);
   const movedToTomorrowTasks = tasks.filter((task) => task.planDate === tomorrowTaskDate && task.movedFromDate === todayTaskDate);
+  const activePersonalTasks = filteredTasks.filter((task) => task.status !== 'done');
+  const inboxTasks = activePersonalTasks.filter((task) => !task.planDate && !task.dueDate && String(task.createdAt || '').slice(0, 10) === todayTaskDate);
+  const upcomingTasks = activePersonalTasks
+      .filter((task) => {
+          const date = task.planDate || task.dueDate || '';
+          return date > todayTaskDate && date <= addDaysDateValue(todayTaskDate, 7);
+      })
+      .sort((a, b) => String(a.planDate || a.dueDate || '').localeCompare(String(b.planDate || b.dueDate || '')));
+  const somedayTasks = activePersonalTasks.filter((task) => !task.planDate && !task.dueDate && String(task.createdAt || '').slice(0, 10) !== todayTaskDate);
+  const completedTasks = filteredTasks
+      .filter((task) => task.status === 'done')
+      .slice()
+      .sort((a, b) => String(b.completedAt || b.createdAt || '').localeCompare(String(a.completedAt || a.createdAt || '')));
+  const taskViewMeta = {
+      inbox: { label: 'Вхідні', count: inboxTasks.length },
+      today: { label: 'Сьогодні', count: todayPlannerTasks.length },
+      upcoming: { label: 'Найближче', count: upcomingTasks.length },
+      overdue: { label: 'Прострочено', count: overdueTasks.length },
+      someday: { label: 'Без дати', count: somedayTasks.length },
+      done: { label: 'Готово', count: completedTasks.length },
+      board: { label: 'Дошка', count: filteredTasks.length },
+      settings: { label: 'Бот', count: taskBotSettings.enabled ? 1 : 0 }
+  };
+  const personalTaskSections = [
+      ['inbox', 'Вхідні', inboxTasks],
+      ['today', 'Сьогодні', todayPlannerTasks],
+      ['upcoming', 'Найближче', upcomingTasks],
+      ['overdue', 'Прострочені', overdueTasks],
+      ['someday', 'Без дати', somedayTasks],
+      ['done', 'Готово', completedTasks]
+  ];
   const todayTaskNote = taskDailyNotesByDate[todayTaskDate] || '';
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) || null;
   const departmentStatusMeta = {
@@ -9301,436 +9338,198 @@ function App({ currentUser: initialUser }) {
       </div>
       )}
       {activeTab === 'tasks' && (
-      <div className="flex-1 flex flex-col bg-[#0b101e] relative p-4 md:p-6 overflow-y-auto">
-          <h2 className="text-2xl font-bold text-slate-200 mb-6 flex items-center gap-3">
-              <svg className="w-8 h-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5h10M9 12h10M9 19h10M4 6h.01M4 12h.01M4 18h.01" />
-              </svg>
-              Задачі
-          </h2>
-          <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4 mb-4 space-y-3">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="inline-flex rounded-xl border border-slate-700 bg-slate-800/60 p-1">
-                      <button
-                          type="button"
-                          onClick={() => setTasksViewTab('today')}
-                          className={`px-3 py-1.5 rounded-lg text-sm transition ${tasksViewTab === 'today' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
-                      >
-                          Сьогодні
-                      </button>
-                      <button
-                          type="button"
-                          onClick={() => setTasksViewTab('board')}
-                          className={`px-3 py-1.5 rounded-lg text-sm transition ${tasksViewTab === 'board' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
-                      >
-                          Дошка
-                      </button>
+      <div className="flex-1 flex flex-col bg-[#0b101e] relative overflow-hidden">
+          <div className="border-b border-slate-800 bg-slate-950/70 px-4 md:px-6 py-4 shrink-0">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                      <h2 className="text-2xl font-bold text-slate-100">Мої задачі</h2>
+                      <div className="text-sm text-slate-400 mt-1">Особистий список справ: швидко записати, виконати, не забути.</div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                      {[
-                          { key: 'all', label: 'Усі' },
-                          { key: 'today', label: 'Сьогодні' },
-                          { key: 'overdue', label: 'Прострочені' },
-                          { key: 'high', label: 'Високий пріоритет' },
-                          { key: 'no_chat', label: 'Без чату' }
-                      ].map((chip) => (
+                      <input
+                          type="text"
+                          value={taskSearch}
+                          onChange={(e) => setTaskSearch(e.target.value)}
+                          placeholder="Пошук..."
+                          className="w-64 max-md:w-full bg-slate-900 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
+                      />
+                      <button type="button" onClick={() => setTasksViewTab('settings')} className="px-3 py-2 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 transition">Бот</button>
+                  </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3">
+                  <div className="flex flex-wrap gap-2">
+                      {['inbox', 'today', 'upcoming', 'overdue', 'someday', 'done', 'board'].map((key) => (
                           <button
-                              key={chip.key}
+                              key={key}
                               type="button"
-                              onClick={() => setTaskFilter(chip.key)}
-                              className={`text-xs px-2.5 py-1.5 rounded-lg border transition ${taskFilter === chip.key ? 'bg-blue-500/20 border-blue-500/40 text-blue-300' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'}`}
+                              onClick={() => setTasksViewTab(key)}
+                              className={(tasksViewTab === key ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-800') + ' px-3 py-2 rounded-xl border text-sm transition flex items-center gap-2'}
                           >
-                              {chip.label}
+                              <span>{taskViewMeta[key]?.label || key}</span>
+                              <span className="text-[11px] rounded-full bg-slate-950/50 px-1.5 py-0.5">{taskViewMeta[key]?.count || 0}</span>
                           </button>
                       ))}
                   </div>
-              </div>
-              <div className="flex flex-col md:flex-row gap-2">
-                  <input
-                      type="text"
-                      value={quickTaskTitle}
-                      onChange={(e) => setQuickTaskTitle(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleQuickCreateTask(); }}
-                      placeholder="Швидка задача... (Enter)"
-                      className="flex-1 bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                  />
-                  <input
-                      type="text"
-                      value={taskSearch}
-                      onChange={(e) => setTaskSearch(e.target.value)}
-                      placeholder="Пошук задач..."
-                      className="md:w-72 bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                  />
-                  <button
-                      type="button"
-                      onClick={handleQuickCreateTask}
-                      disabled={!quickTaskTitle.trim()}
-                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition"
-                  >
-                      Додати
-                  </button>
-              </div>
-
-              <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-3">
-                  <div className="text-sm font-semibold text-slate-200">Додавання задачі</div>
-                  <input
-                      type="text"
-                      value={taskDraft.title}
-                      onChange={(e) => setTaskDraft((prev) => ({ ...prev, title: e.target.value }))}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleCreateTask(); }}
-                      autoComplete="off"
-                      placeholder="Назва задачі"
-                      className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                  />
-                  <textarea
-                      value={taskDraft.description}
-                      onChange={(e) => setTaskDraft((prev) => ({ ...prev, description: e.target.value }))}
-                      rows={2}
-                      placeholder="Опис (необов’язково)"
-                      className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition resize-y"
-                  />
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-                      <input
-                          type="date"
-                          value={taskDraft.planDate}
-                          onChange={(e) => setTaskDraft((prev) => ({ ...prev, planDate: e.target.value }))}
-                          className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                      />
-                      <input
-                          type="date"
-                          value={taskDraft.dueDate}
-                          onChange={(e) => setTaskDraft((prev) => ({ ...prev, dueDate: e.target.value }))}
-                          className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                      />
-                      <select
-                          value={taskDraft.priority}
-                          onChange={(e) => setTaskDraft((prev) => ({ ...prev, priority: e.target.value }))}
-                          className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                      >
-                          <option value="low">Низький</option>
-                          <option value="medium">Середній</option>
-                          <option value="high">Високий</option>
-                      </select>
-                      <select
-                          value={taskDraft.status}
-                          onChange={(e) => setTaskDraft((prev) => ({ ...prev, status: e.target.value }))}
-                          className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                      >
-                          <option value="plan">План</option>
-                          <option value="in_progress">В роботі</option>
-                          <option value="done">Готово</option>
-                      </select>
-                      <select
-                          value={taskDraft.chatId}
-                          onChange={(e) => setTaskDraft((prev) => ({ ...prev, chatId: e.target.value }))}
-                          className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                      >
-                          <option value="">Без чату</option>
-                          {dialogs.map((dialog) => (
-                              <option key={`task-form-dialog-${dialog.id}`} value={String(dialog.id)}>{dialog.name}</option>
-                          ))}
-                      </select>
-                  </div>
                   <div className="flex flex-wrap gap-2">
-                      <button
-                          type="button"
-                          onClick={handleCreateTask}
-                          disabled={!taskDraft.title.trim()}
-                          className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition"
-                      >
-                          Додати задачу
-                      </button>
-                      <button
-                          type="button"
-                          onClick={() => setTaskDraft((prev) => ({ ...prev, title: '', description: '' }))}
-                          className="px-4 py-2 rounded-xl border border-slate-600 text-slate-300 hover:bg-slate-700 transition"
-                      >
-                          Очистити текст
-                      </button>
-                  </div>
-                  <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
-                      <div className="text-sm font-semibold text-slate-200 mb-2">Щоденний дайджест у Telegram</div>
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                          <label className="flex items-center gap-2 text-sm text-slate-300 md:col-span-1">
-                              <input
-                                  type="checkbox"
-                                  checked={!!taskReminderSettings.enabled}
-                                  onChange={(e) => setTaskReminderSettings((prev) => ({ ...prev, enabled: e.target.checked }))}
-                                  className="accent-blue-500"
-                              />
-                              Увімкнено
-                          </label>
-                          <input
-                              type="time"
-                              value={taskReminderSettings.time || '09:00'}
-                              onChange={(e) => setTaskReminderSettings((prev) => ({ ...prev, time: e.target.value }))}
-                              className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                          />
-                          <label className="flex items-center gap-2 text-sm text-slate-300 md:col-span-2">
-                              <input
-                                  type="checkbox"
-                                  checked={!!taskBotSettings.enabled}
-                                  onChange={(e) => setTaskBotSettings((prev) => ({ ...prev, enabled: e.target.checked }))}
-                                  className="accent-blue-500"
-                              />
-                              Бот-надсилання увімкнено
-                          </label>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
-                          <input
-                              type="password"
-                              value={taskBotTokenDraft}
-                              onChange={(e) => setTaskBotTokenDraft(e.target.value)}
-                              autoComplete="new-password"
-                              placeholder={taskBotSettings.hasToken ? 'Token збережено (введи новий тільки якщо змінюєш)' : 'Bot Token'}
-                              className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition md:col-span-2"
-                          />
-                          <input
-                              type="text"
-                              value={taskBotChatIdDraft}
-                              onChange={(e) => setTaskBotChatIdDraft(e.target.value)}
-                              autoComplete="off"
-                              placeholder="Chat ID (ваш Telegram id)"
-                              className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                          />
-                      </div>
-                      <div className="flex flex-wrap gap-2 mt-2">
-                          <button
-                              type="button"
-                              onClick={saveTaskBotSettings}
-                              className="px-3 py-2 rounded-xl border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 transition"
-                          >
-                              Зберегти бота
-                          </button>
-                          <button
-                              type="button"
-                              onClick={sendTaskBotTest}
-                              className="px-3 py-2 rounded-xl border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition"
-                          >
-                              Тест повідомлення
-                          </button>
-                      </div>
-                      <div className="text-xs text-slate-400 mt-2">
-                          Щодня у вибраний час надішлеться список задач із блоку “Сьогодні”. Одноразові нагадування задач також ідуть через цього бота.
-                      </div>
-                      <div className="text-xs text-slate-500 mt-1 leading-5">
-                          Як увімкнути: 1) створи бота в @BotFather (отримаєш Bot Token), 2) зі свого Telegram напиши цьому боту `/start`, 3) отримай свій Telegram ID через @userinfobot, 4) встав Token та Chat ID тут, 5) натисни “Зберегти бота”, 6) натисни “Тест повідомлення”.<br />
-                          Важливо: у кожного користувача мають бути свої Token+Chat ID, інакше нагадування підуть не туди.
-                      </div>
-                  </div>
-                  <div className="pt-1">
-                      <div className="text-xs text-slate-400 mb-1">Масове внесення: кожен рядок — окрема задача</div>
-                      <textarea
-                          value={bulkTaskText}
-                          onChange={(e) => setBulkTaskText(e.target.value)}
-                          rows={3}
-                          placeholder={"Приклад:\nПодзвонити постачальнику\nУточнити рахунок\nПідготувати КП"}
-                          className="w-full bg-slate-900/70 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition resize-y"
-                      />
-                      <div className="mt-2">
-                          <button
-                              type="button"
-                              onClick={handleCreateTasksFromLines}
-                              disabled={!bulkTaskText.trim()}
-                              className="px-3 py-2 rounded-xl border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 disabled:opacity-50 transition"
-                          >
-                              Додати списком
-                          </button>
-                      </div>
+                      {[{ key: 'all', label: 'Усі' }, { key: 'high', label: 'Важливі' }, { key: 'no_chat', label: 'Без чату' }].map((chip) => (
+                          <button key={chip.key} type="button" onClick={() => setTaskFilter(chip.key)} className={(taskFilter === chip.key ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800') + ' px-3 py-2 rounded-xl border text-xs transition'}>{chip.label}</button>
+                      ))}
                   </div>
               </div>
           </div>
 
-          <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_340px] gap-4">
-              <div className="min-w-0 space-y-4">
-                  {tasksViewTab === 'today' ? (
-                      <>
-                          <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4">
-                              <div className="text-sm font-semibold text-slate-100 mb-3">Top-3 фокус</div>
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                                  {topFocusTasks.length === 0 && <div className="text-sm text-slate-500 md:col-span-3">Немає активних задач.</div>}
-                                  {topFocusTasks.map((task) => (
-                                      <button key={`focus-${task.id}`} type="button" onClick={() => setSelectedTaskId(task.id)} className="text-left rounded-xl border border-slate-700 bg-slate-800/60 p-3 hover:border-blue-500/40 transition">
-                                          <div className="text-sm font-medium text-slate-100 truncate">{task.title}</div>
-                                          <div className="text-xs text-slate-400 mt-1">{task.dueDate ? `Дедлайн: ${task.dueDate}` : 'Без дедлайну'}</div>
-                                      </button>
-                                  ))}
-                              </div>
-                          </div>
-
-                          <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4">
-                              <div className="text-sm font-semibold text-slate-100 mb-3">Сьогодні</div>
-                              <div className="space-y-2">
-                                  {todayPlannerTasks.length === 0 && <div className="text-sm text-slate-500">Порожньо</div>}
-                                  {todayPlannerTasks.map((task) => (
-                                      <div key={`today-${task.id}`} className={`rounded-xl border p-3 transition ${selectedTaskId === task.id ? 'border-blue-500/40 bg-blue-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
-                                          <div className="flex items-center justify-between gap-2">
-                                              <button type="button" onClick={() => setSelectedTaskId(task.id)} className={`text-left text-sm font-medium ${task.status === 'done' ? 'text-slate-500 line-through' : 'text-slate-100'}`}>
-                                                  {task.title}
-                                              </button>
-                                              <div className="flex items-center gap-1.5">
-                                                  {task.status !== 'done' && <button type="button" onClick={() => handleTaskStatusChange(task.id, 'done')} className="text-[11px] px-2 py-1 rounded-md border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10 transition">Готово</button>}
-                                                  {task.status !== 'in_progress' && <button type="button" onClick={() => handleTaskStatusChange(task.id, 'in_progress')} className="text-[11px] px-2 py-1 rounded-md border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 transition">В роботу</button>}
-                                                  <button type="button" onClick={() => handleTaskMoveToTomorrow(task.id)} className="text-[11px] px-2 py-1 rounded-md border border-slate-600 text-slate-300 hover:bg-slate-700 transition">На завтра</button>
-                                              </div>
-                                          </div>
-                                      </div>
-                                  ))}
-                              </div>
-                          </div>
-
-                          {overdueTasks.length > 0 && (
-                              <div className="bg-slate-900 border border-red-500/20 rounded-2xl p-4">
-                                  <div className="text-sm font-semibold text-red-300 mb-2">Прострочені</div>
-                                  <div className="space-y-2">
-                                      {overdueTasks.map((task) => (
-                                          <button key={`overdue-${task.id}`} type="button" onClick={() => setSelectedTaskId(task.id)} className="w-full text-left rounded-xl border border-red-500/20 bg-red-500/5 p-3 hover:bg-red-500/10 transition">
-                                              <div className="text-sm text-slate-100">{task.title}</div>
-                                              <div className="text-xs text-red-300 mt-1">Дедлайн: {task.dueDate}</div>
-                                          </button>
-                                      ))}
-                                  </div>
-                              </div>
-                          )}
-
-                          {movedToTomorrowTasks.length > 0 && (
-                              <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4">
-                                  <div className="text-sm font-semibold text-slate-100 mb-2">Перенесено на завтра</div>
-                                  <div className="flex flex-wrap gap-2">
-                                      {movedToTomorrowTasks.map((task) => (
-                                          <span key={`moved-${task.id}`} className="text-xs px-2 py-1 rounded-lg border border-slate-600 text-slate-300 bg-slate-800/50">
-                                              {task.title}
-                                          </span>
-                                      ))}
-                                  </div>
-                              </div>
-                          )}
-
-                          <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4">
-                              <div className="text-sm font-semibold text-slate-100 mb-2">Нотатки дня</div>
-                              <textarea
-                                  value={todayTaskNote}
-                                  onChange={(e) => setTaskDailyNotesByDate((prev) => ({ ...prev, [todayTaskDate]: e.target.value }))}
-                                  rows={4}
-                                  placeholder="Короткий план / думки на день..."
-                                  className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition resize-y"
-                              />
-                          </div>
-                      </>
-                  ) : (
-                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                          {['plan', 'in_progress', 'done'].map((statusKey) => (
-                              <div key={statusKey} className="bg-slate-900 border border-slate-700/50 rounded-2xl p-3 min-h-[420px] flex flex-col">
-                                  <div className="flex items-center justify-between mb-3">
-                                      <div className="text-sm font-semibold text-slate-100">{taskStatusMeta[statusKey].label}</div>
-                                      <span className="text-xs px-2 py-0.5 rounded-full border border-slate-600 text-slate-300">{tasksByStatus[statusKey].length}</span>
-                                  </div>
-                                  <div className="space-y-2 overflow-y-auto pr-1">
-                                      {tasksByStatus[statusKey].length === 0 && <div className="text-xs text-slate-500">Порожньо</div>}
-                                      {tasksByStatus[statusKey].map((task) => (
-                                          <button key={task.id} type="button" onClick={() => setSelectedTaskId(task.id)} className={`w-full text-left rounded-xl border p-3 transition ${selectedTaskId === task.id ? 'border-blue-500/40 bg-blue-500/10' : 'border-slate-700 bg-slate-800/50 hover:bg-slate-700/50'}`}>
-                                              <div className="text-sm font-medium text-slate-100">{task.title}</div>
-                                              {task.description && <div className="text-xs text-slate-400 mt-1 line-clamp-2">{task.description}</div>}
-                                          </button>
-                                      ))}
-                                  </div>
-                              </div>
-                          ))}
-                      </div>
-                  )}
-              </div>
-
-              <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4 h-fit 2xl:sticky 2xl:top-6">
-                  {!selectedTask ? (
-                      <div className="text-sm text-slate-500">Оберіть задачу, щоб редагувати деталі.</div>
-                  ) : (
-                      <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-2">
-                              <div className="text-sm font-semibold text-slate-100">Деталі задачі</div>
-                              <button type="button" onClick={() => handleTaskDelete(selectedTask.id)} className="text-xs px-2 py-1 rounded-md border border-red-500/30 text-red-300 hover:bg-red-500/10 transition">Видалити</button>
-                          </div>
-                          <input
-                              type="text"
-                              value={selectedTask.title || ''}
-                              onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { title: e.target.value })}
-                              className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                          />
-                          <textarea
-                              value={selectedTask.description || ''}
-                              onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { description: e.target.value })}
-                              rows={4}
-                              placeholder="Опис"
-                              className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition resize-y"
-                          />
-                          <div className="grid grid-cols-2 gap-2">
-                              <input type="date" value={selectedTask.planDate || ''} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { planDate: e.target.value })} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
-                              <input type="date" value={selectedTask.dueDate || ''} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { dueDate: e.target.value })} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
-                          </div>
-                          <div>
-                              <label className="block text-xs text-slate-400 mb-1">Одноразове нагадування (Telegram)</label>
+          <div className="flex-1 overflow-y-auto p-4 md:p-6">
+              <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_360px] gap-4">
+                  <div className="min-w-0 space-y-4">
+                      <div className="rounded-2xl border border-slate-700 bg-slate-900 p-3">
+                          <div className="grid grid-cols-1 md:grid-cols-[1fr_150px_150px_auto] gap-2">
                               <input
-                                  type="datetime-local"
-                                  value={selectedTask.reminderAt || ''}
-                                  onChange={(e) => handleTaskFieldUpdate(selectedTask.id, {
-                                      reminderAt: e.target.value,
-                                      reminderSentAt: ''
-                                  })}
-                                  className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
+                                  type="text"
+                                  value={quickTaskTitle}
+                                  onChange={(e) => setQuickTaskTitle(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') handleQuickCreateTask(); }}
+                                  placeholder="Швидко записати задачу..."
+                                  className="bg-slate-800 text-slate-100 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
                               />
-                              <select
-                                  value={selectedTask.reminderRepeat || 'none'}
-                                  onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { reminderRepeat: e.target.value })}
-                                  className="w-full mt-2 bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                              >
-                                  <option value="none">Без повтору</option>
-                                  <option value="daily">Щодня</option>
-                                  <option value="weekly">Щотижня</option>
+                              <input type="date" value={taskDraft.planDate} onChange={(e) => setTaskDraft((prev) => ({ ...prev, planDate: e.target.value }))} className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
+                              <select value={taskDraft.priority} onChange={(e) => setTaskDraft((prev) => ({ ...prev, priority: e.target.value }))} className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition">
+                                  <option value="low">Низький</option><option value="medium">Середній</option><option value="high">Важливий</option>
                               </select>
-                              {selectedTask.reminderSentAt && (
-                                  <div className="text-[11px] text-emerald-300 mt-1">
-                                      Нагадування надіслано: {new Date(selectedTask.reminderSentAt).toLocaleString()}
+                              <button type="button" onClick={handleQuickCreateTask} disabled={!quickTaskTitle.trim()} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition">Додати</button>
+                          </div>
+                      </div>
+
+                      {tasksViewTab === 'settings' ? (
+                          <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4 space-y-4">
+                              <div>
+                                  <div className="text-sm font-semibold text-slate-100 mb-2">Щоденний дайджест у Telegram</div>
+                                  <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                      <label className="flex items-center gap-2 text-sm text-slate-300">
+                                          <input type="checkbox" checked={!!taskReminderSettings.enabled} onChange={(e) => setTaskReminderSettings((prev) => ({ ...prev, enabled: e.target.checked }))} className="accent-blue-500" />
+                                          Увімкнено
+                                      </label>
+                                      <input type="time" value={taskReminderSettings.time || '09:00'} onChange={(e) => setTaskReminderSettings((prev) => ({ ...prev, time: e.target.value }))} className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
+                                      <label className="flex items-center gap-2 text-sm text-slate-300 md:col-span-2">
+                                          <input type="checkbox" checked={!!taskBotSettings.enabled} onChange={(e) => setTaskBotSettings((prev) => ({ ...prev, enabled: e.target.checked }))} className="accent-blue-500" />
+                                          Бот-надсилання увімкнено
+                                      </label>
+                                  </div>
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
+                                      <input type="password" value={taskBotTokenDraft} onChange={(e) => setTaskBotTokenDraft(e.target.value)} autoComplete="new-password" placeholder={taskBotSettings.hasToken ? 'Token збережено' : 'Bot Token'} className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition md:col-span-2" />
+                                      <input type="text" value={taskBotChatIdDraft} onChange={(e) => setTaskBotChatIdDraft(e.target.value)} autoComplete="off" placeholder="Chat ID" className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
+                                  </div>
+                                  <div className="flex flex-wrap gap-2 mt-3">
+                                      <button type="button" onClick={saveTaskBotSettings} className="px-3 py-2 rounded-xl border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 transition">Зберегти бота</button>
+                                      <button type="button" onClick={sendTaskBotTest} className="px-3 py-2 rounded-xl border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition">Тест повідомлення</button>
+                                  </div>
+                                  <div className="text-xs text-slate-500 mt-2">Telegram-логіку не змінював: дайджест і одноразові нагадування працюють по тих самих полях задач.</div>
+                              </div>
+                              <div className="border-t border-slate-800 pt-4">
+                                  <div className="text-sm font-semibold text-slate-100 mb-2">Додати списком</div>
+                                  <textarea value={bulkTaskText} onChange={(e) => setBulkTaskText(e.target.value)} rows={4} placeholder={"Кожен рядок - окрема задача"} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition resize-y" />
+                                  <button type="button" onClick={handleCreateTasksFromLines} disabled={!bulkTaskText.trim()} className="mt-2 px-3 py-2 rounded-xl border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 disabled:opacity-50 transition">Додати списком</button>
+                              </div>
+                          </div>
+                      ) : tasksViewTab === 'board' ? (
+                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                              {['plan', 'in_progress', 'done'].map((statusKey) => (
+                                  <div key={statusKey} className="bg-slate-900 border border-slate-700 rounded-2xl p-3 min-h-[420px] flex flex-col">
+                                      <div className="flex items-center justify-between mb-3">
+                                          <div className="text-sm font-semibold text-slate-100">{taskStatusMeta[statusKey].label}</div>
+                                          <span className="text-xs px-2 py-0.5 rounded-full border border-slate-600 text-slate-300">{tasksByStatus[statusKey].length}</span>
+                                      </div>
+                                      <div className="space-y-2 overflow-y-auto pr-1">
+                                          {tasksByStatus[statusKey].length === 0 && <div className="text-xs text-slate-500">Порожньо</div>}
+                                          {tasksByStatus[statusKey].map((task) => (
+                                              <button key={task.id} type="button" onClick={() => setSelectedTaskId(task.id)} className={(selectedTaskId === task.id ? 'border-blue-500/40 bg-blue-500/10' : 'border-slate-700 bg-slate-800/50 hover:bg-slate-700/50') + ' w-full text-left rounded-xl border p-3 transition'}>
+                                                  <div className="text-sm font-medium text-slate-100">{task.title}</div>
+                                                  {task.description && <div className="text-xs text-slate-400 mt-1 line-clamp-2">{task.description}</div>}
+                                              </button>
+                                          ))}
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      ) : (
+                          <div className="space-y-4">
+                              {personalTaskSections.filter(([key]) => tasksViewTab === key).map(([sectionKey, sectionTitle, sectionTasks]) => (
+                                  <div key={sectionKey} className={(sectionKey === 'overdue' ? 'border-red-500/30' : 'border-slate-700') + ' rounded-2xl border bg-slate-900 overflow-hidden'}>
+                                      <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+                                          <div className="font-semibold text-slate-100">{sectionTitle}</div>
+                                          <span className="text-xs rounded-full bg-slate-800 px-2 py-1 text-slate-400">{sectionTasks.length}</span>
+                                      </div>
+                                      <div className="divide-y divide-slate-800">
+                                          {sectionTasks.map((task) => {
+                                              const overdue = isTaskOverdue(task);
+                                              const dateText = task.dueDate || task.planDate || '';
+                                              return (
+                                                  <div key={task.id} className={(selectedTaskId === task.id ? 'bg-blue-500/10' : 'hover:bg-slate-800/40') + ' grid grid-cols-[auto_1fr_auto] max-md:grid-cols-[auto_1fr] gap-3 items-center px-4 py-3 transition'}>
+                                                      <button type="button" onClick={() => handleTaskStatusChange(task.id, task.status === 'done' ? 'plan' : 'done')} className={(task.status === 'done' ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500 hover:border-emerald-400') + ' w-5 h-5 rounded-full border shrink-0'} aria-label="Готово" />
+                                                      <button type="button" onClick={() => setSelectedTaskId(task.id)} className="min-w-0 text-left">
+                                                          <div className={(task.status === 'done' ? 'line-through text-slate-500' : 'text-slate-100') + ' font-medium truncate'}>{task.title}</div>
+                                                          <div className="flex flex-wrap gap-2 mt-1 text-xs text-slate-500">
+                                                              {dateText && <span className={overdue ? 'text-red-300' : 'text-slate-400'}>{overdue ? 'Прострочено: ' : 'Дата: '}{dateText}</span>}
+                                                              {task.priority === 'high' && <span className="text-amber-300">Важливо</span>}
+                                                              {task.chatId && <span>{resolveTaskChatName(task.chatId)}</span>}
+                                                          </div>
+                                                      </button>
+                                                      <div className="max-md:col-span-2 flex items-center justify-end gap-1.5">
+                                                          {task.status !== 'in_progress' && task.status !== 'done' && <button type="button" onClick={() => handleTaskStatusChange(task.id, 'in_progress')} className="text-[11px] px-2 py-1 rounded-md border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 transition">В роботу</button>}
+                                                          {task.status !== 'done' && <button type="button" onClick={() => handleTaskMoveToTomorrow(task.id)} className="text-[11px] px-2 py-1 rounded-md border border-slate-600 text-slate-300 hover:bg-slate-700 transition">Завтра</button>}
+                                                      </div>
+                                                  </div>
+                                              );
+                                          })}
+                                          {sectionTasks.length === 0 && <div className="px-4 py-8 text-center text-slate-500 text-sm">Порожньо</div>}
+                                      </div>
+                                  </div>
+                              ))}
+                              {movedToTomorrowTasks.length > 0 && tasksViewTab === 'today' && (
+                                  <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4">
+                                      <div className="text-sm font-semibold text-slate-100 mb-2">Перенесено на завтра</div>
+                                      <div className="flex flex-wrap gap-2">{movedToTomorrowTasks.map((task) => <span key={task.id} className="text-xs px-2 py-1 rounded-lg border border-slate-600 text-slate-300 bg-slate-800/50">{task.title}</span>)}</div>
+                                  </div>
+                              )}
+                              {tasksViewTab === 'today' && (
+                                  <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4">
+                                      <div className="text-sm font-semibold text-slate-100 mb-2">Нотатки дня</div>
+                                      <textarea value={todayTaskNote} onChange={(e) => setTaskDailyNotesByDate((prev) => ({ ...prev, [todayTaskDate]: e.target.value }))} rows={4} placeholder="Короткий план / думки на день..." className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition resize-y" />
                                   </div>
                               )}
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
-                              <select value={selectedTask.priority || 'medium'} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { priority: e.target.value })} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition">
-                                  <option value="low">Низький</option>
-                                  <option value="medium">Середній</option>
-                                  <option value="high">Високий</option>
+                      )}
+                  </div>
+
+                  <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4 h-fit 2xl:sticky 2xl:top-6">
+                      {!selectedTask ? (
+                          <div className="text-sm text-slate-500">Оберіть задачу, щоб редагувати деталі.</div>
+                      ) : (
+                          <div className="space-y-3">
+                              <div className="flex items-center justify-between gap-2">
+                                  <div className="text-sm font-semibold text-slate-100">Деталі задачі</div>
+                                  <button type="button" onClick={() => handleTaskDelete(selectedTask.id)} className="text-xs px-2 py-1 rounded-md border border-red-500/30 text-red-300 hover:bg-red-500/10 transition">Видалити</button>
+                              </div>
+                              <input type="text" value={selectedTask.title || ''} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { title: e.target.value })} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
+                              <textarea value={selectedTask.description || ''} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { description: e.target.value })} rows={4} placeholder="Опис" className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition resize-y" />
+                              <div className="grid grid-cols-2 gap-2">
+                                  <input type="date" value={selectedTask.planDate || ''} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { planDate: e.target.value })} className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
+                                  <input type="date" value={selectedTask.dueDate || ''} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { dueDate: e.target.value })} className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
+                              </div>
+                              <label className="block text-xs text-slate-400">Одноразове нагадування Telegram</label>
+                              <input type="datetime-local" value={selectedTask.reminderAt || ''} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { reminderAt: e.target.value, reminderSentAt: '' })} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
+                              <div className="grid grid-cols-2 gap-2">
+                                  <select value={selectedTask.priority || 'medium'} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { priority: e.target.value })} className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"><option value="low">Низький</option><option value="medium">Середній</option><option value="high">Важливий</option></select>
+                                  <select value={selectedTask.status || 'plan'} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { status: e.target.value })} className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"><option value="plan">План</option><option value="in_progress">В роботі</option><option value="done">Готово</option></select>
+                              </div>
+                              <select value={selectedTask.chatId || ''} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { chatId: e.target.value })} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition">
+                                  <option value="">Без привʼязки до чату</option>
+                                  {dialogs.map((dialog) => <option key={dialog.id} value={String(dialog.id)}>{dialog.name}</option>)}
                               </select>
-                              <select value={selectedTask.status || 'plan'} onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { status: e.target.value })} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition">
-                                  <option value="plan">План</option>
-                                  <option value="in_progress">В роботі</option>
-                                  <option value="done">Готово</option>
-                              </select>
+                              {selectedTask.chatId && <button type="button" onClick={() => { const matched = dialogs.find((dialog) => String(dialog.id) === String(selectedTask.chatId)); if (matched) { setSelectedDialog(matched); setActiveTab('messenger'); } }} className="w-full text-sm px-3 py-2 rounded-xl border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 transition">Відкрити чат</button>}
                           </div>
-                          <select
-                              value={selectedTask.chatId || ''}
-                              onChange={(e) => handleTaskFieldUpdate(selectedTask.id, { chatId: e.target.value })}
-                              className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
-                          >
-                              <option value="">Без привʼязки до чату</option>
-                              {dialogs.map((dialog) => (
-                                  <option key={`drawer-task-dialog-${dialog.id}`} value={String(dialog.id)}>{dialog.name}</option>
-                              ))}
-                          </select>
-                          {selectedTask.chatId && (
-                              <button
-                                  type="button"
-                                  onClick={() => {
-                                      const matched = dialogs.find((dialog) => String(dialog.id) === String(selectedTask.chatId));
-                                      if (matched) {
-                                          setSelectedDialog(matched);
-                                          setActiveTab('messenger');
-                                      }
-                                  }}
-                                  className="w-full text-sm px-3 py-2 rounded-xl border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 transition"
-                              >
-                                  Відкрити привʼязаний чат
-                              </button>
-                          )}
-                      </div>
-                  )}
+                      )}
+                  </div>
               </div>
           </div>
       </div>
