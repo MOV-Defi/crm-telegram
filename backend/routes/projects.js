@@ -339,6 +339,121 @@ const notifyProjectMembers = (projectId, actorUserId, payload, options = {}) => 
     });
   }
 };
+const PROJECT_WARNING_DAYS = 3;
+
+const getDateDiffFromToday = (dateValue) => {
+  const iso = toIsoDate(dateValue);
+  if (!iso) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(iso + 'T00:00:00');
+  if (!Number.isFinite(target.getTime())) return null;
+  return Math.round((target.getTime() - today.getTime()) / 86400000);
+};
+
+const hasProjectNotificationToday = ({ projectId, userId, eventType, title, body = '', taskId = null, stageId = null }) => {
+  const row = db.central.prepare(`
+    SELECT 1
+    FROM project_notifications
+    WHERE project_id = ?
+      AND user_id = ?
+      AND event_type = ?
+      AND title = ?
+      AND COALESCE(body, '') = ?
+      AND COALESCE(related_task_id, 0) = ?
+      AND COALESCE(related_stage_id, 0) = ?
+      AND DATE(created_at) = DATE('now')
+    LIMIT 1
+  `).get(
+    Number(projectId),
+    Number(userId),
+    String(eventType || ''),
+    String(title || ''),
+    String(body || ''),
+    Number.isFinite(Number(taskId)) ? Number(taskId) : 0,
+    Number.isFinite(Number(stageId)) ? Number(stageId) : 0
+  );
+  return !!row;
+};
+
+const createProjectNotificationOnceToday = (payload) => {
+  if (hasProjectNotificationToday(payload)) return;
+  createProjectNotification(payload);
+};
+
+const buildDeadlineAlert = ({ project, userId, scopeTitle, dueDate, done, taskId = null, stageId = null }) => {
+  if (done) return null;
+  const daysLeft = getDateDiffFromToday(dueDate);
+  if (daysLeft == null) return null;
+  const projectName = project.title || project.number || ('Проєкт #' + project.id);
+  const dateLabel = toIsoDate(dueDate) || String(dueDate || '');
+  if (daysLeft < 0) {
+    const title = 'Прострочено строк по проєкту';
+    const body = projectName + '\n' + scopeTitle + '\nПлановий строк: ' + dateLabel + '\nПрострочено на ' + Math.abs(daysLeft) + ' дн.';
+    return { projectId: project.id, userId, actorUserId: null, eventType: 'deadline_overdue', title, body, taskId, stageId };
+  }
+  if (daysLeft <= PROJECT_WARNING_DAYS) {
+    const title = 'Скоро закінчується строк по проєкту';
+    const body = projectName + '\n' + scopeTitle + '\nПлановий строк: ' + dateLabel + '\nЗалишилось ' + daysLeft + ' дн.';
+    return { projectId: project.id, userId, actorUserId: null, eventType: 'deadline_soon', title, body, taskId, stageId };
+  }
+  return null;
+};
+
+const generateProjectDeadlineNotificationsForUser = (userId) => {
+  const projects = db.central.prepare(`
+    SELECT DISTINCT p.id, p.number, p.title, p.status, p.plan_end, p.fact_end
+    FROM projects p
+    JOIN project_members pm ON pm.project_id = p.id
+    WHERE pm.user_id = ?
+  `).all(userId);
+
+  for (const project of projects) {
+    const projectDone = ['done', 'cancelled'].includes(String(project.status || '').toLowerCase()) || !!project.fact_end;
+    const projectAlert = buildDeadlineAlert({ project, userId, scopeTitle: 'Загальний дедлайн проєкту', dueDate: project.plan_end, done: projectDone });
+    if (projectAlert) createProjectNotificationOnceToday(projectAlert);
+
+    const stages = getProjectStages(project.id);
+    for (const stage of stages) {
+      const stageStatus = String(stage.status || '').toLowerCase();
+      const stageDone = projectDone || stageStatus === 'done' || stageStatus === 'skipped' || !!stage.factEnd;
+      const stageAlert = buildDeadlineAlert({
+        project, userId, scopeTitle: 'Етап: ' + (stage.name || 'Без назви'), dueDate: stage.planEnd || stage.planDate, done: stageDone, stageId: stage.id
+      });
+      if (stageAlert) createProjectNotificationOnceToday(stageAlert);
+
+      const startDaysLeft = stageDone || stage.factStart ? null : getDateDiffFromToday(stage.planStart || stage.planDate);
+      if (startDaysLeft != null && startDaysLeft < 0) {
+        createProjectNotificationOnceToday({
+          projectId: project.id,
+          userId,
+          actorUserId: null,
+          eventType: 'deadline_overdue',
+          title: 'Прострочено старт етапу',
+          body: (project.title || project.number || ('Проєкт #' + project.id)) + '\nЕтап: ' + (stage.name || 'Без назви') + '\nПлановий старт: ' + toIsoDate(stage.planStart || stage.planDate) + '\nПрострочено на ' + Math.abs(startDaysLeft) + ' дн.',
+          stageId: stage.id
+        });
+      }
+
+      normalizeStageTasksForExport(stage.stageTasks).forEach((task, index) => {
+        const taskDone = stageDone || !!task.done || !!task.factEnd || !!task.completedAt;
+        const taskName = task.text || ('Підетап #' + (index + 1));
+        const taskAlert = buildDeadlineAlert({
+          project, userId, scopeTitle: 'Підетап: ' + (stage.name || 'Етап') + ' / ' + taskName, dueDate: task.planEnd || task.plannedDate, done: taskDone, stageId: stage.id
+        });
+        if (taskAlert) createProjectNotificationOnceToday(taskAlert);
+      });
+    }
+
+    const tasks = getProjectTasks(project.id);
+    for (const task of tasks) {
+      const taskAlert = buildDeadlineAlert({
+        project, userId, scopeTitle: 'Задача: ' + (task.title || 'Без назви'), dueDate: task.dueAt, done: projectDone || task.status === 'done' || !!task.completedAt, taskId: task.id
+      });
+      if (taskAlert) createProjectNotificationOnceToday(taskAlert);
+    }
+  }
+};
 
 const getProjectFinanceEntries = (projectId) => (
   db.central.prepare(`
@@ -799,6 +914,7 @@ router.get('/users', (req, res) => {
 
 router.get('/notifications', (req, res) => {
   try {
+    generateProjectDeadlineNotificationsForUser(req.userId);
     const notifications = getProjectNotificationRows(req.userId, 80);
     const unreadCount = db.central.prepare('SELECT COUNT(*) AS count FROM project_notifications WHERE user_id = ? AND is_read = 0')
       .get(req.userId)?.count || 0;
