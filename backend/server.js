@@ -273,6 +273,7 @@ const ALLOWED_PERMISSION_KEYS = new Set([
   'can_manage_tags',
   'can_manage_broadcasts',
   'can_manage_requests',
+  'can_manage_departments',
   'can_manage_warehouse_orders',
   'can_view_warehouse_orders',
   'can_edit_warehouse_orders'

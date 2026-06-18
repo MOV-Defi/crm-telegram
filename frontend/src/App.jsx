@@ -499,6 +499,7 @@ function App({ currentUser: initialUser }) {
   const [canManageDocuments, setCanManageDocuments] = useState(false);
   const [canViewWarehouseOrders, setCanViewWarehouseOrders] = useState(false);
   const [canManageWarehouseOrders, setCanManageWarehouseOrders] = useState(false);
+  const [canManageDepartments, setCanManageDepartments] = useState(false);
   const [warehouseOrders, setWarehouseOrders] = useState([]);
   const [warehouseOrdersLoading, setWarehouseOrdersLoading] = useState(false);
   const [warehouseOrdersFilter, setWarehouseOrdersFilter] = useState('all');
@@ -544,6 +545,7 @@ function App({ currentUser: initialUser }) {
 
   const ADMIN_PERMISSION_OPTIONS = [
       ['can_manage_documents', 'Керування документами'],
+      ['can_manage_departments', 'Відділи: створення і керування'],
       ['can_view_warehouse_orders', 'Склад: тільки перегляд'],
       ['can_edit_warehouse_orders', 'Склад: перегляд + редагування']
   ];
@@ -3104,6 +3106,7 @@ function App({ currentUser: initialUser }) {
       setDepartments(nextDepartments);
       setDepartmentUsers(Array.isArray(data?.users) ? data.users : []);
       setDepartmentProjectOptions(Array.isArray(data?.projects) ? data.projects : []);
+      setCanManageDepartments(Boolean(data?.canManage));
       setSelectedDepartmentId((prev) => {
           if (prev && nextDepartments.some((department) => String(department.id) === String(prev))) return prev;
           return nextDepartments[0]?.id || null;
@@ -7068,6 +7071,17 @@ function App({ currentUser: initialUser }) {
                                         </div>
                                       )
                                   )}
+                                  {msg.mediaPath && !String(msg.mediaPath || '').startsWith('blob:') && (
+                                      <div className="mb-2">
+                                          <button
+                                              type="button"
+                                              onClick={() => handleOpenAddChatInvoiceModal(msg)}
+                                              className="text-xs px-3 py-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition"
+                                          >
+                                              В рахунки проєкту
+                                          </button>
+                                      </div>
+                                  )}
                                   {msg.contact && (
                                       <div className={`mb-2 rounded-xl border px-3 py-2 ${msg.out ? 'border-blue-300/30 bg-blue-700/30' : 'border-slate-600 bg-slate-900/60'}`}>
                                           <div className={`text-[11px] uppercase tracking-wider ${msg.out ? 'text-blue-100/80' : 'text-slate-400'}`}>Контакт</div>
@@ -8915,6 +8929,7 @@ function App({ currentUser: initialUser }) {
                   </div>
                   <button type="button" onClick={loadDepartments} className="px-2 py-1 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 text-xs">Оновити</button>
               </div>
+              {canManageDepartments ? (
               <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 mb-4 space-y-2">
                   <input value={departmentDraft.name} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, name: e.target.value }))} placeholder="Новий відділ" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500" />
                   <textarea value={departmentDraft.description} onChange={(e) => setDepartmentDraft((prev) => ({ ...prev, description: e.target.value }))} placeholder="Опис" rows={2} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500 resize-y" />
@@ -8927,6 +8942,9 @@ function App({ currentUser: initialUser }) {
                   </div>
                   <button type="button" onClick={createDepartment} className="w-full px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-500">Створити відділ</button>
               </div>
+              ) : (
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 mb-4 text-sm text-slate-400">Створення відділів доступне тільки користувачам з правом керування відділами.</div>
+              )}
               {loadingDepartments && <div className="text-sm text-slate-500">Завантаження...</div>}
               <div className="space-y-2">
                   {departments.map((department) => {
@@ -8965,13 +8983,14 @@ function App({ currentUser: initialUser }) {
                                   {selectedDepartment.description && <div className="text-sm text-slate-400 mt-1">{selectedDepartment.description}</div>}
                                   <div className="text-xs text-slate-500 mt-2">Керівник: {selectedDepartment.leadUsername || 'не вказано'} / прострочено: {departmentOverdueCount}</div>
                               </div>
-                              <button type="button" onClick={() => deleteDepartment(selectedDepartment.id)} className="px-3 py-2 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-500/10 text-sm">Видалити відділ</button>
+                              {canManageDepartments && <button type="button" onClick={() => deleteDepartment(selectedDepartment.id)} className="px-3 py-2 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-500/10 text-sm">Видалити відділ</button>}
                           </div>
                       </div>
                       <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-4">
                           <div className="space-y-4">
                               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                                   <div className="font-semibold text-slate-100 mb-3">Учасники</div>
+                                  {canManageDepartments && (
                                   <div className="flex gap-2 mb-3">
                                       <select value={departmentMemberUserId} onChange={(e) => setDepartmentMemberUserId(e.target.value)} className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm outline-none focus:border-blue-500">
                                           <option value="">Оберіть користувача</option>
@@ -8979,11 +8998,12 @@ function App({ currentUser: initialUser }) {
                                       </select>
                                       <button type="button" onClick={addDepartmentMember} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm">Додати</button>
                                   </div>
+                                  )}
                                   <div className="flex flex-wrap gap-2">
                                       {(selectedDepartment.members || []).map((member) => (
                                           <span key={member.userId} className="inline-flex items-center gap-2 px-2 py-1 rounded-full border border-slate-700 bg-slate-800 text-slate-200 text-xs">
                                               {member.username}
-                                              <button type="button" onClick={() => removeDepartmentMember(member.userId)} className="text-slate-500 hover:text-red-300">×</button>
+                                              {canManageDepartments && <button type="button" onClick={() => removeDepartmentMember(member.userId)} className="text-slate-500 hover:text-red-300">×</button>}
                                           </span>
                                       ))}
                                       {(!selectedDepartment.members || selectedDepartment.members.length === 0) && <div className="text-sm text-slate-500">Немає учасників</div>}
@@ -10646,7 +10666,7 @@ function App({ currentUser: initialUser }) {
                       </div>
                       <div className="mt-2 flex justify-end">
                         <label className="px-3 py-2 rounded-lg border border-blue-500/40 text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 text-sm cursor-pointer">
-                          {projectInvoiceSaving ? 'Завантаження...' : 'Вибрати файл'}
+                          {projectInvoiceSaving ? 'Завантаження...' : 'Додати рахунок'}
                           <input type="file" className="hidden" disabled={projectInvoiceSaving} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleAddProjectInvoice(file); }} />
                         </label>
                       </div>

@@ -5,6 +5,7 @@ const router = express.Router();
 
 const DEPARTMENT_TASK_STATUSES = new Set(['plan', 'in_progress', 'waiting', 'done']);
 const DEPARTMENT_TASK_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
+const MANAGE_DEPARTMENTS_KEY = 'can_manage_departments';
 
 const normalizeDate = (value) => String(value || '').trim().slice(0, 32);
 const normalizeStatus = (value) => {
@@ -22,6 +23,15 @@ const normalizeColor = (value) => {
 const parseOptionalId = (value) => {
   const id = Number.parseInt(String(value || ''), 10);
   return Number.isFinite(id) && id > 0 ? id : null;
+};
+const getPermissionValue = (userId, permissionKey) => {
+  const row = db.central.prepare('SELECT is_allowed FROM user_permissions WHERE user_id = ? AND permission_key = ?').get(userId, permissionKey);
+  return Number(row?.is_allowed || 0) === 1;
+};
+const canManageDepartments = (req) => req.userRole === 'admin' || getPermissionValue(req.userId, MANAGE_DEPARTMENTS_KEY);
+const requireManageDepartments = (req, res, next) => {
+  if (canManageDepartments(req)) return next();
+  return res.status(403).json({ error: 'Недостатньо прав для керування відділами' });
 };
 
 const toUserDto = (row) => row ? ({ id: row.id, username: row.username || '', role: row.role || 'user' }) : null;
@@ -56,27 +66,27 @@ const loadDepartments = () => {
   });
   return departments;
 };
-const sendState = (res) => res.json({ departments: loadDepartments(), users: getUsers(), projects: getProjects() });
+const sendState = (req, res) => res.json({ departments: loadDepartments(), users: getUsers(), projects: getProjects(), canManage: canManageDepartments(req) });
 
 router.get('/', (req, res) => {
-  try { return sendState(res); } catch (error) { console.error('departments list error:', error); return res.status(500).json({ error: 'Не вдалося завантажити відділи' }); }
+  try { return sendState(req, res); } catch (error) { console.error('departments list error:', error); return res.status(500).json({ error: 'Не вдалося завантажити відділи' }); }
 });
 
-router.post('/', (req, res) => {
+router.post('/', requireManageDepartments, (req, res) => {
   try {
     const name = String(req.body?.name || '').trim();
     if (!name) return res.status(400).json({ error: 'Назва відділу обовʼязкова' });
     const leadUserId = parseOptionalId(req.body?.leadUserId);
     const result = db.central.prepare("INSERT INTO departments (name, description, color, lead_user_id, created_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").run(name, String(req.body?.description || '').trim() || null, normalizeColor(req.body?.color), leadUserId, req.userId);
     if (leadUserId) db.central.prepare('INSERT OR IGNORE INTO department_members (department_id, user_id, role) VALUES (?, ?, ?)').run(result.lastInsertRowid, leadUserId, 'lead');
-    return sendState(res);
+    return sendState(req, res);
   } catch (error) {
     if (String(error?.message || '').includes('UNIQUE')) return res.status(409).json({ error: 'Такий відділ вже існує' });
     console.error('departments create error:', error); return res.status(500).json({ error: 'Не вдалося створити відділ' });
   }
 });
 
-router.patch('/:id', (req, res) => {
+router.patch('/:id', requireManageDepartments, (req, res) => {
   try {
     const departmentId = parseOptionalId(req.params.id);
     if (!departmentId) return res.status(400).json({ error: 'Некоректний ID відділу' });
@@ -87,25 +97,25 @@ router.patch('/:id', (req, res) => {
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'description')) { sets.push('description = ?'); values.push(String(req.body?.description || '').trim() || null); }
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'color')) { sets.push('color = ?'); values.push(normalizeColor(req.body?.color)); }
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'leadUserId')) { sets.push('lead_user_id = ?'); values.push(parseOptionalId(req.body?.leadUserId)); }
-    if (!sets.length) return sendState(res);
+    if (!sets.length) return sendState(req, res);
     sets.push('updated_at = CURRENT_TIMESTAMP'); values.push(departmentId);
     db.central.prepare('UPDATE departments SET ' + sets.join(', ') + ' WHERE id = ?').run(...values);
-    return sendState(res);
+    return sendState(req, res);
   } catch (error) { console.error('departments update error:', error); return res.status(500).json({ error: 'Не вдалося оновити відділ' }); }
 });
 
-router.delete('/:id', (req, res) => {
-  try { const departmentId = parseOptionalId(req.params.id); if (!departmentId) return res.status(400).json({ error: 'Некоректний ID відділу' }); db.central.prepare('UPDATE departments SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(departmentId); return sendState(res); }
+router.delete('/:id', requireManageDepartments, (req, res) => {
+  try { const departmentId = parseOptionalId(req.params.id); if (!departmentId) return res.status(400).json({ error: 'Некоректний ID відділу' }); db.central.prepare('UPDATE departments SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(departmentId); return sendState(req, res); }
   catch (error) { console.error('departments delete error:', error); return res.status(500).json({ error: 'Не вдалося видалити відділ' }); }
 });
 
-router.post('/:id/members', (req, res) => {
-  try { const departmentId = parseOptionalId(req.params.id); const userId = parseOptionalId(req.body?.userId); if (!departmentId || !userId) return res.status(400).json({ error: 'Оберіть відділ і користувача' }); const role = String(req.body?.role || 'member').trim() === 'lead' ? 'lead' : 'member'; db.central.prepare('INSERT OR REPLACE INTO department_members (department_id, user_id, role, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)').run(departmentId, userId, role); return sendState(res); }
+router.post('/:id/members', requireManageDepartments, (req, res) => {
+  try { const departmentId = parseOptionalId(req.params.id); const userId = parseOptionalId(req.body?.userId); if (!departmentId || !userId) return res.status(400).json({ error: 'Оберіть відділ і користувача' }); const role = String(req.body?.role || 'member').trim() === 'lead' ? 'lead' : 'member'; db.central.prepare('INSERT OR REPLACE INTO department_members (department_id, user_id, role, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)').run(departmentId, userId, role); return sendState(req, res); }
   catch (error) { console.error('departments member add error:', error); return res.status(500).json({ error: 'Не вдалося додати учасника' }); }
 });
 
-router.delete('/:departmentId/members/:userId', (req, res) => {
-  try { const departmentId = parseOptionalId(req.params.departmentId); const userId = parseOptionalId(req.params.userId); if (!departmentId || !userId) return res.status(400).json({ error: 'Некоректні параметри' }); db.central.prepare('DELETE FROM department_members WHERE department_id = ? AND user_id = ?').run(departmentId, userId); return sendState(res); }
+router.delete('/:departmentId/members/:userId', requireManageDepartments, (req, res) => {
+  try { const departmentId = parseOptionalId(req.params.departmentId); const userId = parseOptionalId(req.params.userId); if (!departmentId || !userId) return res.status(400).json({ error: 'Некоректні параметри' }); db.central.prepare('DELETE FROM department_members WHERE department_id = ? AND user_id = ?').run(departmentId, userId); return sendState(req, res); }
   catch (error) { console.error('departments member delete error:', error); return res.status(500).json({ error: 'Не вдалося прибрати учасника' }); }
 });
 
@@ -115,7 +125,7 @@ router.post('/:id/tasks', (req, res) => {
     const title = String(req.body?.title || '').trim(); if (!title) return res.status(400).json({ error: 'Назва задачі обовʼязкова' });
     const status = normalizeStatus(req.body?.status);
     db.central.prepare("INSERT INTO department_tasks (department_id, project_id, title, description, status, priority, start_at, due_at, assigned_user_id, created_by_user_id, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").run(departmentId, parseOptionalId(req.body?.projectId), title, String(req.body?.description || '').trim() || null, status, normalizePriority(req.body?.priority), normalizeDate(req.body?.startAt) || null, normalizeDate(req.body?.dueAt) || null, parseOptionalId(req.body?.assignedUserId), req.userId, status === 'done' ? new Date().toISOString() : null);
-    return sendState(res);
+    return sendState(req, res);
   } catch (error) { console.error('departments task create error:', error); return res.status(500).json({ error: 'Не вдалося створити задачу' }); }
 });
 
@@ -134,15 +144,15 @@ router.patch('/:departmentId/tasks/:taskId', (req, res) => {
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'dueAt')) { sets.push('due_at = ?'); values.push(normalizeDate(req.body?.dueAt) || null); }
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'assignedUserId')) { sets.push('assigned_user_id = ?'); values.push(parseOptionalId(req.body?.assignedUserId)); }
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'projectId')) { sets.push('project_id = ?'); values.push(parseOptionalId(req.body?.projectId)); }
-    if (!sets.length) return sendState(res);
+    if (!sets.length) return sendState(req, res);
     sets.push('updated_at = CURRENT_TIMESTAMP'); values.push(taskId, departmentId);
     db.central.prepare('UPDATE department_tasks SET ' + sets.join(', ') + ' WHERE id = ? AND department_id = ?').run(...values);
-    return sendState(res);
+    return sendState(req, res);
   } catch (error) { console.error('departments task update error:', error); return res.status(500).json({ error: 'Не вдалося оновити задачу' }); }
 });
 
 router.delete('/:departmentId/tasks/:taskId', (req, res) => {
-  try { const departmentId = parseOptionalId(req.params.departmentId); const taskId = parseOptionalId(req.params.taskId); if (!departmentId || !taskId) return res.status(400).json({ error: 'Некоректні параметри' }); db.central.prepare('DELETE FROM department_tasks WHERE id = ? AND department_id = ?').run(taskId, departmentId); return sendState(res); }
+  try { const departmentId = parseOptionalId(req.params.departmentId); const taskId = parseOptionalId(req.params.taskId); if (!departmentId || !taskId) return res.status(400).json({ error: 'Некоректні параметри' }); db.central.prepare('DELETE FROM department_tasks WHERE id = ? AND department_id = ?').run(taskId, departmentId); return sendState(req, res); }
   catch (error) { console.error('departments task delete error:', error); return res.status(500).json({ error: 'Не вдалося видалити задачу' }); }
 });
 
