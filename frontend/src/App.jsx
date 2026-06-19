@@ -5679,6 +5679,21 @@ function App({ currentUser: initialUser }) {
       if (until === 0) return { type: 'today', days: 0, text: `${label}: сьогодні` };
       return { type: 'upcoming', days: until, text: `${label}: залишилось ${until} дн.` };
   };
+  const getCompletionResultMeta = (plannedRaw, actualRaw, label = 'Виконано') => {
+      const planned = toIsoDate(plannedRaw);
+      const actual = toIsoDate(actualRaw);
+      if (!actual) return null;
+      if (!planned) return { type: 'done', days: 0, text: `${label}: завершено ${formatStageDateBadge(actual)}` };
+      const diff = diffDaysSigned(planned, actual);
+      if (diff < 0) return { type: 'ahead', days: Math.abs(diff), text: `${label}: швидше строку на ${Math.abs(diff)} дн.` };
+      if (diff > 0) return { type: 'late', days: diff, text: `${label}: із затримкою на ${diff} дн.` };
+      return { type: 'ok', days: 0, text: `${label}: день у день` };
+  };
+  const getCompletionResultClass = (type) => {
+      if (type === 'late') return 'border-red-500/40 text-red-300 bg-red-500/10';
+      if (type === 'ahead') return 'border-lime-500/40 text-lime-300 bg-lime-500/10';
+      return 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10';
+  };
   const getStageScheduleItems = (stage) => {
       if (isStageSkipped(stage)) return [];
       const stageItems = [
@@ -9892,6 +9907,7 @@ function App({ currentUser: initialUser }) {
                       const dateStart = formatStageDateBadge(stage.planStart || stage.planDate);
                       const dateEnd = formatStageDateBadge(stage.planEnd);
                       const stageScheduleSummary = getStageScheduleSummary({ ...stage, stageTasks });
+                      const stageCompletionResult = getCompletionResultMeta(stage.planEnd || stage.planStart || stage.planDate, stage.factEnd, 'Етап виконано');
                       const hasStageOverdue = stageScheduleSummary.overdue.length > 0;
                       const nearestStageUpcoming = stageScheduleSummary.upcoming[0] || null;
                       const hasStageUpcoming = !!nearestStageUpcoming;
@@ -9926,12 +9942,17 @@ function App({ currentUser: initialUser }) {
                                 {stageMeta.label}
                               </span>
                             )}
-                            {!isSkipped && hasStageOverdue && (
+                            {!isSkipped && stageCompletionResult && (
+                              <span className={`px-2 py-0.5 rounded-full border text-xs ${getCompletionResultClass(stageCompletionResult.type)}`}>
+                                {stageCompletionResult.text}
+                              </span>
+                            )}
+                            {!isSkipped && !stageCompletionResult && hasStageOverdue && (
                               <span className="px-2 py-0.5 rounded-full border border-red-500/40 text-red-300 bg-red-500/10 text-xs">
                                 {stageScheduleSummary.worst?.text || 'Є прострочка'}
                               </span>
                             )}
-                            {!isSkipped && nearestStageUpcoming && (
+                            {!isSkipped && !stageCompletionResult && nearestStageUpcoming && (
                               <span className="px-2 py-0.5 rounded-full border border-amber-500/40 text-amber-300 bg-amber-500/10 text-xs">
                                 {nearestStageUpcoming.text}
                               </span>
@@ -9975,6 +9996,13 @@ function App({ currentUser: initialUser }) {
                               </button>
                             </div>
                           </div>
+                          {!isSkipped && stageCompletionResult && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <span className={`px-2 py-0.5 rounded-full border text-xs font-semibold ${getCompletionResultClass(stageCompletionResult.type)}`}>
+                                {stageCompletionResult.text}
+                              </span>
+                            </div>
+                          )}
                           {!isSkipped && stageScheduleSummary.items.length > 0 && (
                             <div className="mt-2 flex flex-wrap gap-2">
                               {stageScheduleSummary.items.slice(0, 4).map((item, itemIndex) => (
@@ -9998,6 +10026,7 @@ function App({ currentUser: initialUser }) {
                                 getDeadlineMeta(task.planStart || task.plannedDate, task.factStart, 'Старт'),
                                 getDeadlineMeta(task.planEnd || task.plannedDate, task.factEnd || task.completedAt, 'Фініш')
                               ].filter(Boolean);
+                              const taskCompletionResult = getCompletionResultMeta(task.planEnd || task.plannedDate, task.factEnd || task.completedAt, 'Підетап виконано');
                               return (
                                 <div key={`task-${stage.id}-${taskIndex}`} className="space-y-2 w-full">
                                   <div className="flex items-center gap-2 w-full">
@@ -10061,6 +10090,13 @@ function App({ currentUser: initialUser }) {
                                       }} className={`w-full border rounded-lg px-2 py-1.5 text-xs ${projectInputClass}`} />
                                     </label>
                                   </div>
+                                  {taskCompletionResult && (
+                                    <div className="pl-7 flex flex-wrap gap-1">
+                                      <span className={`px-2 py-0.5 rounded-full border text-[11px] font-semibold ${getCompletionResultClass(taskCompletionResult.type)}`}>
+                                        {taskCompletionResult.text}
+                                      </span>
+                                    </div>
+                                  )}
                                   {taskScheduleItems.length > 0 && (
                                     <div className="pl-7 flex flex-wrap gap-1">
                                       {taskScheduleItems.map((item, itemIndex) => (
