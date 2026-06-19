@@ -329,7 +329,7 @@ function App({ currentUser: initialUser }) {
   const [projectInvoiceSaving, setProjectInvoiceSaving] = useState(false);
   const [projectInvoiceDraft, setProjectInvoiceDraft] = useState({ comment: '', isPaid: false, paidBy: '', paidAt: '' });
   const [showFinanceStatsExpanded, setShowFinanceStatsExpanded] = useState(false);
-  const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', startAt: '', dueAt: '', assignedUserId: '', telegramReminder: false });
+  const [projectTaskDraft, setProjectTaskDraft] = useState({ title: '', description: '', status: 'new', startAt: '', dueAt: '', assignedUserId: '', telegramReminder: false, remindAt: '' });
   const [projectTaskSaving, setProjectTaskSaving] = useState(false);
   const [projectNoteDraft, setProjectNoteDraft] = useState('');
   const [projectNoteSaving, setProjectNoteSaving] = useState(false);
@@ -2648,7 +2648,7 @@ function App({ currentUser: initialUser }) {
           } else {
               await loadProjects();
           }
-          setProjectTaskDraft({ title: '', description: '', status: 'new', startAt: '', dueAt: '', assignedUserId: '', telegramReminder: false });
+          setProjectTaskDraft({ title: '', description: '', status: 'new', startAt: '', dueAt: '', assignedUserId: '', telegramReminder: false, remindAt: '' });
           await loadProjectNotifications();
       } catch (error) {
           alert(error?.message || 'Не вдалося додати задачу');
@@ -6111,6 +6111,34 @@ function App({ currentUser: initialUser }) {
       return acc;
   }, { new: 0, in_progress: 0, done: 0 });
   const selectedProjectOverdueTaskCount = selectedProjectTasks.filter((task) => getProjectTaskOverdueDays(task) > 0).length;
+  const getProjectTaskDateValue = (task) => String(task?.dueAt || task?.startAt || '').slice(0, 10);
+  const sortProjectTasksByDate = (items) => items.slice().sort((a, b) => {
+      const aDate = getProjectTaskDateValue(a) || '9999-12-31';
+      const bDate = getProjectTaskDateValue(b) || '9999-12-31';
+      if (aDate !== bDate) return aDate.localeCompare(bDate);
+      return String(a.title || '').localeCompare(String(b.title || ''), 'uk');
+  });
+  const selectedProjectActiveTasks = selectedProjectTasks.filter((task) => String(task.status || 'new') !== 'done');
+  const selectedProjectTodayTasks = sortProjectTasksByDate(selectedProjectActiveTasks.filter((task) => getProjectTaskDateValue(task) === todayTaskDate));
+  const selectedProjectUpcomingTasks = sortProjectTasksByDate(selectedProjectActiveTasks.filter((task) => {
+      const date = getProjectTaskDateValue(task);
+      return date > todayTaskDate && date <= addDaysDateValue(todayTaskDate, 7);
+  }));
+  const selectedProjectOverdueTasks = sortProjectTasksByDate(selectedProjectActiveTasks.filter((task) => getProjectTaskOverdueDays(task) > 0));
+  const selectedProjectNoDateTasks = sortProjectTasksByDate(selectedProjectActiveTasks.filter((task) => !getProjectTaskDateValue(task)));
+  const selectedProjectDoneTasks = sortProjectTasksByDate(selectedProjectTasks.filter((task) => String(task.status || '') === 'done')).reverse();
+  const selectedProjectTaskSections = [
+      ['overdue', 'Прострочені', selectedProjectOverdueTasks],
+      ['today', 'Сьогодні', selectedProjectTodayTasks],
+      ['upcoming', 'Найближчі 7 днів', selectedProjectUpcomingTasks],
+      ['no_date', 'Без строку', selectedProjectNoDateTasks],
+      ['done', 'Виконані', selectedProjectDoneTasks]
+  ];
+  const selectedProjectTasksByStatus = {
+      new: sortProjectTasksByDate(selectedProjectTasks.filter((task) => String(task.status || 'new') === 'new')),
+      in_progress: sortProjectTasksByDate(selectedProjectTasks.filter((task) => String(task.status || '') === 'in_progress')),
+      done: sortProjectTasksByDate(selectedProjectTasks.filter((task) => String(task.status || '') === 'done')).reverse()
+  };
 
   return (
     <div className="fixed inset-0 flex bg-background text-slate-200 overflow-hidden">
@@ -10499,163 +10527,104 @@ function App({ currentUser: initialUser }) {
                   </div>
                 )}
                 {projectViewTab === 'tasks' && (
-                  <div className="space-y-3">
-                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
-                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Нова задача по проєкту</div>
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-3">
-                          <label className="flex flex-col gap-1">
-                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Назва задачі</span>
-                            <input
-                              type="text"
-                              value={projectTaskDraft.title}
-                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, title: e.target.value }))}
-                              placeholder="Наприклад: Узгодити дату монтажу"
-                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                            />
-                          </label>
-                          <label className="flex flex-col gap-1">
-                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Відповідальний</span>
-                            <select
-                              value={projectTaskDraft.assignedUserId}
-                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, assignedUserId: e.target.value }))}
-                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                            >
-                              <option value="">Без відповідального</option>
-                              {selectedProjectMembers.map((member) => (
-                                <option key={`task-assignee-${member.userId}`} value={member.userId}>
-                                  {member.username || `user-${member.userId}`}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                  <div className="space-y-4">
+                    <div className={'rounded-2xl border p-4 ' + projectPanelClass}>
+                      <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                        <div>
+                          <div className={isLightTheme ? 'text-lg font-semibold text-slate-900' : 'text-lg font-semibold text-slate-100'}>Задачі проєкту</div>
+                          <div className={isLightTheme ? 'text-sm mt-1 text-slate-500' : 'text-sm mt-1 text-slate-400'}>Оперативні задачі по цьому проєкту: хто робить, до коли, що горить.</div>
                         </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                          <label className="flex flex-col gap-1">
-                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Статус</span>
-                            <select
-                              value={projectTaskDraft.status}
-                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, status: e.target.value }))}
-                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                            >
-                              <option value="new">В плані</option>
-                              <option value="in_progress">В роботі</option>
-                              <option value="done">Виконана</option>
-                            </select>
-                          </label>
-                          <label className="flex flex-col gap-1">
-                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Початок задачі</span>
-                            <input
-                              type="datetime-local"
-                              value={projectTaskDraft.startAt}
-                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, startAt: e.target.value }))}
-                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                            />
-                          </label>
-                          <label className="flex flex-col gap-1">
-                            <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Кінець / дедлайн</span>
-                            <input
-                              type="datetime-local"
-                              value={projectTaskDraft.dueAt}
-                              onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, dueAt: e.target.value }))}
-                              className={`w-full border rounded-lg px-3 py-2 text-sm ${projectInputClass}`}
-                            />
-                          </label>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <span className="px-2 py-1 rounded-full border border-slate-500/40 text-slate-300 bg-slate-700/30">В плані: {selectedProjectTaskStatusCounts.new || 0}</span>
+                          <span className="px-2 py-1 rounded-full border border-blue-500/40 text-blue-300 bg-blue-500/10">В роботі: {selectedProjectTaskStatusCounts.in_progress || 0}</span>
+                          <span className="px-2 py-1 rounded-full border border-emerald-500/40 text-emerald-300 bg-emerald-500/10">Виконані: {selectedProjectTaskStatusCounts.done || 0}</span>
+                          <span className={(selectedProjectOverdueTaskCount > 0 ? 'border-red-500/40 text-red-300 bg-red-500/10' : 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10') + ' px-2 py-1 rounded-full border'}>Прострочені: {selectedProjectOverdueTaskCount}</span>
                         </div>
+                      </div>
 
-                        <div className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-slate-50' : 'border-slate-700 bg-slate-800/40'}`}>
-                          <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-3 items-end">
-                            <label className={`flex items-center gap-2 text-sm ${isLightTheme ? 'text-slate-700' : 'text-slate-200'}`}>
-                              <input
-                                type="checkbox"
-                                checked={!!projectTaskDraft.telegramReminder}
-                                onChange={(e) => setProjectTaskDraft((prev) => ({
-                                  ...prev,
-                                  telegramReminder: e.target.checked,
-                                  remindAt: e.target.checked ? prev.remindAt : ''
-                                }))}
-                                className="accent-blue-600"
-                              />
-                              <span>Нагадати в Telegram</span>
-                            </label>
-                            <label className="flex flex-col gap-1">
-                              <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Коли нагадати</span>
-                              <input
-                                type="datetime-local"
-                                value={projectTaskDraft.remindAt}
-                                onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, remindAt: e.target.value, telegramReminder: true }))}
-                                disabled={!projectTaskDraft.telegramReminder}
-                                className={`w-full border rounded-lg px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed ${projectInputClass}`}
-                              />
-                            </label>
+                      <div className={(isLightTheme ? 'border-slate-200 bg-slate-50' : 'border-slate-700 bg-slate-800/40') + ' rounded-xl border p-3'}>
+                        <div className="grid grid-cols-1 xl:grid-cols-[1fr_210px_210px_auto] gap-2">
+                          <input type="text" value={projectTaskDraft.title} onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, title: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter' && projectTaskDraft.title.trim()) handleAddProjectTask(); }} placeholder="Швидка задача по проєкту..." className={'border rounded-lg px-3 py-2 text-sm ' + projectInputClass} />
+                          <select value={projectTaskDraft.assignedUserId} onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, assignedUserId: e.target.value }))} className={'border rounded-lg px-3 py-2 text-sm ' + projectInputClass}>
+                            <option value="">Без відповідального</option>
+                            {selectedProjectMembers.map((member) => <option key={'task-assignee-fast-' + member.userId} value={member.userId}>{member.username || ('user-' + member.userId)}</option>)}
+                          </select>
+                          <input type="datetime-local" value={projectTaskDraft.dueAt} onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, dueAt: e.target.value }))} className={'border rounded-lg px-3 py-2 text-sm ' + projectInputClass} />
+                          <button type="button" onClick={handleAddProjectTask} disabled={projectTaskSaving || !projectTaskDraft.title.trim()} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60">{projectTaskSaving ? 'Збереження...' : 'Додати'}</button>
+                        </div>
+                        <details className="mt-3">
+                          <summary className={isLightTheme ? 'cursor-pointer text-sm text-slate-600' : 'cursor-pointer text-sm text-slate-300'}>Додаткові поля</summary>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                            <select value={projectTaskDraft.status} onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, status: e.target.value }))} className={'border rounded-lg px-3 py-2 text-sm ' + projectInputClass}>
+                              <option value="new">В плані</option><option value="in_progress">В роботі</option><option value="done">Виконана</option>
+                            </select>
+                            <input type="datetime-local" value={projectTaskDraft.startAt} onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, startAt: e.target.value }))} className={'border rounded-lg px-3 py-2 text-sm ' + projectInputClass} />
+                            <label className={(isLightTheme ? 'text-slate-700' : 'text-slate-200') + ' flex items-center gap-2 text-sm'}><input type="checkbox" checked={!!projectTaskDraft.telegramReminder} onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, telegramReminder: e.target.checked, remindAt: e.target.checked ? prev.remindAt : '' }))} className="accent-blue-600" /> Нагадати в Telegram</label>
+                            <input type="datetime-local" value={projectTaskDraft.remindAt || ''} onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, remindAt: e.target.value, telegramReminder: true }))} disabled={!projectTaskDraft.telegramReminder} className={'border rounded-lg px-3 py-2 text-sm disabled:opacity-50 ' + projectInputClass} />
+                            <textarea value={projectTaskDraft.description} onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, description: e.target.value }))} placeholder="Опис задачі" rows={3} className={'md:col-span-2 border rounded-lg px-3 py-2 text-sm resize-y ' + projectInputClass} />
                           </div>
-                        </div>
+                          <div className={isLightTheme ? 'mt-2 text-xs text-slate-500' : 'mt-2 text-xs text-slate-400'}>Telegram-нагадування піде відповідальному користувачу, якщо в нього підключений бот.</div>
+                        </details>
                       </div>
-                      <textarea
-                        value={projectTaskDraft.description}
-                        onChange={(e) => setProjectTaskDraft((prev) => ({ ...prev, description: e.target.value }))}
-                        placeholder="Опис задачі"
-                        rows={3}
-                        className={`mt-2 w-full border rounded-lg px-3 py-2 text-sm resize-y ${projectInputClass}`}
-                      />
-                      <div className={`mt-2 text-xs ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
-                        Telegram-нагадування піде відповідальному користувачу, якщо в нього підключений бот у налаштуваннях.
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleAddProjectTask}
-                        disabled={projectTaskSaving}
-                        className="mt-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60"
-                      >
-                        {projectTaskSaving ? 'Збереження...' : 'Додати задачу'}
-                      </button>
                     </div>
 
-                    <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
-                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Задачі проєкту</div>
-                      <div className="mb-3 flex flex-wrap gap-2 text-xs">
-                        <span className="px-2 py-1 rounded-full border border-slate-500/40 text-slate-300 bg-slate-700/30">В плані: {selectedProjectTaskStatusCounts.new || 0}</span>
-                        <span className="px-2 py-1 rounded-full border border-blue-500/40 text-blue-300 bg-blue-500/10">В роботі: {selectedProjectTaskStatusCounts.in_progress || 0}</span>
-                        <span className="px-2 py-1 rounded-full border border-emerald-500/40 text-emerald-300 bg-emerald-500/10">Виконані: {selectedProjectTaskStatusCounts.done || 0}</span>
-                        {selectedProjectOverdueTaskCount > 0 && (
-                          <span className="px-2 py-1 rounded-full border border-red-500/40 text-red-300 bg-red-500/10">Прострочені: {selectedProjectOverdueTaskCount}</span>
-                        )}
+                    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-4">
+                      <div className="space-y-3 min-w-0">
+                        {selectedProjectTaskSections.map(([sectionKey, sectionTitle, sectionTasks]) => (
+                          <div key={'project-task-section-' + sectionKey} className={(sectionKey === 'overdue' && sectionTasks.length ? 'border-red-500/30' : (isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/60')) + ' rounded-2xl border overflow-hidden'}>
+                            <div className={(isLightTheme ? 'border-slate-200' : 'border-slate-800') + ' px-4 py-3 border-b flex items-center justify-between'}>
+                              <div className={(sectionKey === 'overdue' && sectionTasks.length ? 'text-red-300' : (isLightTheme ? 'text-slate-900' : 'text-slate-100')) + ' font-semibold'}>{sectionTitle}</div>
+                              <span className={(isLightTheme ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-400') + ' text-xs rounded-full px-2 py-1'}>{sectionTasks.length}</span>
+                            </div>
+                            <div className={isLightTheme ? 'divide-y divide-slate-100' : 'divide-y divide-slate-800'}>
+                              {sectionTasks.map((task) => {
+                                const overdueDays = getProjectTaskOverdueDays(task);
+                                const dateText = task.dueAt || task.startAt || '';
+                                return (
+                                  <div key={'project-task-row-' + task.id} className={(isLightTheme ? 'hover:bg-slate-50' : 'hover:bg-slate-800/40') + ' grid grid-cols-[auto_1fr_auto] max-lg:grid-cols-[auto_1fr] gap-3 items-center px-4 py-3'}>
+                                    <button type="button" onClick={() => handleUpdateProjectTask(task.id, { status: task.status === 'done' ? 'new' : 'done' })} className={(task.status === 'done' ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500 hover:border-emerald-400') + ' w-5 h-5 rounded-full border shrink-0'} aria-label="Готово" />
+                                    <div className="min-w-0">
+                                      <div className={(task.status === 'done' ? 'line-through text-emerald-500' : (isLightTheme ? 'text-slate-900' : 'text-slate-100')) + ' font-semibold truncate'}>{task.title}</div>
+                                      {task.description && <div className={(isLightTheme ? 'text-slate-600' : 'text-slate-400') + ' mt-1 text-sm line-clamp-2'}>{task.description}</div>}
+                                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                        <span className={'px-2 py-0.5 rounded-full border ' + (projectTaskStatusMeta[task.status || 'new']?.className || projectTaskStatusMeta.new.className)}>{getProjectTaskStatusLabel(task.status)}</span>
+                                        {overdueDays > 0 && <span className="px-2 py-0.5 rounded-full border border-red-500/40 text-red-300 bg-red-500/10">Прострочено на {overdueDays} дн.</span>}
+                                        <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Відповідальний: {task.assignedUsername || '—'}</span>
+                                        {dateText && <span className={overdueDays > 0 ? 'text-red-300' : (isLightTheme ? 'text-slate-500' : 'text-slate-400')}>Строк: {new Date(dateText).toLocaleString('uk-UA')}</span>}
+                                        {task.remindAt && <span className="text-cyan-300">TG: {new Date(task.remindAt).toLocaleString('uk-UA')}</span>}
+                                      </div>
+                                    </div>
+                                    <div className="max-lg:col-span-2 flex items-center justify-end gap-2">
+                                      <select value={task.status || 'new'} onChange={(e) => handleUpdateProjectTask(task.id, { status: e.target.value })} className={'border rounded-lg px-2 py-1 text-xs ' + projectInputClass}>
+                                        <option value="new">В плані</option><option value="in_progress">В роботі</option><option value="done">Виконана</option>
+                                      </select>
+                                      <button type="button" onClick={() => handleDeleteProjectTask(task.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10">Видалити</button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {sectionTasks.length === 0 && <div className={(isLightTheme ? 'text-slate-500' : 'text-slate-400') + ' px-4 py-6 text-center text-sm'}>Порожньо</div>}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      {!selectedProjectTasks.length && (
-                        <div className={`text-sm ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>Поки немає задач</div>
-                      )}
-                      <div className="space-y-2">
-                        {selectedProjectTasks.map((task) => (
-                          <div key={`project-task-${task.id}`} className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/60'}`}>
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className={`font-semibold ${task.status === 'done' ? 'line-through text-emerald-500' : (isLightTheme ? 'text-slate-900' : 'text-slate-100')}`}>{task.title}</div>
-                                {task.description && <div className={`mt-1 text-sm whitespace-pre-wrap ${isLightTheme ? 'text-slate-600' : 'text-slate-400'}`}>{task.description}</div>}
-                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                                  <span className={`px-2 py-0.5 rounded-full border ${projectTaskStatusMeta[task.status || 'new']?.className || projectTaskStatusMeta.new.className}`}>{getProjectTaskStatusLabel(task.status)}</span>
-                                  {getProjectTaskOverdueDays(task) > 0 && (
-                                    <span className="px-2 py-0.5 rounded-full border border-red-500/40 text-red-300 bg-red-500/10">Прострочено на {getProjectTaskOverdueDays(task)} дн.</span>
-                                  )}
-                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Відповідальний: {task.assignedUsername || '—'}</span>
-                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Початок: {task.startAt ? new Date(task.startAt).toLocaleString('uk-UA') : '—'}</span>
-                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Кінець: {task.dueAt ? new Date(task.dueAt).toLocaleString('uk-UA') : '—'}</span>
-                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Telegram-нагадування: {task.remindAt ? new Date(task.remindAt).toLocaleString('uk-UA') : '—'}</span>
-                                  <span className={isLightTheme ? 'text-slate-500' : 'text-slate-400'}>Автор: {task.createdByUsername || '—'}</span>
-                                </div>
-                              </div>
-                              <div className="flex flex-col gap-2 shrink-0">
-                                <select
-                                  value={task.status || 'new'}
-                                  onChange={(e) => handleUpdateProjectTask(task.id, { status: e.target.value })}
-                                  className={`border rounded-lg px-2 py-1 text-xs ${projectInputClass}`}
-                                >
-                                  <option value="new">В плані</option>
-                                  <option value="in_progress">В роботі</option>
-                                  <option value="done">Виконана</option>
-                                </select>
-                                <button type="button" onClick={() => handleDeleteProjectTask(task.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10">Видалити</button>
-                              </div>
+
+                      <div className="space-y-3">
+                        {['new', 'in_progress', 'done'].map((statusKey) => (
+                          <div key={'project-task-board-' + statusKey} className={'rounded-2xl border p-3 ' + projectPanelClass}>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className={isLightTheme ? 'text-sm font-semibold text-slate-900' : 'text-sm font-semibold text-slate-100'}>{getProjectTaskStatusLabel(statusKey)}</div>
+                              <span className={(isLightTheme ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-400') + ' text-xs rounded-full px-2 py-0.5'}>{selectedProjectTasksByStatus[statusKey]?.length || 0}</span>
+                            </div>
+                            <div className="space-y-2">
+                              {(selectedProjectTasksByStatus[statusKey] || []).slice(0, 5).map((task) => (
+                                <button key={'project-task-mini-' + task.id} type="button" onClick={() => handleUpdateProjectTask(task.id, { status: statusKey === 'new' ? 'in_progress' : statusKey === 'in_progress' ? 'done' : 'new' })} className={(isLightTheme ? 'border-slate-200 hover:bg-slate-50' : 'border-slate-700 bg-slate-900/60 hover:bg-slate-800') + ' w-full text-left rounded-lg border p-2 transition'}>
+                                  <div className={isLightTheme ? 'text-sm font-medium truncate text-slate-900' : 'text-sm font-medium truncate text-slate-100'}>{task.title}</div>
+                                  <div className={(getProjectTaskOverdueDays(task) > 0 ? 'text-red-300' : (isLightTheme ? 'text-slate-500' : 'text-slate-400')) + ' text-xs mt-1'}>{task.assignedUsername || '—'}{task.dueAt ? ' • ' + String(task.dueAt).slice(0, 10) : ''}</div>
+                                </button>
+                              ))}
+                              {(selectedProjectTasksByStatus[statusKey] || []).length === 0 && <div className={isLightTheme ? 'text-xs text-slate-500' : 'text-xs text-slate-400'}>Порожньо</div>}
+                              {(selectedProjectTasksByStatus[statusKey] || []).length > 5 && <div className={isLightTheme ? 'text-xs text-slate-500' : 'text-xs text-slate-400'}>+ ще {(selectedProjectTasksByStatus[statusKey] || []).length - 5}</div>}
                             </div>
                           </div>
                         ))}
