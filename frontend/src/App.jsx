@@ -357,6 +357,7 @@ function App({ currentUser: initialUser }) {
   const [tasksViewTab, setTasksViewTab] = useState('today');
   const [taskFilter, setTaskFilter] = useState('all');
   const [quickTaskTitle, setQuickTaskTitle] = useState('');
+  const [showTaskCreateForm, setShowTaskCreateForm] = useState(true);
   const [bulkTaskText, setBulkTaskText] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [taskDailyNotesByDate, setTaskDailyNotesByDate] = useState(() => {
@@ -9396,7 +9397,8 @@ function App({ currentUser: initialUser }) {
                           placeholder="Пошук..."
                           className="w-64 max-md:w-full bg-slate-900 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
                       />
-                      <button type="button" onClick={() => setTasksViewTab('settings')} className="px-3 py-2 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 transition">Бот</button>
+                      <button type="button" onClick={() => setShowTaskCreateForm((prev) => !prev)} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition">{showTaskCreateForm ? 'Закрити форму' : 'Нова задача'}</button>
+                      <button type="button" onClick={() => setTasksViewTab('settings')} className="px-3 py-2 rounded-xl border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition">Бот і нагадування</button>
                   </div>
               </div>
 
@@ -9443,10 +9445,79 @@ function App({ currentUser: initialUser }) {
                           </div>
                       </div>
 
+                      {showTaskCreateForm && (
+                          <div className="rounded-2xl border border-blue-500/30 bg-slate-900 p-4 space-y-3">
+                              <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                      <div className="text-sm font-semibold text-slate-100">Повне додавання задачі</div>
+                                      <div className="text-xs text-slate-500 mt-1">Заповніть потрібні поля і створіть задачу одразу з усіма параметрами.</div>
+                                  </div>
+                                  <button type="button" onClick={() => setShowTaskCreateForm(false)} className="text-xs px-2 py-1 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-800">Закрити</button>
+                              </div>
+                              <input
+                                  type="text"
+                                  value={taskDraft.title}
+                                  onChange={(e) => setTaskDraft((prev) => ({ ...prev, title: e.target.value }))}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateTask(); }}
+                                  autoComplete="off"
+                                  placeholder="Назва задачі"
+                                  className="w-full bg-slate-800 text-slate-100 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition"
+                              />
+                              <textarea
+                                  value={taskDraft.description}
+                                  onChange={(e) => setTaskDraft((prev) => ({ ...prev, description: e.target.value }))}
+                                  rows={3}
+                                  placeholder="Опис задачі"
+                                  className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition resize-y"
+                              />
+                              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2">
+                                  <label className="space-y-1">
+                                      <span className="block text-xs text-slate-400">Планова дата</span>
+                                      <input type="date" value={taskDraft.planDate} onChange={(e) => setTaskDraft((prev) => ({ ...prev, planDate: e.target.value }))} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
+                                  </label>
+                                  <label className="space-y-1">
+                                      <span className="block text-xs text-slate-400">Дедлайн</span>
+                                      <input type="date" value={taskDraft.dueDate} onChange={(e) => setTaskDraft((prev) => ({ ...prev, dueDate: e.target.value }))} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition" />
+                                  </label>
+                                  <label className="space-y-1">
+                                      <span className="block text-xs text-slate-400">Пріоритет</span>
+                                      <select value={taskDraft.priority} onChange={(e) => setTaskDraft((prev) => ({ ...prev, priority: e.target.value }))} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition">
+                                          <option value="low">Низький</option><option value="medium">Середній</option><option value="high">Важливий</option>
+                                      </select>
+                                  </label>
+                                  <label className="space-y-1">
+                                      <span className="block text-xs text-slate-400">Статус</span>
+                                      <select value={taskDraft.status} onChange={(e) => setTaskDraft((prev) => ({ ...prev, status: e.target.value }))} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition">
+                                          <option value="plan">План</option><option value="in_progress">В роботі</option><option value="done">Готово</option>
+                                      </select>
+                                  </label>
+                                  <label className="space-y-1">
+                                      <span className="block text-xs text-slate-400">Прив'язка до чату</span>
+                                      <select value={taskDraft.chatId} onChange={(e) => setTaskDraft((prev) => ({ ...prev, chatId: e.target.value }))} className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-blue-500 transition">
+                                          <option value="">Без чату</option>
+                                          {dialogs.map((dialog) => <option key={dialog.id} value={String(dialog.id)}>{dialog.name}</option>)}
+                                      </select>
+                                  </label>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                  <button type="button" onClick={handleCreateTask} disabled={!taskDraft.title.trim()} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition">Створити задачу</button>
+                                  <button type="button" onClick={() => setTaskDraft((prev) => ({ ...prev, title: '', description: '', dueDate: '', priority: 'medium', status: 'plan', chatId: '' }))} className="px-4 py-2 rounded-xl border border-slate-600 text-slate-300 hover:bg-slate-800 transition">Очистити</button>
+                              </div>
+                          </div>
+                      )}
+
                       {tasksViewTab === 'settings' ? (
                           <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4 space-y-4">
                               <div>
-                                  <div className="text-sm font-semibold text-slate-100 mb-2">Щоденний дайджест у Telegram</div>
+                                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                      <div>
+                                          <div className="text-sm font-semibold text-slate-100">Підключення бота і нагадування</div>
+                                          <div className="text-xs text-slate-500 mt-1">Бот надсилає щоденний дайджест і одноразові нагадування по задачах.</div>
+                                      </div>
+                                      <span className="px-2 py-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-xs">
+                                          {taskBotSettings.enabled && taskBotSettings.hasToken && taskBotSettings.chatId ? 'Бот підключений' : 'Потрібне підключення'}
+                                      </span>
+                                  </div>
                                   <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                                       <label className="flex items-center gap-2 text-sm text-slate-300">
                                           <input type="checkbox" checked={!!taskReminderSettings.enabled} onChange={(e) => setTaskReminderSettings((prev) => ({ ...prev, enabled: e.target.checked }))} className="accent-blue-500" />
@@ -9466,7 +9537,17 @@ function App({ currentUser: initialUser }) {
                                       <button type="button" onClick={saveTaskBotSettings} className="px-3 py-2 rounded-xl border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 transition">Зберегти бота</button>
                                       <button type="button" onClick={sendTaskBotTest} className="px-3 py-2 rounded-xl border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition">Тест повідомлення</button>
                                   </div>
-                                  <div className="text-xs text-slate-500 mt-2">Telegram-логіку не змінював: дайджест і одноразові нагадування працюють по тих самих полях задач.</div>
+                                  <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-3 mt-3 space-y-2">
+                                      <div className="text-sm font-semibold text-slate-200">Як підключити бота:</div>
+                                      <ol className="list-decimal pl-5 space-y-1 text-xs text-slate-400">
+                                          <li>Створіть бота в <span className="text-blue-300">@BotFather</span> і отримайте Bot Token.</li>
+                                          <li>Відкрийте створеного бота у Telegram та надішліть йому <code className="text-slate-200">/start</code>.</li>
+                                          <li>Дізнайтеся свій Telegram ID через <span className="text-blue-300">@userinfobot</span>.</li>
+                                          <li>Вставте Bot Token і Chat ID у поля вище.</li>
+                                          <li>Увімкніть «Бот-надсилання», натисніть «Зберегти бота» і потім «Тест повідомлення».</li>
+                                      </ol>
+                                      <div className="text-xs text-amber-300/90">Для кожного користувача потрібні власні Token і Chat ID, щоб повідомлення приходили правильній людині.</div>
+                                  </div>
                               </div>
                               <div className="border-t border-slate-800 pt-4">
                                   <div className="text-sm font-semibold text-slate-100 mb-2">Додати списком</div>
