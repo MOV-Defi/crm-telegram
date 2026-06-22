@@ -5858,8 +5858,7 @@ function App({ currentUser: initialUser }) {
   const selectedProjectFinanceCurrency = selectedProjectCurrency === 'USD' ? 'USD' : 'UAH';
   const selectedProjectIncomeInProjectCurrency = selectedProjectFinanceCurrency === 'USD' ? selectedProjectIncomeUsd : selectedProjectIncomeUah;
   const selectedProjectExpenseInProjectCurrency = selectedProjectFinanceCurrency === 'USD' ? selectedProjectExpenseUsd : selectedProjectExpenseUah;
-  const selectedProjectProfitInProjectCurrency = selectedProjectIncomeInProjectCurrency - selectedProjectExpenseInProjectCurrency;
-  const selectedProjectValueAfterExpenses = selectedProjectValueRaw - selectedProjectExpenseInProjectCurrency;
+  const selectedProjectAdvanceBalance = selectedProjectIncomeInProjectCurrency - selectedProjectExpenseInProjectCurrency;
   const selectedProjectCurrencySymbol = selectedProjectFinanceCurrency === 'USD' ? '$' : '₴';
   const expenseStatsByPaymentMethod = selectedProjectFinanceEntries
       .filter((entry) => String(entry?.type || '') === 'expense')
@@ -10934,11 +10933,11 @@ function App({ currentUser: initialUser }) {
                       <div className="text-slate-500 text-xs">у валюті проєкту</div>
                     </div>
                     <div className={`rounded-xl p-3 col-span-2 ${isLightTheme ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
-                      <div className="text-slate-500">Залишок після витрат</div>
-                      <div className={`${selectedProjectValueAfterExpenses >= 0 ? 'text-emerald-500' : 'text-red-500'} text-lg font-bold`}>
-                        {selectedProjectCurrencySymbol} {Number(selectedProjectValueAfterExpenses || 0).toLocaleString('uk-UA')}
+                      <div className="text-slate-500">Залишок авансу після витрат</div>
+                      <div className={`${selectedProjectAdvanceBalance >= 0 ? 'text-emerald-500' : 'text-red-500'} text-lg font-bold`}>
+                        {selectedProjectCurrencySymbol} {Number(selectedProjectAdvanceBalance || 0).toLocaleString('uk-UA')}
                       </div>
-                      <div className="text-slate-500 text-xs">вартість проєкту мінус готівкові і безготівкові витрати</div>
+                      <div className="text-slate-500 text-xs">отримані платежі мінус готівкові і безготівкові витрати</div>
                     </div>
                   </div>
                   {showFinanceStatsExpanded && (
