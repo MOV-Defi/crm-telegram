@@ -260,6 +260,7 @@ function App({ currentUser: initialUser }) {
   const [requestHistoryOffset, setRequestHistoryOffset] = useState(0);
   const [requestHistoryQuery, setRequestHistoryQuery] = useState('');
   const [requestHistoryCategoryFilter, setRequestHistoryCategoryFilter] = useState('all');
+  const [requestHistoryProjectFilter, setRequestHistoryProjectFilter] = useState('all');
   const [requestChatSearch, setRequestChatSearch] = useState('');
   const [requestTargetParticipants, setRequestTargetParticipants] = useState([]);
   const [loadingRequestParticipants, setLoadingRequestParticipants] = useState(false);
@@ -3480,7 +3481,7 @@ function App({ currentUser: initialUser }) {
       }
   };
 
-  const REQUEST_HISTORY_PAGE_SIZE = 20;
+  const REQUEST_HISTORY_PAGE_SIZE = 500;
 
   const loadRequestHistory = async ({ append = false } = {}) => {
       setLoadingRequestHistory(true);
@@ -3506,14 +3507,16 @@ function App({ currentUser: initialUser }) {
       return requestHistory.filter((item) => {
           const category = String(item?.template_title || item?.template_code || 'Інше').trim() || 'Інше';
           const categoryMatch = requestHistoryCategoryFilter === 'all' || category === requestHistoryCategoryFilter;
-          if (!categoryMatch) return false;
+          const projectName = String(item?.project_name || '').trim();
+          const projectMatch = requestHistoryProjectFilter === 'all' || projectName === requestHistoryProjectFilter;
+          if (!categoryMatch || !projectMatch) return false;
           if (!query) return true;
           const title = String(item?.template_title || item?.template_code || '').toLowerCase();
           const chat = String(item?.chat_name || item?.chat_id || '').toLowerCase();
           const text = String(item?.message_text || '').toLowerCase();
-          return title.includes(query) || chat.includes(query) || text.includes(query);
+          return title.includes(query) || projectName.toLowerCase().includes(query) || chat.includes(query) || text.includes(query);
       });
-  }, [requestHistory, requestHistoryQuery, requestHistoryCategoryFilter]);
+  }, [requestHistory, requestHistoryQuery, requestHistoryCategoryFilter, requestHistoryProjectFilter]);
 
   const requestHistoryByCategory = React.useMemo(() => {
       const grouped = new Map();
@@ -3525,6 +3528,18 @@ function App({ currentUser: initialUser }) {
       return Array.from(grouped.entries())
           .map(([category, items]) => ({ category, items }))
           .sort((a, b) => a.category.localeCompare(b.category, 'uk'));
+  }, [requestHistory]);
+
+  const requestHistoryProjects = React.useMemo(() => {
+      const counts = new Map();
+      for (const item of requestHistory) {
+          const projectName = String(item?.project_name || '').trim();
+          if (!projectName) continue;
+          counts.set(projectName, Number(counts.get(projectName) || 0) + 1);
+      }
+      return Array.from(counts.entries())
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'uk'));
   }, [requestHistory]);
 
   const loadDocumentTemplates = async () => {
@@ -7522,7 +7537,7 @@ function App({ currentUser: initialUser }) {
                               Оновити
                           </button>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 mb-3">
+                      <div className="grid grid-cols-1 lg:grid-cols-[minmax(260px,1fr)_minmax(220px,auto)_minmax(220px,auto)] gap-3 mb-3">
                           <input
                               type="text"
                               value={requestHistoryQuery}
@@ -7538,6 +7553,16 @@ function App({ currentUser: initialUser }) {
                               <option value="all">Всі категорії</option>
                               {requestHistoryByCategory.map((group) => (
                                   <option key={`history-opt-${group.category}`} value={group.category}>{group.category} ({group.items.length})</option>
+                              ))}
+                          </select>
+                          <select
+                              value={requestHistoryProjectFilter}
+                              onChange={(e) => setRequestHistoryProjectFilter(e.target.value)}
+                              className="bg-slate-900/80 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition"
+                          >
+                              <option value="all">Всі об'єкти</option>
+                              {requestHistoryProjects.map((project) => (
+                                  <option key={project.name} value={project.name}>{project.name} ({project.count})</option>
                               ))}
                           </select>
                       </div>
