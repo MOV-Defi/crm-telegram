@@ -145,8 +145,20 @@ const getSession = () => {
     }
   } catch (_) {}
 
-  // Intentional: do not fallback to legacy DB session key.
-  // This prevents accidental cross-account reuse when old data exists.
+  try {
+    const legacyRow = db.prepare("SELECT value FROM settings WHERE key = 'tg_session'").get();
+    const legacyValue = String(legacyRow?.value || '').trim();
+    if (legacyValue) {
+      try {
+        fs.writeFileSync(filePath, legacyValue, 'utf8');
+        console.log("[User " + userId + "] Migrated legacy Telegram session to persistent file.");
+      } catch (error) {
+        console.error("[User " + userId + "] Failed to migrate legacy Telegram session:", error.message);
+      }
+      return legacyValue;
+    }
+  } catch (_) {}
+
   return '';
 };
 
@@ -233,6 +245,7 @@ const initTelegramClient = async (apiId, apiHash) => {
   const state = getTenantState();
   const userId = context.getUserId();
   const sessionString = getSession();
+  resetAuthState(state);
   const stringSession = new StringSession(sessionString);
   normalizeTelegramSessionTransport(stringSession);
   
@@ -261,6 +274,28 @@ const initTelegramClient = async (apiId, apiHash) => {
     } catch (e) {
       console.error(`[User ${context.getUserId()}] Не вдалося підключитися до Telegram за існуючою сесією:`, e?.message || e);
       setAuthError(state, e);
+      try {
+        await state.client.disconnect();
+      } catch (_) {}
+      const emptySession = new StringSession("");
+      normalizeTelegramSessionTransport(emptySession);
+      state.client = new TelegramClient(emptySession, parseInt(apiId), apiHash, {
+        connection: getTelegramConnectionClass(),
+        connectionRetries: TELEGRAM_CONNECTION_RETRIES,
+        retryDelay: TELEGRAM_RETRY_DELAY_MS,
+        timeout: TELEGRAM_CONNECT_TIMEOUT_SEC,
+        requestRetries: 5,
+        useWSS: TELEGRAM_USE_HTTPS_PORT,
+        proxy: getTelegramProxy(),
+        appVersion: "Solar Service CRM",
+        deviceModel: "Railway Node.js",
+        systemVersion: process.version
+      });
+      try {
+        state.client.setLogLevel("warn");
+      } catch (_) {}
+      state.clientOwnerUserId = userId;
+      resetAuthState(state);
     }
   }
 
@@ -275,17 +310,7 @@ const getAuthStep = () => {
         if (state.authResolvers.phoneNumber) return 'phone';
         return null;
     } catch(e) {
-        const userId = context.getUserId();
-        // Start the background auth flow, preserving the user context
-        context.runWithContext({ userId }, () => {
-            startAuthFlow().catch(err => {
-                console.error(`[User ${userId}] Auth flow error:`, err);
-                const state = getTenantState();
-                state.currentAuthStep = { step: 'error', error: err.message };
-            });
-        });
-        
-        return { success: true };
+        return null;
     }
 };
 

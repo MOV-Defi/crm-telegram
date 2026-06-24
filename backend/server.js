@@ -49,7 +49,7 @@ const authAttemptMap = new Map();
 
 const base64UrlEncode = (value) => Buffer.from(value).toString('base64url');
 const base64UrlDecodeJson = (value) => JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
-const signJwtLikeToken = (payload, secret, expiresInSec = 7 * 24 * 60 * 60) => {
+const signJwtLikeToken = (payload, secret, expiresInSec = 30 * 24 * 60 * 60) => {
   const header = { alg: 'HS256', typ: 'JWT' };
   const exp = Math.floor(Date.now() / 1000) + Number(expiresInSec);
   const fullPayload = { ...payload, exp };
@@ -451,9 +451,16 @@ app.post('/api/auth/phone', async (req, res) => {
   if (state.error) {
     return res.status(400).json({ success: false, error: state.error });
   }
+  if (!state.step) {
+    return res.status(202).json({
+      success: false,
+      waitingFor: 'phone',
+      message: 'Telegram ще готує запит коду. Зачекайте кілька секунд і спробуйте ще раз.'
+    });
+  }
   return res.status(202).json({
     success: true,
-    waitingFor: state.step || 'code',
+    waitingFor: state.step,
     message: 'Phone accepted'
   });
 });
