@@ -86,6 +86,14 @@ export default function Auth({ onAuthenticated, appTheme = 'dark', embedded = fa
 
         await tryStartFlow();
 
+        try {
+            const { data: afterStartStatus } = await requestJson(`${API_URL}/auth/status`);
+            if (afterStartStatus?.connected) {
+                onAuthenticated();
+                return;
+            }
+        } catch (_) {}
+
         // Відправляємо номер з повторними спробами
         let phoneAccepted = false;
         let lastPhoneError = null;

@@ -418,6 +418,20 @@ app.post('/api/auth/start', async (req, res) => {
 });
 
 app.post('/api/auth/phone', async (req, res) => {
+  const client = getClient();
+  const step = getAuthStep();
+  if (client && client.connected && !step) {
+    try {
+      const connected = await Promise.race([
+        client.checkAuthorization().catch((error) => { throw error; }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+      ]);
+      if (connected) {
+        return res.json({ success: true, connected: true, waitingFor: null });
+      }
+    } catch (_) {}
+  }
+
   const { phone } = req.body;
   const resolvePhone = () => context.runWithContext(
     { userId: req.userId },
