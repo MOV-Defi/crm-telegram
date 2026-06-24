@@ -418,6 +418,11 @@ router.get('/:id/topics', async (req, res) => {
     }
 
     const channel = await client.getInputEntity(peerCandidate);
+    const entityType = String(channel?.className || channel?.constructor?.name || '');
+    if (entityType && !/InputChannel/i.test(entityType)) {
+      return res.json({ topics: [] });
+    }
+
     const result = await client.invoke(new Api.channels.GetForumTopics({
       channel,
       offsetDate: 0,
@@ -443,7 +448,7 @@ router.get('/:id/topics', async (req, res) => {
     return res.json({ topics: mapped });
   } catch (error) {
     const message = String(error?.message || '');
-    if (/TOPIC|FORUM|CHANNEL_INVALID|CHANNEL_PRIVATE|PEER_ID_INVALID|CHAT_ID_INVALID/i.test(message)) {
+    if (/TOPIC|FORUM|CHANNEL_INVALID|CHANNEL_PRIVATE|PEER_ID_INVALID|CHAT_ID_INVALID|InputPeerChat|InputChannel|Cannot cast/i.test(message)) {
       return res.json({ topics: [] });
     }
     console.error('topics GET error:', error);
