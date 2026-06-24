@@ -303,22 +303,46 @@ const getProjectMemberIds = (projectId) => (
 );
 
 const createProjectNotification = ({ projectId, userId, actorUserId, eventType, title, body = '', taskId = null, stageId = null }) => {
-  if (!Number.isFinite(Number(projectId)) || !Number.isFinite(Number(userId))) return;
-  db.central.prepare(`
-    INSERT INTO project_notifications (
-      project_id, user_id, actor_user_id, event_type, title, body, related_task_id, related_stage_id, created_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `).run(
-    Number(projectId),
-    Number(userId),
-    Number.isFinite(Number(actorUserId)) ? Number(actorUserId) : null,
-    String(eventType || 'project').trim() || 'project',
-    String(title || '').trim() || 'Сповіщення по проєкту',
-    String(body || '').trim() || null,
-    Number.isFinite(Number(taskId)) ? Number(taskId) : null,
-    Number.isFinite(Number(stageId)) ? Number(stageId) : null
-  );
+  const safeProjectId = Number(projectId);
+  const safeUserId = Number(userId);
+  if (!Number.isFinite(safeProjectId) || !Number.isFinite(safeUserId)) return;
+
+  const projectExists = db.central.prepare('SELECT 1 FROM projects WHERE id = ? LIMIT 1').get(safeProjectId);
+  const userExists = db.central.prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1').get(safeUserId);
+  if (!projectExists || !userExists) return;
+
+  const safeActorUserId = Number.isFinite(Number(actorUserId)) ? Number(actorUserId) : null;
+  const actorExists = safeActorUserId
+    ? db.central.prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1').get(safeActorUserId)
+    : null;
+  const safeTaskId = Number.isFinite(Number(taskId)) ? Number(taskId) : null;
+  const taskExists = safeTaskId
+    ? db.central.prepare('SELECT 1 FROM project_tasks WHERE id = ? AND project_id = ? LIMIT 1').get(safeTaskId, safeProjectId)
+    : null;
+  const safeStageId = Number.isFinite(Number(stageId)) ? Number(stageId) : null;
+  const stageExists = safeStageId
+    ? db.central.prepare('SELECT 1 FROM project_stages WHERE id = ? AND project_id = ? LIMIT 1').get(safeStageId, safeProjectId)
+    : null;
+
+  try {
+    db.central.prepare(`
+      INSERT INTO project_notifications (
+        project_id, user_id, actor_user_id, event_type, title, body, related_task_id, related_stage_id, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      safeProjectId,
+      safeUserId,
+      actorExists ? safeActorUserId : null,
+      String(eventType || 'project').trim() || 'project',
+      String(title || '').trim() || 'Сповіщення по проєкту',
+      String(body || '').trim() || null,
+      taskExists ? safeTaskId : null,
+      stageExists ? safeStageId : null
+    );
+  } catch (error) {
+    console.error('project notification create error:', error);
+  }
 };
 
 const notifyProjectMembers = (projectId, actorUserId, payload, options = {}) => {
