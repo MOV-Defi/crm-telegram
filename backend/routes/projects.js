@@ -1326,6 +1326,64 @@ router.post('/:id/finance', (req, res) => {
   }
 });
 
+
+router.patch('/:projectId/finance/:financeId', (req, res) => {
+  try {
+    const projectId = Number.parseInt(req.params.projectId, 10);
+    const financeId = Number.parseInt(req.params.financeId, 10);
+    if (!Number.isFinite(projectId) || !Number.isFinite(financeId)) {
+      return res.status(400).json({ error: 'Некоректні параметри' });
+    }
+    const current = getAccessibleProjectRow(projectId, req.userId);
+    if (!current) return res.status(404).json({ error: 'Проєкт не знайдено або доступ заборонено' });
+
+    const financeExists = db.central.prepare('SELECT id FROM project_finance_entries WHERE id = ? AND project_id = ? LIMIT 1').get(financeId, projectId);
+    if (!financeExists) return res.status(404).json({ error: 'Фінансову операцію не знайдено' });
+
+    const type = String(req.body?.type || '').trim().toLowerCase();
+    if (type !== 'income' && type !== 'expense') {
+      return res.status(400).json({ error: 'Некоректний тип операції' });
+    }
+    const amountRaw = String(req.body?.amount || '').trim().replace(',', '.');
+    const amountNum = Number.parseFloat(amountRaw);
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      return res.status(400).json({ error: 'Сума має бути більше 0' });
+    }
+    const currencyRaw = String(req.body?.currency || 'UAH').trim().toUpperCase();
+    const currency = currencyRaw === 'USD' ? 'USD' : 'UAH';
+    const paymentDate = String(req.body?.paymentDate || '').trim();
+    const paymentMethodRaw = String(req.body?.paymentMethod || '').trim().toLowerCase();
+    const paymentMethod = paymentMethodRaw === 'cash' || paymentMethodRaw === 'cashless' ? paymentMethodRaw : null;
+    const usdRateRaw = String(req.body?.usdRate || '').trim().replace(',', '.');
+    const usdRateNum = Number.parseFloat(usdRateRaw);
+    const usdRate = Number.isFinite(usdRateNum) && usdRateNum > 0 ? String(usdRateNum) : null;
+    const note = String(req.body?.note || '').trim();
+
+    db.central.prepare(`
+      UPDATE project_finance_entries
+      SET entry_type = ?, amount = ?, currency = ?, usd_rate = ?, payment_method = ?, payment_date = ?, note = ?, updated_at = ?
+      WHERE id = ? AND project_id = ?
+    `).run(
+      type,
+      String(amountNum),
+      currency,
+      usdRate,
+      paymentMethod,
+      paymentDate || null,
+      note || null,
+      new Date().toISOString(),
+      financeId,
+      projectId
+    );
+    db.central.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+    const project = loadProjectForUser(projectId, req.userId);
+    return res.json({ project });
+  } catch (error) {
+    console.error('projects finance update error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 router.delete('/:projectId/finance/:financeId', (req, res) => {
   try {
     const projectId = Number.parseInt(req.params.projectId, 10);

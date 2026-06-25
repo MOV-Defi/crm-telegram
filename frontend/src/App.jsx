@@ -326,6 +326,7 @@ function App({ currentUser: initialUser }) {
   const [calendarMonthOffset, setCalendarMonthOffset] = useState(0);
   const [selectedCalendarTaskKey, setSelectedCalendarTaskKey] = useState('');
   const [projectFinanceDraft, setProjectFinanceDraft] = useState({ type: 'income', amount: '', currency: 'UAH', usdRate: '', paymentMethod: 'cashless', paymentDate: '', note: '' });
+  const [projectFinanceEditId, setProjectFinanceEditId] = useState(null);
   const [projectFinanceSaving, setProjectFinanceSaving] = useState(false);
   const [projectSpecificationSaving, setProjectSpecificationSaving] = useState(false);
   const [projectInvoiceSaving, setProjectInvoiceSaving] = useState(false);
@@ -2569,9 +2570,10 @@ function App({ currentUser: initialUser }) {
       }
       setProjectFinanceSaving(true);
       const entryType = typeOverride || projectFinanceDraft.type || 'income';
+      const editId = projectFinanceEditId;
       try {
-          const res = await fetch(buildApiUrlWithToken(`/projects/${selectedProject.id}/finance`), {
-              method: 'POST',
+          const res = await fetch(buildApiUrlWithToken(editId ? `/projects/${selectedProject.id}/finance/${editId}` : `/projects/${selectedProject.id}/finance`), {
+              method: editId ? 'PATCH' : 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                   type: entryType,
@@ -2590,11 +2592,33 @@ function App({ currentUser: initialUser }) {
               await loadProjects();
           }
           setProjectFinanceDraft((prev) => ({ ...prev, amount: '', usdRate: '', note: '', paymentDate: prev.paymentDate || todayIso }));
+          setProjectFinanceEditId(null);
       } catch (error) {
           alert(error?.message || 'Не вдалося додати фінансову операцію');
       } finally {
           setProjectFinanceSaving(false);
       }
+  };
+
+
+  const handleStartProjectFinanceEdit = (entry) => {
+      if (!entry?.id) return;
+      setProjectFinanceEditId(entry.id);
+      setProjectFinanceDraft({
+          type: String(entry.type || 'income') === 'expense' ? 'expense' : 'income',
+          amount: String(entry.amount || ''),
+          currency: String(entry.currency || 'UAH').toUpperCase() === 'USD' ? 'USD' : 'UAH',
+          usdRate: String(entry.usdRate || ''),
+          paymentMethod: entry.paymentMethod || 'cashless',
+          paymentDate: entry.paymentDate || todayIso,
+          note: entry.note || ''
+      });
+      setProjectViewTab('finance');
+  };
+
+  const handleCancelProjectFinanceEdit = () => {
+      setProjectFinanceEditId(null);
+      setProjectFinanceDraft((prev) => ({ ...prev, amount: '', usdRate: '', note: '', paymentDate: prev.paymentDate || todayIso }));
   };
 
   const handleDeleteProjectFinanceEntry = async (entryId) => {
@@ -10524,7 +10548,10 @@ function App({ currentUser: initialUser }) {
                       </div>
                     </div>
                     <div className={`rounded-xl border p-3 ${projectPanelClass}`}>
-                      <div className={`text-sm font-semibold mb-2 ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>Нова фінансова операція</div>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className={`text-sm font-semibold ${isLightTheme ? 'text-slate-800' : 'text-slate-200'}`}>{projectFinanceEditId ? 'Редагування фінансової операції' : 'Нова фінансова операція'}</div>
+                        {projectFinanceEditId && <button type="button" onClick={handleCancelProjectFinanceEdit} className="px-2 py-1 rounded border border-slate-500/40 text-slate-300 text-xs hover:bg-slate-500/10">Скасувати</button>}
+                      </div>
                       <div className="grid grid-cols-1 gap-3">
                         <div className={`rounded-lg border p-2 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-slate-700 bg-slate-900/50'}`}>
                           <div className={`text-xs mb-2 ${isLightTheme ? 'text-slate-600' : 'text-slate-300'}`}>Додати дохід</div>
@@ -10577,7 +10604,7 @@ function App({ currentUser: initialUser }) {
                               disabled={projectFinanceSaving}
                               className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60"
                             >
-                              {projectFinanceSaving ? 'Збереження...' : 'Додати дохід'}
+                              {projectFinanceSaving ? 'Збереження...' : (projectFinanceEditId ? 'Зберегти дохід' : 'Додати дохід')}
                             </button>
                           </div>
                         </div>
@@ -10632,7 +10659,7 @@ function App({ currentUser: initialUser }) {
                               disabled={projectFinanceSaving}
                               className="px-3 py-2 rounded-lg bg-red-600 text-white text-sm disabled:opacity-60"
                             >
-                              {projectFinanceSaving ? 'Збереження...' : 'Додати витрату'}
+                              {projectFinanceSaving ? 'Збереження...' : (projectFinanceEditId ? 'Зберегти витрату' : 'Додати витрату')}
                             </button>
                           </div>
                         </div>
@@ -10664,7 +10691,10 @@ function App({ currentUser: initialUser }) {
                                 </span>
                                 <span className={`text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>{Number(parseMoneyValue(entry.amount)).toLocaleString('uk-UA')} {entry.currency === 'USD' ? '$' : 'грн'}</span>
                               </div>
-                              <button type="button" onClick={() => handleDeleteProjectFinanceEntry(entry.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10">Видалити</button>
+                              <div className="flex items-center gap-2">
+                                <button type="button" onClick={() => handleStartProjectFinanceEdit(entry)} className="px-2 py-1 rounded border border-blue-500/40 text-blue-300 text-xs hover:bg-blue-500/10">Редагувати</button>
+                                <button type="button" onClick={() => handleDeleteProjectFinanceEntry(entry.id)} className="px-2 py-1 rounded border border-red-500/40 text-red-300 text-xs hover:bg-red-500/10">Видалити</button>
+                              </div>
                             </div>
                             <div className={`mt-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-slate-400'}`}>
                               Дата: {entry.paymentDate || '—'} {entry.note ? `• ${entry.note}` : ''}
