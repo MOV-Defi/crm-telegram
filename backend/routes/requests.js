@@ -788,6 +788,47 @@ const normalizeSentMessage = (sentResult) => {
   return sentResult || null;
 };
 
+const normalizeTelegramPeerId = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.replace(/^-100/, '').replace(/^-/, '');
+};
+
+const resolveRequestTargetEntity = async (client, template) => {
+  const targetId = String(template?.target_chat_id || '').trim();
+  const targetName = String(template?.target_chat_name || '').trim();
+  if (!targetId && !targetName) {
+    throw new Error('Для цієї заяви не вибрано чат призначення');
+  }
+
+  for (const candidate of [targetId, targetName].filter(Boolean)) {
+    try {
+      return await client.getInputEntity(candidate);
+    } catch (_) {}
+  }
+
+  const normalizedTargetId = normalizeTelegramPeerId(targetId);
+  const normalizedTargetName = targetName.toLowerCase();
+  try {
+    const dialogs = await client.getDialogs({ limit: 500 });
+    for (const dialog of dialogs || []) {
+      const entity = dialog?.entity || dialog;
+      const dialogId = normalizeTelegramPeerId(entity?.id ?? dialog?.id ?? '');
+      const dialogTitle = String(dialog?.title || dialog?.name || entity?.title || entity?.username || '').trim();
+      if (
+        (normalizedTargetId && dialogId && dialogId === normalizedTargetId) ||
+        (normalizedTargetName && dialogTitle.toLowerCase() === normalizedTargetName)
+      ) {
+        return dialog.inputEntity || await client.getInputEntity(entity);
+      }
+    }
+  } catch (error) {
+    console.warn('request target dialog resolve failed:', error?.message || error);
+  }
+
+  throw new Error('CRM бачить цей чат у списку, але Telegram не дав актуальний доступ до нього. Натисніть “Оновити” біля вибору чату, переоберіть чат і спробуйте ще раз.');
+};
+
 const saveRequestHistory = ({
   template,
   messageId,
@@ -1565,6 +1606,8 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       return res.status(503).json({ error: 'Telegram клієнт не підключений' });
     }
 
+    const targetEntity = await resolveRequestTargetEntity(client, template);
+
     const templateWithFields = hydrateTemplateFields(parseTemplate(template));
     if (!templateWithFields) {
       return res.status(500).json({ error: 'Не вдалося прочитати шаблон заявки' });
@@ -1622,7 +1665,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       const caption = trimTelegramCaption(buildLogisticsStandardCaption(chatIntro));
       const formattingEntities = await buildMentionEntities(client, templateWithFields, values, caption);
 
-      const sent = await client.sendFile(template.target_chat_id, {
+      const sent = await client.sendFile(targetEntity, {
         file: generated.docxPath,
         caption,
         formattingEntities
@@ -1651,7 +1694,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       const caption = trimTelegramCaption(buildPurchaseStandardCaption(chatIntro));
       const formattingEntities = await buildMentionEntities(client, templateWithFields, values, caption);
 
-      const sent = await client.sendFile(template.target_chat_id, {
+      const sent = await client.sendFile(targetEntity, {
         file: generated.docxPath,
         caption,
         formattingEntities
@@ -1715,7 +1758,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
     };
 
     if (uploadedFilePath) {
-      const sent = await client.sendFile(template.target_chat_id, {
+      const sent = await client.sendFile(targetEntity, {
         file: uploadedFilePath,
         caption: outgoingMessage,
         formattingEntities: outgoingMentionEntities
@@ -1736,7 +1779,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         });
       }
     } else {
-      const sent = await client.sendMessage(template.target_chat_id, {
+      const sent = await client.sendMessage(targetEntity, {
         message: outgoingMessage,
         formattingEntities: outgoingMentionEntities
       });
