@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { initTelegramClient } = require('../telegram');
+const { getTelegramApiSettings, saveTelegramApiSettingsForCurrentTenant, maskApiHash } = require('../telegram-api-settings');
 const context = require('../context');
 const runtimePaths = require('../runtime-paths');
 const fs = require('fs');
@@ -46,14 +47,12 @@ const clearDirectoryContents = (dirPath) => {
 
 router.get('/telegram', (req, res) => {
     try {
-        const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
-        const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
-        const apiId = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
-        const apiHash = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
-        res.json({ 
+        const { apiId, apiHash, source } = getTelegramApiSettings();
+        res.json({
             configured: !!(apiId && apiHash),
             apiId,
-            apiHash: apiHash ? apiHash.substring(0, 4) + '...' + apiHash.substring(apiHash.length - 4) : ''
+            apiHash: maskApiHash(apiHash),
+            source
         });
     } catch (e) {
         console.error('settings/telegram POST error:', e);
@@ -66,23 +65,21 @@ router.post('/telegram', async (req, res) => {
     const apiHashInput = String(req.body?.apiHash || '').trim();
 
     try {
-        const currentIdRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
-        const currentHashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
-        
-        let finalApiId = apiIdInput || String(currentIdRow?.value || '').trim();
-        let finalApiHash = apiHashInput || String(currentHashRow?.value || '').trim();
+        const currentSettings = getTelegramApiSettings();
+
+        let finalApiId = apiIdInput || String(currentSettings.apiId || '').trim();
+        let finalApiHash = apiHashInput || String(currentSettings.apiHash || '').trim();
 
         // Захист: якщо прийшов маскований хеш (з крапками), не перезаписуємо ним існуючий
         if (apiHashInput.includes('...')) {
-            finalApiHash = String(currentHashRow?.value || '').trim();
+            finalApiHash = String(currentSettings.apiHash || '').trim();
         }
 
         if (!finalApiId || !finalApiHash) {
             return res.status(400).json({ error: "Введіть API ID та API HASH" });
         }
 
-        db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('api_id', finalApiId);
-        db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('api_hash', finalApiHash);
+        saveTelegramApiSettingsForCurrentTenant(finalApiId, finalApiHash);
 
         // Update locals
         req.app.locals.API_ID = finalApiId;

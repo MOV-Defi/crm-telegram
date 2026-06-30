@@ -14,6 +14,7 @@ const db = require('./db');
 const runtimePaths = require('./runtime-paths');
 const context = require('./context');
 const { initTelegramClient, startAuthFlow, resolveAuthStep, getClient, getAuthStep, getAuthError } = require('./telegram');
+const { getTelegramApiSettings } = require('./telegram-api-settings');
 
 const app = express();
 
@@ -382,11 +383,10 @@ app.post('/api/auth/start', async (req, res) => {
   try {
     let client = getClient();
     if (!client) {
-      const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
-      const hashRow = db.prepare("SELECT value FROM settings WHERE key = 'api_hash'").get();
-
-      const API_ID = String(idRow?.value || '').trim() || String(process.env.API_ID || '').trim();
-      const API_HASH = String(hashRow?.value || '').trim() || String(process.env.API_HASH || '').trim();
+      const { apiId: API_ID, apiHash: API_HASH, source: apiSettingsSource } = getTelegramApiSettings();
+      if (apiSettingsSource && apiSettingsSource !== 'tenant') {
+        console.log(`[User ${req.userId}] Telegram API settings loaded from ${apiSettingsSource}`);
+      }
 
       if (!API_ID || !API_HASH) {
         return res.status(500).json({ success: false, error: 'Налаштування API відсутні. Будь ласка, вкажіть API ID та API HASH в налаштуваннях.' });
