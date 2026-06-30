@@ -86,7 +86,10 @@ const getTenantState = () => {
             authFlowActive: false,
             authFlowPromise: null,
             authError: null,
-            authErrorLogged: false
+            authErrorLogged: false,
+            apiId: null,
+            apiHash: null,
+            sessionString: ''
         });
     }
     return clientsData.get(userId);
@@ -177,11 +180,58 @@ const saveSession = (sessionString) => {
   }
 };
 
-const normalizeTelegramSessionTransport = (stringSession) => {
+const normalizeTelegramSessionTransport = (stringSession, port = (TELEGRAM_USE_HTTPS_PORT ? 443 : 80)) => {
+  if (!port) return;
   const dcId = stringSession.dcId || DEFAULT_TELEGRAM_DC.dcId;
   const host = stringSession.serverAddress || DEFAULT_TELEGRAM_DC.host;
-  const port = TELEGRAM_USE_HTTPS_PORT ? 443 : 80;
   stringSession.setDC(dcId, host, port);
+};
+
+const makeConnectionProfile = (name, connection, port, useWSS) => ({ name, connection, port, useWSS });
+
+const getTelegramConnectionProfiles = () => {
+    const configured = TELEGRAM_CONNECTION_MODE === 'abridged'
+        ? makeConnectionProfile('abridged-env', ConnectionTCPAbridged, TELEGRAM_USE_HTTPS_PORT ? 443 : 80, TELEGRAM_USE_HTTPS_PORT)
+        : makeConnectionProfile('obfuscated-env', ConnectionTCPObfuscated, TELEGRAM_USE_HTTPS_PORT ? 443 : 80, TELEGRAM_USE_HTTPS_PORT);
+    const profiles = [
+        configured,
+        makeConnectionProfile('obfuscated-443', ConnectionTCPObfuscated, 443, true),
+        makeConnectionProfile('abridged-443', ConnectionTCPAbridged, 443, true),
+        makeConnectionProfile('default', null, null, undefined),
+        makeConnectionProfile('obfuscated-80', ConnectionTCPObfuscated, 80, false),
+        makeConnectionProfile('abridged-80', ConnectionTCPAbridged, 80, false)
+    ];
+    const seen = new Set();
+    return profiles.filter((profile) => {
+        const key = [profile.name, profile.connection?.name || 'default', profile.port || 'default', String(profile.useWSS)].join(':');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+};
+
+const createTelegramClient = (sessionValue, apiId, apiHash, profile = null) => {
+  const stringSession = new StringSession(String(sessionValue || ''));
+  if (profile?.port) {
+    normalizeTelegramSessionTransport(stringSession, profile.port);
+  }
+  const options = {
+    connectionRetries: TELEGRAM_CONNECTION_RETRIES,
+    retryDelay: TELEGRAM_RETRY_DELAY_MS,
+    timeout: TELEGRAM_CONNECT_TIMEOUT_SEC,
+    requestRetries: 5,
+    proxy: getTelegramProxy(),
+    appVersion: 'Solar Service CRM',
+    deviceModel: 'Railway Node.js',
+    systemVersion: process.version
+  };
+  if (profile?.connection) options.connection = profile.connection;
+  if (typeof profile?.useWSS === 'boolean') options.useWSS = profile.useWSS;
+  const client = new TelegramClient(stringSession, parseInt(apiId), apiHash, options);
+  try {
+    client.setLogLevel('warn');
+  } catch (_) {}
+  return client;
 };
 
 const isTelegramNetworkError = (error) => {
@@ -219,23 +269,38 @@ const connectTelegramClient = async (state, reason = 'connect') => {
     if (state.client.connected) return state.client;
 
     let lastError = null;
-    const timeoutMs = TELEGRAM_CONNECT_TIMEOUT_SEC * 1000;
-    for (let attempt = 1; attempt <= TELEGRAM_CONNECTION_RETRIES; attempt += 1) {
-        try {
-            console.log(`[User ${context.getUserId()}] Telegram ${reason}: attempt ${attempt}/${TELEGRAM_CONNECTION_RETRIES}`);
-            await withTimeout(state.client.connect(), timeoutMs, 'Telegram connect');
-            normalizeTelegramSessionTransport(state.client.session);
-            return state.client;
-        } catch (error) {
-            lastError = error;
-            console.warn(`[User ${context.getUserId()}] Telegram ${reason} failed (${attempt}/${TELEGRAM_CONNECTION_RETRIES}):`, error?.message || error);
+    const isAuthStart = reason === 'auth start';
+    const timeoutMs = (isAuthStart ? Math.min(10000, TELEGRAM_CONNECT_TIMEOUT_SEC * 1000) : TELEGRAM_CONNECT_TIMEOUT_SEC * 1000);
+    const attemptsPerProfile = isAuthStart ? 1 : TELEGRAM_CONNECTION_RETRIES;
+    const profiles = state.apiId && state.apiHash && isAuthStart ? getTelegramConnectionProfiles() : [null];
+
+    for (const profile of profiles) {
+        if (profile) {
             try {
                 await state.client.disconnect();
             } catch (_) {}
-            if (attempt < TELEGRAM_CONNECTION_RETRIES) {
-                await wait(TELEGRAM_RETRY_DELAY_MS * attempt);
+            state.client = createTelegramClient(state.sessionString || '', state.apiId, state.apiHash, profile);
+            state.clientOwnerUserId = state.userId;
+        }
+        const profileName = profile?.name || 'current';
+        for (let attempt = 1; attempt <= attemptsPerProfile; attempt += 1) {
+            try {
+                console.log(`[User ${context.getUserId()}] Telegram ${reason}: ${profileName} attempt ${attempt}/${attemptsPerProfile}`);
+                await withTimeout(state.client.connect(), timeoutMs, 'Telegram connect');
+                console.log(`[User ${context.getUserId()}] Telegram ${reason}: connected via ${profileName}`);
+                return state.client;
+            } catch (error) {
+                lastError = error;
+                console.warn(`[User ${context.getUserId()}] Telegram ${reason} failed via ${profileName} (${attempt}/${attemptsPerProfile}):`, error?.message || error);
+                try {
+                    await state.client.disconnect();
+                } catch (_) {}
+                if (attempt < attemptsPerProfile) {
+                    await wait(TELEGRAM_RETRY_DELAY_MS * attempt);
+                }
             }
         }
+        if (!isAuthStart && profiles.length === 1) break;
     }
 
     throw lastError || new Error('Telegram connect failed');
@@ -246,24 +311,10 @@ const initTelegramClient = async (apiId, apiHash) => {
   const userId = context.getUserId();
   const sessionString = getSession();
   resetAuthState(state);
-  const stringSession = new StringSession(sessionString);
-  normalizeTelegramSessionTransport(stringSession);
-  
-  state.client = new TelegramClient(stringSession, parseInt(apiId), apiHash, {
-    connection: getTelegramConnectionClass(),
-    connectionRetries: TELEGRAM_CONNECTION_RETRIES,
-    retryDelay: TELEGRAM_RETRY_DELAY_MS,
-    timeout: TELEGRAM_CONNECT_TIMEOUT_SEC,
-    requestRetries: 5,
-    useWSS: TELEGRAM_USE_HTTPS_PORT,
-    proxy: getTelegramProxy(),
-    appVersion: 'Solar Service CRM',
-    deviceModel: 'Railway Node.js',
-    systemVersion: process.version
-  });
-  try {
-    state.client.setLogLevel('warn');
-  } catch (_) {}
+  state.apiId = apiId;
+  state.apiHash = apiHash;
+  state.sessionString = sessionString;
+  state.client = createTelegramClient(sessionString, apiId, apiHash, getTelegramConnectionProfiles()[0]);
   state.clientOwnerUserId = userId;
 
   if (sessionString) {
@@ -277,25 +328,12 @@ const initTelegramClient = async (apiId, apiHash) => {
       try {
         await state.client.disconnect();
       } catch (_) {}
-      const emptySession = new StringSession("");
-      normalizeTelegramSessionTransport(emptySession);
-      state.client = new TelegramClient(emptySession, parseInt(apiId), apiHash, {
-        connection: getTelegramConnectionClass(),
-        connectionRetries: TELEGRAM_CONNECTION_RETRIES,
-        retryDelay: TELEGRAM_RETRY_DELAY_MS,
-        timeout: TELEGRAM_CONNECT_TIMEOUT_SEC,
-        requestRetries: 5,
-        useWSS: TELEGRAM_USE_HTTPS_PORT,
-        proxy: getTelegramProxy(),
-        appVersion: "Solar Service CRM",
-        deviceModel: "Railway Node.js",
-        systemVersion: process.version
-      });
-      try {
-        state.client.setLogLevel("warn");
-      } catch (_) {}
+      state.sessionString = '';
+      state.client = createTelegramClient('', apiId, apiHash, getTelegramConnectionProfiles()[0]);
       state.clientOwnerUserId = userId;
       resetAuthState(state);
+      state.apiId = apiId;
+      state.apiHash = apiHash;
     }
   }
 
@@ -349,8 +387,8 @@ const startAuthFlow = async () => {
             });
             
             console.log(`[User ${context.getUserId()}] Ви успішно авторизовані!`);
-            normalizeTelegramSessionTransport(state.client.session);
             saveSession(state.client.session.save());
+            state.sessionString = state.client.session.save();
             return { success: true };
         } catch (error) {
             const message = setAuthError(state, error);
