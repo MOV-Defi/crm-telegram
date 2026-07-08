@@ -714,7 +714,7 @@ setInterval(async () => {
           }
         }
 
-        if (reminder.enabled && reminder.time === nowTime && reminder.lastSentDate !== today) {
+        if (reminder.enabled && String(reminder.time || '09:00').slice(0, 5) <= nowTime && reminder.lastSentDate !== today) {
           const digestTasks = tasks.filter((task) => isTaskInDailyDigest(task, today));
           const ok = await sendBotMessageForUser(u.id, buildTaskDailyDigestText(digestTasks, today));
           if (ok) {

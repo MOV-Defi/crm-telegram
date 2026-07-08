@@ -9453,7 +9453,7 @@ function App({ currentUser: initialUser }) {
 
               <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3">
                   <div className="flex flex-wrap gap-2">
-                      {['inbox', 'today', 'upcoming', 'overdue', 'someday', 'done', 'board'].map((key) => (
+                      {['inbox', 'today', 'upcoming', 'overdue', 'someday', 'done', 'board', 'settings'].map((key) => (
                           <button
                               key={key}
                               type="button"
