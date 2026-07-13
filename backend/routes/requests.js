@@ -12,11 +12,9 @@ const crypto = require('crypto');
 const AdmZip = require('adm-zip');
 const sharp = require('sharp');
 const { Api } = require('telegram');
-const { parseWarehouseItemsFromFile } = require('../warehouse-file-items');
 
 const router = express.Router();
 let requestHistoryHasProjectColumn = null;
-const TEXT_QTY_UNIT_PATTERN = 'шт\\.?|штук|м\\.?\\s*п\\.?|мп|м²|м2|пог\\.?\\s*м\\.?|м|кг|компл\\.?|упак\\.?|pcs';
 const REQUEST_TEMPLATE_TARGETS_KEY = 'request_template_targets_v1';
 
 const readRequestTemplateTargets = () => {
@@ -46,37 +44,6 @@ const applyUserTemplateTarget = (templateRow) => {
   };
 };
 
-const normalizeTextUnit = (unit) => String(unit || '').replace(/\s+/g, '').trim();
-
-const parseWarehouseTextItemLine = (line) => {
-  const cleaned = String(line || '')
-    .replace(/^\d+[\).\s-]+/, '')
-    .replace(/^[-•]\s*/, '')
-    .replace(/^["'“”„«»]+/, '')
-    .replace(/["'“”„«»]+$/, '')
-    .trim();
-
-  const parts = cleaned.split(/\s*[|;\t]\s*/).map((part) => part.trim()).filter(Boolean);
-  if (parts.length >= 3) {
-    return {
-      name: parts[0],
-      code: parts[1],
-      requestedQty: parts[2],
-      unit: normalizeTextUnit(parts[3] || '')
-    };
-  }
-
-  const dashQtyMatch = cleaned.match(new RegExp(`^(.+?)\\s*[-–—]\\s*(\\d+(?:[,.]\\d+)?)\\s*(${TEXT_QTY_UNIT_PATTERN})?(?:\\b|\\s|$)(?:.*)?$`, 'i'));
-  const endQtyMatch = cleaned.match(new RegExp(`^(.+?)\\s+(\\d+(?:[,.]\\d+)?)\\s*(${TEXT_QTY_UNIT_PATTERN})\\s*$`, 'i'));
-  const qtyMatch = dashQtyMatch || endQtyMatch;
-  const name = qtyMatch?.[1]?.trim() || cleaned;
-
-  return {
-    name: name.replace(/\s*[-–—]\s*$/, '').trim(),
-    requestedQty: qtyMatch?.[2] || '',
-    unit: normalizeTextUnit(qtyMatch?.[3] || '')
-  };
-};
 
 
 const upload = multer({ dest: runtimePaths.mediaDir });
@@ -1185,42 +1152,6 @@ const writePurchaseDocx = (values, fileNameBase = 'purchase-request') => {
   return { docxPath, tempRoot };
 };
 
-const normalizeWarehouseItems = (items = []) => (
-  (Array.isArray(items) ? items : [])
-    .map((item, index) => {
-      const source = typeof item === 'string' ? { name: item } : (item || {});
-      const rawName = String(source.name || source.text || '').trim();
-      const parsedName = parseWarehouseTextItemLine(rawName);
-      const requestedQty = String(source.requestedQty || source.qty || parsedName.requestedQty || '').trim();
-      const unit = String(source.unit || parsedName.unit || '').trim();
-      const name = requestedQty && parsedName.requestedQty ? parsedName.name : rawName;
-      if (!name) return null;
-      return {
-      id: `item-${index + 1}`,
-      name: name.replace(/^\d+[\).\s-]+/, '').replace(/^[-•]\s*/, '').trim(),
-      code: String(source.code || source.sku || source.article || '').trim(),
-      requestedQty,
-      unit,
-      status: 'available',
-      comment: ''
-      };
-    })
-    .filter(Boolean)
-);
-
-const parseWarehouseItemsFromValues = (values = {}, filePath = '', originalName = '') => {
-  const fileItems = parseWarehouseItemsFromFile(filePath, originalName);
-  const textItems = String(getFieldValue(values, 'items_list') || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line) => !/специфікац|спецификация|додан[аоі]\s+файлом|добавлен[ао]?\s+файлом/i.test(line))
-    .map((line) => {
-      return parseWarehouseTextItemLine(line);
-    });
-
-  return normalizeWarehouseItems(fileItems.length > 0 ? fileItems : textItems);
-};
 
 router.get('/logistics/options', (req, res) => {
   try {
@@ -1581,9 +1512,7 @@ router.post('/send', upload.single('file'), (req, res, next) => {
 
   let tempDocxRoot = null;
   let uploadedFilePath = null;
-  let uploadedMediaPublicPath = null;
   let uploadedOriginalName = null;
-  let createdWarehouseOrder = null;
 
   try {
     const templateRow = db.central.prepare(`
@@ -1631,7 +1560,6 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         storedName = `${nameParts.base}_${crypto.randomBytes(3).toString('hex')}${nameParts.ext}`;
       }
       uploadedFilePath = path.join(runtimePaths.mediaDir, storedName);
-      uploadedMediaPublicPath = `/uploads/media/${storedName}`;
       if (shouldOptimizeImage) {
         try {
           const beforeBytes = fs.statSync(req.file.path).size;
@@ -1712,50 +1640,12 @@ router.post('/send', upload.single('file'), (req, res, next) => {
 
     const isWarehouseIssue = isWarehouseIssueTemplate(template);
     const includeIntroInBody = !isWarehouseIssue;
-    const requestMode = String(getFieldValue(values, 'request_mode') || '').trim();
-    const initialOrderStatus = 'new';
-    const initialRequestType = requestMode === 'reservation' ? 'reservation' : 'issuance';
     const outgoingMessage = [
       includeIntroInBody ? chatIntro : '',
       message
     ].filter(Boolean).join('\n\n').trim();
     const outgoingMentionEntities = await buildMentionEntities(client, templateWithFields, values, outgoingMessage);
 
-    const createWarehouseOrder = ({
-      sentMessageId = null,
-      mediaPath = null,
-      mediaName = null
-    }) => {
-      const info = db.central.prepare(`
-        INSERT INTO warehouse_orders (
-          chat_id, chat_name, message_id, message_text, media_path, media_name, project_name, object_name, manager_name, requester_name, request_type, status,
-          created_by_user_id, created_by_username,
-          status_updated_at, status_updated_by_user_id, status_updated_by_username, items_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
-      `).run(
-        String(template.target_chat_id || ''),
-        String(template.target_chat_name || ''),
-        Number.isFinite(Number(sentMessageId)) ? Number(sentMessageId) : null,
-        String(outgoingMessage || '').slice(0, 4000),
-        mediaPath || null,
-        mediaName || null,
-        String(getFieldValue(values, 'object_name') || getFieldValue(values, 'project_name') || '').trim() || null,
-        String(getFieldValue(values, 'object_name') || getFieldValue(values, 'project_name') || '').trim() || null,
-        String(getFieldValue(values, 'manager_name') || '').trim() || null,
-        req.username || null,
-        initialRequestType,
-        initialOrderStatus,
-        req.userId || null,
-        req.username || null,
-        req.userId || null,
-        req.username || null,
-        JSON.stringify(parseWarehouseItemsFromValues(values, uploadedFilePath, uploadedOriginalName))
-      );
-      createdWarehouseOrder = db.central.prepare(`SELECT * FROM warehouse_orders WHERE id = ?`).get(Number(info.lastInsertRowid)) || null;
-      if (createdWarehouseOrder) {
-        createdWarehouseOrder.items = parseWarehouseItemsFromValues(values, uploadedFilePath, uploadedOriginalName);
-      }
-    };
 
     if (uploadedFilePath) {
       const sent = await client.sendFile(targetEntity, {
@@ -1771,13 +1661,6 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         values,
         req
       });
-      if (isWarehouseIssue) {
-        createWarehouseOrder({
-          sentMessageId: Number(sentMessage?.id),
-          mediaPath: uploadedMediaPublicPath,
-          mediaName: uploadedOriginalName || null
-        });
-      }
     } else {
       const sent = await client.sendMessage(targetEntity, {
         message: outgoingMessage,
@@ -1790,16 +1673,9 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         values,
         req
       });
-      if (isWarehouseIssue) {
-        createWarehouseOrder({
-          sentMessageId: Number(sent?.id),
-          mediaPath: null,
-          mediaName: null
-        });
-      }
     }
 
-    res.json({ success: true, message, warehouseOrder: createdWarehouseOrder });
+    res.json({ success: true, message });
   } catch (error) {
     console.error('requests/send error:', {
       templateId,

@@ -106,25 +106,6 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     PRIMARY KEY (user_id, permission_key),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
-  CREATE TABLE IF NOT EXISTS warehouse_orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id TEXT,
-    chat_name TEXT,
-    message_id INTEGER,
-    message_text TEXT,
-    media_path TEXT,
-    items_json TEXT NOT NULL DEFAULT '[]',
-    status TEXT NOT NULL DEFAULT 'new',
-    created_by_user_id INTEGER,
-    created_by_username TEXT,
-    assigned_to_user_id INTEGER,
-    assigned_to_username TEXT,
-    status_updated_at DATETIME,
-    status_updated_by_user_id INTEGER,
-    status_updated_by_username TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
   CREATE TABLE IF NOT EXISTS request_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     template_id INTEGER,
@@ -150,48 +131,6 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     linked_chat_ids_json TEXT NOT NULL DEFAULT '[]',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS departments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    description TEXT,
-    color TEXT NOT NULL DEFAULT '#2563eb',
-    lead_user_id INTEGER,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    created_by_user_id INTEGER,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (lead_user_id) REFERENCES users(id) ON DELETE SET NULL,
-    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
-  );
-  CREATE TABLE IF NOT EXISTS department_members (
-    department_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    role TEXT NOT NULL DEFAULT 'member',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (department_id, user_id),
-    FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS department_tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    department_id INTEGER NOT NULL,
-    project_id INTEGER,
-    title TEXT NOT NULL,
-    description TEXT,
-    status TEXT NOT NULL DEFAULT 'plan',
-    priority TEXT NOT NULL DEFAULT 'normal',
-    start_at TEXT,
-    due_at TEXT,
-    assigned_user_id INTEGER,
-    created_by_user_id INTEGER,
-    completed_at TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE CASCADE,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
-    FOREIGN KEY (assigned_user_id) REFERENCES users(id) ON DELETE SET NULL,
-    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
   );
   CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -348,13 +287,6 @@ const ensureCentralColumn = (tableName, columnName, definition) => {
   }
 };
 
-ensureCentralColumn('warehouse_orders', 'project_name', 'TEXT');
-ensureCentralColumn('warehouse_orders', 'object_name', 'TEXT');
-ensureCentralColumn('warehouse_orders', 'manager_name', 'TEXT');
-ensureCentralColumn('warehouse_orders', 'requester_name', 'TEXT');
-ensureCentralColumn('warehouse_orders', 'media_name', 'TEXT');
-ensureCentralColumn('warehouse_orders', 'request_type', "TEXT NOT NULL DEFAULT 'issuance'");
-ensureCentralColumn('warehouse_orders', 'items_json', "TEXT NOT NULL DEFAULT '[]'");
 ensureCentralColumn('request_history', 'project_name', 'TEXT');
 ensureCentralColumn('project_stages', 'plan_start', 'TEXT');
 ensureCentralColumn('project_stages', 'plan_end', 'TEXT');
@@ -458,20 +390,6 @@ const migrateTenantCreditManagersToCentral = () => {
 dbInitLog('migrateTenantCreditManagersToCentral start');
 migrateTenantCreditManagersToCentral();
 dbInitLog('migrateTenantCreditManagersToCentral done');
-safeDbWrite(centralDb, "migrate warehouse_orders reserved->new with request_type", () => {
-  centralDb.exec(`
-    UPDATE warehouse_orders
-    SET request_type = 'reservation'
-    WHERE status = 'reserved' AND (request_type IS NULL OR TRIM(request_type) = '');
-    UPDATE warehouse_orders
-    SET status = 'new'
-    WHERE status = 'reserved';
-    UPDATE warehouse_orders
-    SET request_type = 'issuance'
-    WHERE request_type IS NULL OR TRIM(request_type) = '';
-  `);
-});
-dbInitLog('warehouse_orders migration done');
 safeDbWrite(centralDb, 'project indexes', () => {
   centralDb.exec(`
     CREATE INDEX IF NOT EXISTS idx_project_members_user_id ON project_members(user_id);
@@ -484,11 +402,6 @@ safeDbWrite(centralDb, 'project indexes', () => {
     CREATE INDEX IF NOT EXISTS idx_project_notes_project_id ON project_notes(project_id);
     CREATE INDEX IF NOT EXISTS idx_project_notifications_user_id ON project_notifications(user_id, is_read, created_at);
     CREATE INDEX IF NOT EXISTS idx_project_notifications_project_id ON project_notifications(project_id);
-    CREATE INDEX IF NOT EXISTS idx_department_members_department_id ON department_members(department_id);
-    CREATE INDEX IF NOT EXISTS idx_department_members_user_id ON department_members(user_id);
-    CREATE INDEX IF NOT EXISTS idx_department_tasks_department_id ON department_tasks(department_id);
-    CREATE INDEX IF NOT EXISTS idx_department_tasks_assigned_user_id ON department_tasks(assigned_user_id);
-    CREATE INDEX IF NOT EXISTS idx_department_tasks_project_id ON department_tasks(project_id);
   `);
 });
 dbInitLog('project indexes ensured');

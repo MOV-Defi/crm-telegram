@@ -273,22 +273,10 @@ const ALLOWED_PERMISSION_KEYS = new Set([
   'can_manage_documents',
   'can_manage_tags',
   'can_manage_broadcasts',
-  'can_manage_requests',
-  'can_manage_departments',
-  'can_manage_warehouse_orders',
-  'can_view_warehouse_orders',
-  'can_edit_warehouse_orders'
+  'can_manage_requests'
 ]);
 
-const normalizeWarehousePermissions = (permissions) => {
-  const normalized = { ...(permissions || {}) };
-  const legacyManage = Boolean(normalized.can_manage_warehouse_orders);
-  const canEdit = Boolean(normalized.can_edit_warehouse_orders || legacyManage);
-  const canView = Boolean(normalized.can_view_warehouse_orders || canEdit);
-  normalized.can_edit_warehouse_orders = canEdit;
-  normalized.can_view_warehouse_orders = canView;
-  return normalized;
-};
+
 
 app.get('/api/system/users/:id/permissions', verifyAuthToken, requireAdmin, (req, res) => {
   try {
@@ -301,7 +289,7 @@ app.get('/api/system/users/:id/permissions', verifyAuthToken, requireAdmin, (req
     `).all(targetUserId);
     const permissions = {};
     for (const row of rows) permissions[row.permission_key] = Number(row.is_allowed) === 1;
-    return res.json({ userId: targetUserId, permissions: normalizeWarehousePermissions(permissions) });
+    return res.json({ userId: targetUserId, permissions });
   } catch (error) {
     console.error('get permissions error:', error);
     return sendServerError(res);
@@ -326,19 +314,8 @@ app.patch('/api/system/users/:id/permissions', verifyAuthToken, requireAdmin, (r
         updated_at = CURRENT_TIMESTAMP
     `);
 
-    const nextPatch = { ...patch };
-    if (Object.prototype.hasOwnProperty.call(nextPatch, 'can_edit_warehouse_orders') && nextPatch.can_edit_warehouse_orders) {
-      nextPatch.can_view_warehouse_orders = true;
-    }
-    if (Object.prototype.hasOwnProperty.call(nextPatch, 'can_edit_warehouse_orders') && !nextPatch.can_edit_warehouse_orders) {
-      nextPatch.can_manage_warehouse_orders = false;
-    }
-    if (Object.prototype.hasOwnProperty.call(nextPatch, 'can_view_warehouse_orders') && !nextPatch.can_view_warehouse_orders) {
-      nextPatch.can_edit_warehouse_orders = false;
-      nextPatch.can_manage_warehouse_orders = false;
-    }
 
-    for (const [key, value] of Object.entries(nextPatch)) {
+    for (const [key, value] of Object.entries(patch)) {
       if (!ALLOWED_PERMISSION_KEYS.has(key)) continue;
       upsert.run(targetUserId, key, value ? 1 : 0);
     }
@@ -351,7 +328,7 @@ app.patch('/api/system/users/:id/permissions', verifyAuthToken, requireAdmin, (r
     const permissions = {};
     for (const row of rows) permissions[row.permission_key] = Number(row.is_allowed) === 1;
 
-    return res.json({ success: true, userId: targetUserId, permissions: normalizeWarehousePermissions(permissions) });
+    return res.json({ success: true, userId: targetUserId, permissions });
   } catch (error) {
     console.error('update permissions error:', error);
     return sendServerError(res);
@@ -540,14 +517,10 @@ const documentRoutes = require('./routes/documents');
 app.use('/api/documents', documentRoutes);
 const tasksRoutes = require('./routes/tasks');
 app.use('/api/tasks', tasksRoutes);
-const ordersRoutes = require('./routes/orders');
-app.use('/api/orders', ordersRoutes);
 const creditManagersRoutes = require('./routes/credit-managers');
 app.use('/api/credit-managers', creditManagersRoutes);
 const projectsRoutes = require('./routes/projects');
 app.use('/api/projects', projectsRoutes);
-const departmentsRoutes = require('./routes/departments');
-app.use('/api/departments', departmentsRoutes);
 
 const TELEGRAM_BOT_API = 'https://api.telegram.org';
 const APP_TIME_ZONE = 'Europe/Kiev';
