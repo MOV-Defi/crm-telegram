@@ -14,4 +14,4 @@ cmds = [
 ]
 
 [start]
-cmd = "node backend/server.js"
+cmd = "npm run build:frontend && node backend/server.js"

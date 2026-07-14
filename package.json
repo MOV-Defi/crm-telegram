@@ -7,8 +7,9 @@
     "postinstall": "npm --prefix backend install --omit=dev",
     "dev": "concurrently -n BACKEND,FRONTEND -c green,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
     "build:frontend": "npm --prefix frontend run build",
-    "start": "node backend/server.js",
-    "server": "cross-env JWT_SECRET=local-dev-secret-change-me node backend/server.js"
+    "start": "npm run build:frontend && node backend/server.js",
+    "server": "cross-env JWT_SECRET=local-dev-secret-change-me node backend/server.js",
+    "build": "npm run build:frontend"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
