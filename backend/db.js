@@ -119,6 +119,29 @@ runWithSqliteFullRecovery('central schema init', () => centralDb.exec(`
     created_by_username TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS scheduled_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id INTEGER NOT NULL,
+    template_code TEXT,
+    template_title TEXT,
+    target_chat_id TEXT,
+    target_chat_name TEXT,
+    values_json TEXT NOT NULL DEFAULT '{}',
+    attachment_path TEXT,
+    attachment_name TEXT,
+    scheduled_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    message_id INTEGER,
+    created_by_user_id INTEGER,
+    created_by_username TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    sent_at TEXT,
+    FOREIGN KEY (template_id) REFERENCES request_templates(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+  );
   CREATE TABLE IF NOT EXISTS credit_managers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bank_name TEXT NOT NULL,
@@ -402,6 +425,8 @@ safeDbWrite(centralDb, 'project indexes', () => {
     CREATE INDEX IF NOT EXISTS idx_project_notes_project_id ON project_notes(project_id);
     CREATE INDEX IF NOT EXISTS idx_project_notifications_user_id ON project_notifications(user_id, is_read, created_at);
     CREATE INDEX IF NOT EXISTS idx_project_notifications_project_id ON project_notifications(project_id);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_requests_due ON scheduled_requests(status, scheduled_at);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_requests_user ON scheduled_requests(created_by_user_id, status, scheduled_at);
   `);
 });
 dbInitLog('project indexes ensured');

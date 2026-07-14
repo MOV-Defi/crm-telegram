@@ -253,6 +253,10 @@ function App({ currentUser: initialUser }) {
   const [requestConfigSaving, setRequestConfigSaving] = useState(false);
   const [requestSending, setRequestSending] = useState(false);
   const [requestFeedback, setRequestFeedback] = useState(null);
+  const [requestScheduleEnabled, setRequestScheduleEnabled] = useState(false);
+  const [requestScheduleAt, setRequestScheduleAt] = useState('');
+  const [scheduledRequests, setScheduledRequests] = useState([]);
+  const [loadingScheduledRequests, setLoadingScheduledRequests] = useState(false);
   const [requestHistory, setRequestHistory] = useState([]);
   const [loadingRequestHistory, setLoadingRequestHistory] = useState(false);
   const [requestHistoryHasMore, setRequestHistoryHasMore] = useState(false);
@@ -1511,6 +1515,7 @@ function App({ currentUser: initialUser }) {
       if (activeTab === 'requests') {
           loadRequestTemplates();
           loadRequestHistory({ append: false });
+          loadScheduledRequests();
       }
       if (activeTab === 'documentTemplates') {
           loadDocumentTemplates();
@@ -3322,6 +3327,56 @@ function App({ currentUser: initialUser }) {
 
   const REQUEST_HISTORY_PAGE_SIZE = 500;
 
+  const formatScheduledRequestDate = (value) => {
+      if (!value) return '—';
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return String(value);
+      return date.toLocaleString('uk-UA', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+      });
+  };
+
+  const getRequestScheduleIso = () => {
+      if (!requestScheduleEnabled) return '';
+      const raw = String(requestScheduleAt || '').trim();
+      if (!raw) throw new Error('Оберіть дату і час відкладеної відправки');
+      const date = new Date(raw);
+      const time = date.getTime();
+      if (!Number.isFinite(time)) throw new Error('Некоректна дата відкладеної відправки');
+      if (time <= Date.now() + 30000) throw new Error('Оберіть час відправлення хоча б на 1 хвилину вперед');
+      return date.toISOString();
+  };
+
+  const loadScheduledRequests = async () => {
+      setLoadingScheduledRequests(true);
+      try {
+          const res = await fetch(`${API_URL}/requests/scheduled?v=${Date.now()}`, { cache: 'no-store' });
+          const data = await parseApiJson(res, 'Не вдалося завантажити відкладені заявки');
+          setScheduledRequests(Array.isArray(data?.items) ? data.items : []);
+      } catch (error) {
+          console.error(error);
+      } finally {
+          setLoadingScheduledRequests(false);
+      }
+  };
+
+  const cancelScheduledRequest = async (item) => {
+      if (!item?.id) return;
+      if (!window.confirm('Скасувати відкладену відправку цієї заявки?')) return;
+      try {
+          const res = await fetch(`${API_URL}/requests/scheduled/${item.id}`, { method: 'DELETE' });
+          await parseApiJson(res, 'Не вдалося скасувати відкладену заявку');
+          await loadScheduledRequests();
+          setRequestFeedback({ type: 'success', text: 'Відкладену заявку скасовано.' });
+      } catch (error) {
+          setRequestFeedback({ type: 'error', text: error.message || 'Не вдалося скасувати відкладену заявку.' });
+      }
+  };
+
   const loadRequestHistory = async ({ append = false } = {}) => {
       setLoadingRequestHistory(true);
       try {
@@ -4291,9 +4346,13 @@ function App({ currentUser: initialUser }) {
               };
           })();
 
+          const scheduleIso = getRequestScheduleIso();
           const formData = new FormData();
           formData.append('templateId', selectedRequestTemplate.id);
           formData.append('values', JSON.stringify(valuesForSend));
+          if (scheduleIso) {
+              formData.append('scheduleAt', scheduleIso);
+          }
           if (requestAttachment) {
               formData.append('file', requestAttachment);
           }
@@ -4302,12 +4361,18 @@ function App({ currentUser: initialUser }) {
               method: 'POST',
               body: formData
           });
-          const data = await parseApiJson(res, 'Не вдалося відправити заяву');
-
+          const data = await parseApiJson(res, requestScheduleEnabled ? 'Не вдалося запланувати заявку' : 'Не вдалося відправити заяву');
 
           clearRequestAttachment();
-          loadRequestHistory({ append: false });
-          setRequestFeedback({ type: 'success', text: 'Заяву успішно відправлено в чат.' });
+          if (data?.scheduled) {
+              setRequestScheduleEnabled(false);
+              setRequestScheduleAt('');
+              await loadScheduledRequests();
+              setRequestFeedback({ type: 'success', text: 'Заявку заплановано на ' + formatScheduledRequestDate(data.item?.scheduledAt) + '.' });
+          } else {
+              loadRequestHistory({ append: false });
+              setRequestFeedback({ type: 'success', text: 'Заяву успішно відправлено в чат.' });
+          }
       } catch (error) {
           console.error(error);
           setRequestFeedback({ type: 'error', text: error.message || 'Не вдалося відправити заяву.' });
@@ -7767,6 +7832,83 @@ function App({ currentUser: initialUser }) {
                               </div>
                           )}
 
+                          <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-800/35 p-4">
+                              <label className="flex items-center gap-3 text-sm font-medium text-slate-200">
+                                  <input
+                                      type="checkbox"
+                                      checked={requestScheduleEnabled}
+                                      onChange={(e) => setRequestScheduleEnabled(e.target.checked)}
+                                      className="h-4 w-4"
+                                  />
+                                  Відкласти відправлення
+                              </label>
+                              {requestScheduleEnabled && (
+                                  <div className="mt-3 grid grid-cols-1 md:grid-cols-[260px_1fr] gap-3 items-end">
+                                      <div>
+                                          <label className="block text-xs text-slate-500 mb-1">Коли відправити</label>
+                                          <input
+                                              type="datetime-local"
+                                              value={requestScheduleAt}
+                                              onChange={(e) => setRequestScheduleAt(e.target.value)}
+                                              className="w-full bg-slate-900 text-slate-200 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition"
+                                          />
+                                      </div>
+                                      <div className="text-xs text-slate-500">
+                                          Заявка збережеться на сервері і відправиться автоматично, навіть якщо браузер буде закритий.
+                                      </div>
+                                  </div>
+                              )}
+                          </div>
+
+                          {scheduledRequests.length > 0 && (
+                              <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-900/60 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-700">
+                                      <div>
+                                          <div className="text-sm font-semibold text-slate-100">Відкладені заявки</div>
+                                          <div className="text-xs text-slate-500">Черга заяв, які ще не відправлені.</div>
+                                      </div>
+                                      <button
+                                          type="button"
+                                          onClick={loadScheduledRequests}
+                                          disabled={loadingScheduledRequests}
+                                          className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 text-xs disabled:opacity-50"
+                                      >
+                                          Оновити
+                                      </button>
+                                  </div>
+                                  <div className="divide-y divide-slate-800">
+                                      {scheduledRequests.map(item => (
+                                          <div key={item.id} className="px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                                              <div className="min-w-0">
+                                                  <div className="text-sm text-slate-100 font-medium truncate">{item.templateTitle || 'Заявка'}</div>
+                                                  <div className="text-xs text-slate-500 mt-1">
+                                                      {formatScheduledRequestDate(item.scheduledAt)} · {item.targetChatName || item.targetChatId || 'чат не вказано'}
+                                                      {item.attachmentName ? ` · файл: ${item.attachmentName}` : ''}
+                                                  </div>
+                                                  {item.status === 'failed' && (
+                                                      <div className="text-xs text-red-300 mt-1">{item.lastError || 'Не вдалося відправити'}</div>
+                                                  )}
+                                              </div>
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                  <span className={`px-2 py-1 rounded-full border text-xs ${item.status === 'failed' ? 'border-red-500/30 bg-red-500/10 text-red-300' : item.status === 'sending' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>
+                                                      {item.status === 'failed' ? 'Помилка' : item.status === 'sending' ? 'Відправляється' : 'Очікує'}
+                                                  </span>
+                                                  {item.status !== 'sending' && (
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => cancelScheduledRequest(item)}
+                                                          className="px-3 py-1.5 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs"
+                                                      >
+                                                          Скасувати
+                                                      </button>
+                                                  )}
+                                              </div>
+                                          </div>
+                                      ))}
+                                  </div>
+                              </div>
+                          )}
+
                           {requestFeedback && (
                               <div className={`mt-6 rounded-2xl border px-4 py-3 text-sm ${requestFeedback.type === 'success' ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
                                   {requestFeedback.text}
@@ -7780,10 +7922,12 @@ function App({ currentUser: initialUser }) {
                                   className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold transition shadow-lg shadow-blue-900/20"
                               >
                                   {requestSending
-                                      ? 'Відправка...'
-                                      : selectedRequestTemplate.code === 'logistics_request'
-                                          ? 'Згенерувати DOCX і відправити'
-                                          : 'Відправити заяву'}
+                                      ? (requestScheduleEnabled ? 'Планування...' : 'Відправка...')
+                                      : requestScheduleEnabled
+                                          ? 'Запланувати відправку'
+                                          : selectedRequestTemplate.code === 'logistics_request'
+                                              ? 'Згенерувати DOCX і відправити'
+                                              : 'Відправити заяву'}
                               </button>
                           </div>
                       </div>
@@ -7829,6 +7973,387 @@ function App({ currentUser: initialUser }) {
 
 
 
+
+      {activeTab === 'creditDepartment' && (
+      <div className="flex-1 bg-slate-950 p-4 md:p-6 overflow-y-auto">
+          {(() => {
+              const query = String(creditChatSearch || '').trim().toLowerCase();
+              const filtered = dialogs.filter((dialog) => {
+                  if (!query) return true;
+                  const name = String(dialog?.name || '').toLowerCase();
+                  return name.includes(query);
+              });
+              const groups = filtered.filter((dialog) => dialog?.isGroup || dialog?.isChannel);
+              const direct = filtered.filter((dialog) => !dialog?.isGroup && !dialog?.isChannel);
+
+              return (
+          <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-1 bg-slate-900 border border-slate-700/50 rounded-2xl p-4 space-y-3 h-fit">
+                  <div>
+                      <h2 className="text-2xl font-bold text-slate-100">Кредитний відділ</h2>
+                      <p className="text-sm text-slate-400 mt-1">Менеджери банків, контакти та закріплені чати.</p>
+                  </div>
+                  {!isSystemAdmin && (
+                      <div className="bg-blue-500/10 border border-blue-500/40 rounded-xl px-3 py-2 text-xs text-blue-200">
+                          Режим перегляду: лише адміністратор може додавати, змінювати та видаляти записи.
+                      </div>
+                  )}
+                  {isSystemAdmin && (
+                  <>
+                  <input value={creditManagerForm.bankName} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, bankName: e.target.value }))} placeholder="Банк *" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <input value={creditManagerForm.managerName} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, managerName: e.target.value }))} placeholder="ПІБ менеджера *" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <input value={creditManagerForm.phone} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, phone: e.target.value }))} placeholder="Телефон" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <input value={creditManagerForm.email} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, email: e.target.value }))} placeholder="Email" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <input value={creditManagerForm.telegramContact} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, telegramContact: e.target.value }))} placeholder="Telegram (@username або номер)" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                  <textarea value={creditManagerForm.responsibility} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, responsibility: e.target.value }))} placeholder="За що відповідальний" rows={2} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500 resize-y" />
+                  <textarea value={creditManagerForm.notes} onChange={(e) => setCreditManagerForm((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Нотатки" rows={2} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500 resize-y" />
+                  <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-3">
+                      <div className="text-xs text-slate-400 mb-2">Привʼязані чати</div>
+                      <input
+                          value={creditChatSearch}
+                          onChange={(e) => setCreditChatSearch(e.target.value)}
+                          placeholder="Пошук чату..."
+                          className="w-full mb-2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100 text-sm outline-none focus:border-blue-500"
+                      />
+                      <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+                          {groups.length > 0 && <div className="text-[11px] uppercase tracking-wide text-slate-500 pt-1">Групи та канали</div>}
+                          {groups.slice(0, 120).map((dialog) => {
+                              const chatId = String(dialog.id);
+                              const checked = creditManagerForm.linkedChatIds.includes(chatId);
+                              return (
+                                  <label key={`credit-chat-${chatId}`} className="flex items-center gap-2 text-sm text-slate-200">
+                                      <input type="checkbox" checked={checked} onChange={() => handleToggleCreditManagerChat(chatId)} />
+                                      <span className="truncate">{dialog.name}</span>
+                                  </label>
+                              );
+                          })}
+                          {direct.length > 0 && <div className="text-[11px] uppercase tracking-wide text-slate-500 pt-2">Приватні чати</div>}
+                          {direct.slice(0, 120).map((dialog) => {
+                              const chatId = String(dialog.id);
+                              const checked = creditManagerForm.linkedChatIds.includes(chatId);
+                              return (
+                                  <label key={`credit-chat-${chatId}`} className="flex items-center gap-2 text-sm text-slate-200">
+                                      <input type="checkbox" checked={checked} onChange={() => handleToggleCreditManagerChat(chatId)} />
+                                      <span className="truncate">{dialog.name}</span>
+                                  </label>
+                              );
+                          })}
+                      </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                      <button type="button" onClick={handleSaveCreditManager} disabled={savingCreditManager} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition disabled:opacity-50">
+                          {editingCreditManagerId ? 'Зберегти зміни' : 'Додати менеджера'}
+                      </button>
+                      {editingCreditManagerId && (
+                          <button type="button" onClick={resetCreditManagerForm} className="px-4 py-2 rounded-xl border border-slate-600 text-slate-200 hover:bg-slate-800 transition">
+                              Скасувати
+                          </button>
+                      )}
+                  </div>
+                  </>
+                  )}
+              </div>
+
+              <div className="xl:col-span-2 bg-slate-900 border border-slate-700/50 rounded-2xl p-4">
+                  <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-slate-100">Список менеджерів</h3>
+                      <button type="button" onClick={loadCreditManagers} className="px-3 py-1.5 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-800 text-xs">Оновити</button>
+                  </div>
+                  {loadingCreditManagers ? (
+                      <div className="text-slate-400 text-sm">Завантаження...</div>
+                  ) : creditManagers.length === 0 ? (
+                      <div className="text-slate-500 text-sm">Ще немає менеджерів. Додайте першого з форми ліворуч.</div>
+                  ) : (
+                      <div className="space-y-3">
+                          {creditManagers.map((item) => {
+                              const linkedChats = (Array.isArray(item.linkedChatIds) ? item.linkedChatIds : []).map((chatId) => {
+                                  const normalizedId = String(chatId);
+                                  const matched = dialogs.find((dialog) => String(dialog.id) === normalizedId);
+                                  return {
+                                      id: normalizedId,
+                                      name: matched?.name || `ID ${normalizedId}`
+                                  };
+                              });
+                              return (
+                                  <div key={`credit-manager-${item.id}`} className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
+                                      <div className="flex items-start justify-between gap-3">
+                                          <div>
+                                              <div className="text-slate-100 font-semibold">{item.bankName}</div>
+                                              <div className="text-slate-300 text-sm">{item.managerName}</div>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                              {isSystemAdmin && <button onClick={() => handleEditCreditManager(item)} className="px-2 py-1 rounded-md border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 text-xs">Редагувати</button>}
+                                              {isSystemAdmin && <button onClick={() => handleDeleteCreditManager(item.id)} className="px-2 py-1 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs">Видалити</button>}
+                                          </div>
+                                      </div>
+                                      <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-300">
+                                          <div>Телефон: {item.phone || '—'}</div>
+                                          <div>Email: {item.email || '—'}</div>
+                                          <div>
+                                              Telegram:{' '}
+                                              {String(item.telegramContact || '').trim() ? (
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => openChatByTelegramContact(item.telegramContact)}
+                                                      className="px-2 py-0.5 rounded-md border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 transition"
+                                                      title="Відкрити чат за Telegram-ніком"
+                                                  >
+                                                      {item.telegramContact}
+                                                  </button>
+                                              ) : '—'}
+                                          </div>
+                                          <div>Відповідальність: {item.responsibility || '—'}</div>
+                                      </div>
+                                      {item.notes && <div className="mt-2 text-sm text-slate-400">Нотатки: {item.notes}</div>}
+                                      <div className="mt-2 text-xs text-slate-400">
+                                          Чати:{' '}
+                                          {linkedChats.length ? (
+                                              <span className="inline-flex flex-wrap gap-1.5 align-middle">
+                                                  {linkedChats.map((chat) => (
+                                                      <button
+                                                          key={`credit-linked-chat-${item.id}-${chat.id}`}
+                                                          type="button"
+                                                          onClick={async () => {
+                                                              setActiveTab('messenger');
+                                                              await openChatById(chat.id);
+                                                          }}
+                                                          className="px-2 py-0.5 rounded-md border border-blue-500/30 text-blue-300 hover:bg-blue-500/10 transition"
+                                                          title="Відкрити чат"
+                                                      >
+                                                          {chat.name}
+                                                      </button>
+                                                  ))}
+                                              </span>
+                                          ) : (
+                                              'не привʼязано'
+                                          )}
+                                      </div>
+                                  </div>
+                              );
+                          })}
+                      </div>
+                  )}
+              </div>
+          </div>
+              );
+          })()}
+      </div>
+      )}
+
+      {activeTab === 'documentTemplates' && (
+      <div className="flex-1 bg-slate-950 p-4 md:p-6 overflow-y-auto">
+          <div className="max-w-7xl mx-auto space-y-8">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                      <h2 className="text-3xl font-bold text-slate-100 flex items-center gap-3">
+                        <svg className="w-10 h-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                        </svg>
+                        Бібліотека документів
+                      </h2>
+                      <p className="text-slate-400 mt-2">Централізована база шаблонів та інструкцій для всієї команди.</p>
+                  </div>
+              </div>
+
+              {canManageDocuments && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-top-4 duration-500">
+                    <div className="lg:col-span-1 bg-slate-900/80 border border-slate-700/50 rounded-2xl p-5 space-y-4 backdrop-blur-sm">
+                        <div className="text-sm font-semibold text-slate-200">Нова категорія</div>
+                        <input value={newDocumentCategory} onChange={(e) => setNewDocumentCategory(e.target.value)} placeholder="Напр. Гарантійні листи" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                        <button onClick={handleCreateDocumentCategory} className="w-full px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition">Додати категорію</button>
+
+                        <div className="pt-2 border-t border-slate-700/50">
+                            <div className="text-xs uppercase tracking-wider text-slate-500 mb-3">Список категорій</div>
+                            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                                {sortCategoriesByOrder(documentCategories).map((category, index, ordered) => (
+                                    <div key={category.id} className="px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700 text-sm text-slate-200 flex items-center justify-between gap-2">
+                                        <div className="truncate font-medium">{category.name}</div>
+                                        <div className="flex items-center gap-1">
+                                            <button type="button" onClick={() => handleMoveDocumentCategory(category.id, 'up')} disabled={index === 0} className="w-8 h-8 inline-flex items-center justify-center rounded-md border border-slate-600 text-slate-200 hover:bg-slate-700 disabled:opacity-40">↑</button>
+                                            <button type="button" onClick={() => handleMoveDocumentCategory(category.id, 'down')} disabled={index === ordered.length - 1} className="w-8 h-8 inline-flex items-center justify-center rounded-md border border-slate-600 text-slate-200 hover:bg-slate-700 disabled:opacity-40">↓</button>
+                                            <button onClick={() => handleDeleteDocumentCategory(category.id)} className="w-8 h-8 inline-flex items-center justify-center rounded-md border border-red-500/30 text-red-400 hover:bg-red-500/20 ml-1">×</button>
+                                        </div>
+                                    </div>
+                                ))}
+                                {documentCategories.length === 0 && <div className="text-sm text-slate-500">Категорій поки немає</div>}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="lg:col-span-2 bg-slate-900/80 border border-slate-700/50 rounded-2xl p-5 space-y-4 backdrop-blur-sm">
+                        <div className="text-sm font-semibold text-slate-200">Додати документ до бібліотеки</div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <select value={newDocumentTemplate.categoryId} onChange={(e) => setNewDocumentTemplate((prev) => ({ ...prev, categoryId: e.target.value }))} className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500">
+                                <option value="">Оберіть категорію</option>
+                                {documentCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                            </select>
+                            <input value={newDocumentTemplate.title} onChange={(e) => setNewDocumentTemplate((prev) => ({ ...prev, title: e.target.value }))} placeholder="Назва шаблону" className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                            <input value={newDocumentTemplate.fileUrl} onChange={(e) => setNewDocumentTemplate((prev) => ({ ...prev, fileUrl: e.target.value }))} placeholder="Посилання на файл (https://...)" className="md:col-span-2 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500" />
+                            <textarea value={newDocumentTemplate.description} onChange={(e) => setNewDocumentTemplate((prev) => ({ ...prev, description: e.target.value }))} placeholder="Короткий опис" className="md:col-span-2 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 outline-none focus:border-blue-500 h-20" />
+                        </div>
+                        <button onClick={handleCreateDocumentTemplate} className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition shadow-lg shadow-emerald-900/20">Опублікувати в бібліотеку</button>
+                    </div>
+                </div>
+              )}
+
+              <div className="space-y-8 pb-12">
+                  {loadingDocumentTemplates ? (
+                      <div className="flex flex-col items-center justify-center py-20 gap-4">
+                          <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
+                          <div className="text-slate-400 font-medium">Завантаження бібліотеки...</div>
+                      </div>
+                  ) : documentError ? (
+                      <div className="bg-red-500/10 border border-red-500/50 p-6 rounded-2xl text-center">
+                          <div className="text-red-400 font-medium">{documentError}</div>
+                          <button onClick={loadDocumentTemplates} className="mt-3 text-sm text-blue-400 hover:underline">Спробувати ще раз</button>
+                      </div>
+                  ) : (
+                      <div className="space-y-10">
+                          {sortCategoriesByOrder(documentCategories).map((category) => {
+                              const items = documentTemplates.filter((item) => String(item.category_id) === String(category.id));
+                              if (items.length === 0) return null;
+                              return (
+                                  <div key={`lib-section-${category.id}`} className="space-y-5">
+                                      <div className="flex items-center gap-4">
+                                          <h3 className="text-xl font-bold text-slate-200">{category.name}</h3>
+                                          <div className="h-px flex-1 bg-slate-800/60"></div>
+                                          <span className="text-xs font-medium text-slate-500 px-2 py-1 rounded bg-slate-800/50 uppercase tracking-widest">{items.length} файлів</span>
+                                      </div>
+
+                                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                                          {items.map((item) => (
+                                              <div key={item.id} className="group relative bg-slate-900/50 hover:bg-slate-800/50 border border-slate-700/50 hover:border-blue-500/50 rounded-2xl p-5 transition-all duration-300 flex flex-col gap-4 overflow-hidden">
+                                                  {/* Decor decoration */}
+                                                  <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+                                                      <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 3.59L18.41 8H14z" /></svg>
+                                                  </div>
+
+                                                  <div className="flex-1 space-y-2">
+                                                      <div className="flex items-start justify-between gap-3">
+                                                          <div className="font-bold text-slate-100 text-lg leading-tight group-hover:text-blue-400 transition-colors">{item.title}</div>
+                                                      </div>
+                                                      {item.description && (
+                                                          <p className="text-sm text-slate-400 line-clamp-2 leading-relaxed">{item.description}</p>
+                                                      )}
+                                                  </div>
+
+                                                  <div className="flex items-center justify-between pt-2 border-t border-slate-800/50">
+                                                      <a
+                                                          href={item.file_url}
+                                                          target="_blank"
+                                                          rel="noreferrer"
+                                                          className="flex items-center gap-2 text-sm font-semibold text-blue-400 hover:text-blue-300 transition-colors"
+                                                      >
+                                                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                                          Скачати файл
+                                                      </a>
+
+                                                      {canManageDocuments && (
+                                                          <div className="flex gap-2">
+                                                              <button onClick={() => handleStartEditDocumentTemplate(item)} className="p-1.5 text-slate-500 hover:text-amber-400 transition-colors" title="Редагувати">
+                                                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                                                              </button>
+                                                              <button onClick={() => handleDeleteDocumentTemplate(item.id)} className="p-1.5 text-slate-500 hover:text-red-400 transition-colors" title="Видалити">
+                                                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                              </button>
+                                                          </div>
+                                                      )}
+                                                  </div>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  </div>
+                              );
+                          })}
+                          {documentTemplates.length === 0 && (
+                              <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+                                  <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center text-slate-600">
+                                      <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>
+                                  </div>
+                                  <div className="text-slate-400 font-medium">У бібліотеці поки немає жодного документа</div>
+                              </div>
+                          )}
+                      </div>
+                  )}
+              </div>
+          </div>
+      </div>
+      )}
+
+
+      {activeTab === 'adminUsers' && isSystemAdmin && (
+      <div className="flex-1 bg-slate-950 p-4 md:p-6 overflow-y-auto">
+          <div className="max-w-7xl mx-auto">
+              <div className="bg-slate-900/80 border border-slate-700/50 rounded-2xl p-4">
+                  <h2 className="text-2xl font-bold text-slate-100 mb-4">Користувачі</h2>
+                  {loadingAdminUsers ? <div className="text-slate-400">Завантаження...</div> : (
+                  <div className="space-y-2">
+                      {adminUsers.map((u) => {
+                          return (
+                          <div key={u.id} className="flex items-center justify-between rounded-xl border p-3 transition border-slate-700 bg-slate-800/50">
+                              <div>
+                                  <div className="text-slate-100 font-medium">{u.username}</div>
+                                  <div className="text-xs text-slate-400">id: {u.id} • роль: {u.role}</div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                  <button
+                                      onClick={() => openAdminPermissionsModal(u.id)}
+                                      className="px-3 py-1.5 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-700 transition"
+                                  >
+                                      Доступи
+                                  </button>
+                                  <button onClick={() => handleAdminRoleChange(u.id, u.role === 'admin' ? 'user' : 'admin')} className="px-3 py-1.5 rounded-lg border border-blue-500/40 text-blue-300 hover:bg-blue-500/20">{u.role === 'admin' ? 'Зробити user' : 'Зробити admin'}</button>
+                              </div>
+                          </div>
+                      )})}
+                  </div>
+                  )}
+              </div>
+          </div>
+
+          {showAdminPermissionsModal && selectedAdminUserId && (
+              <div
+                  className="fixed inset-0 z-[1200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+                  onClick={() => setShowAdminPermissionsModal(false)}
+              >
+                  <div
+                      className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-5"
+                      onClick={(e) => e.stopPropagation()}
+                  >
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                          <div>
+                              <h3 className="text-xl font-semibold text-slate-100">Доступи користувача</h3>
+                              <p className="text-sm text-slate-400 mt-1">
+                                  {adminUsers.find((u) => String(u.id) === String(selectedAdminUserId))?.username || selectedAdminUserId}
+                              </p>
+                          </div>
+                          <button
+                              className="text-slate-400 hover:text-white transition"
+                              onClick={() => setShowAdminPermissionsModal(false)}
+                              aria-label="Закрити"
+                          >
+                              ✕
+                          </button>
+                      </div>
+
+                      <div className="space-y-2 text-sm">
+                          {ADMIN_PERMISSION_OPTIONS.map(([key, label]) => (
+                              <label key={key} className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/40 p-3">
+                                  <span className="text-slate-200">{label}</span>
+                                  <input
+                                      type="checkbox"
+                                      checked={Boolean(selectedAdminPermissions[key])}
+                                      disabled={key === 'can_view_warehouse_orders' && Boolean(selectedAdminPermissions.can_edit_warehouse_orders)}
+                                      onChange={(e) => handlePermissionToggle(key, e.target.checked)}
+                                  />
+                              </label>
+                          ))}
+                      </div>
+                  </div>
+              </div>
+          )}
+      </div>
+      )}
 
       {activeTab === 'tasks' && (
       <div className="flex-1 flex flex-col bg-[#0b101e] relative overflow-hidden">

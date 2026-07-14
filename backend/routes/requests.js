@@ -1490,92 +1490,113 @@ router.put('/templates/:id', (req, res) => {
   }
 });
 
-router.post('/send', upload.single('file'), (req, res, next) => {
-  // Multer loses context, restore it from req.userId
-  const userId = req.userId || context.getUserId();
-  if (userId) {
-    context.runWithContext({ userId }, next);
-  } else {
-    next();
-  }
-}, async (req, res) => {
-  const templateId = req.body.templateId;
-  let values = req.body.values;
 
-  if (typeof values === 'string') {
+const normalizeScheduledAt = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const date = new Date(raw);
+  const time = date.getTime();
+  if (!Number.isFinite(time)) return null;
+  return date.toISOString();
+};
+
+const toScheduledRequestDto = (row) => ({
+  id: row.id,
+  templateId: row.template_id,
+  templateCode: row.template_code,
+  templateTitle: row.template_title,
+  targetChatId: row.target_chat_id,
+  targetChatName: row.target_chat_name,
+  scheduledAt: row.scheduled_at,
+  status: row.status,
+  attempts: row.attempts,
+  lastError: row.last_error,
+  messageId: row.message_id,
+  attachmentName: row.attachment_name,
+  createdByUserId: row.created_by_user_id,
+  createdByUsername: row.created_by_username,
+  createdAt: row.created_at,
+  sentAt: row.sent_at
+});
+
+const loadRequestTemplateForSend = (templateId, values) => {
+  const templateRow = db.central.prepare(`
+    SELECT id, code, title, description, target_chat_id, target_chat_name, body_template, fields_json, is_active
+    FROM request_templates
+    WHERE id = ? AND is_active = 1
+  `).get(templateId);
+  const template = applyUserTemplateTarget(templateRow);
+
+  if (!template) {
+    const error = new Error('Шаблон не знайдено');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!template.target_chat_id) {
+    const error = new Error('Для цієї заяви не вибрано чат призначення');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const templateWithFields = hydrateTemplateFields(parseTemplate(template));
+  if (!templateWithFields) {
+    throw new Error('Не вдалося прочитати шаблон заявки');
+  }
+  const validationError = validateTemplate(templateWithFields, values);
+  if (validationError) {
+    const error = new Error(validationError);
+    error.statusCode = 400;
+    throw error;
+  }
+  return { template, templateWithFields };
+};
+
+const prepareRequestUploadFile = async (file) => {
+  if (!file) return { uploadedFilePath: null, uploadedOriginalName: null };
+  const uploadedOriginalName = decodeMultipartFileName(file.originalname || '');
+  const ext = path.extname(uploadedOriginalName) || '';
+  const shouldOptimizeImage = isCompressibleImageUpload(file);
+  const nameParts = splitNameAndExt(uploadedOriginalName, shouldOptimizeImage ? '.jpg' : (ext || '.bin'));
+  if (shouldOptimizeImage) {
+    nameParts.ext = '.jpg';
+  }
+  let storedName = `${nameParts.base}${nameParts.ext}`;
+  const candidatePath = path.join(runtimePaths.mediaDir, storedName);
+  if (fs.existsSync(candidatePath)) {
+    storedName = `${nameParts.base}_${crypto.randomBytes(3).toString('hex')}${nameParts.ext}`;
+  }
+  const uploadedFilePath = path.join(runtimePaths.mediaDir, storedName);
+  if (shouldOptimizeImage) {
     try {
-      values = JSON.parse(values);
+      const beforeBytes = fs.statSync(file.path).size;
+      await optimizeUploadedImage(file.path, uploadedFilePath);
+      const afterBytes = fs.statSync(uploadedFilePath).size;
+      try { fs.unlinkSync(file.path); } catch (_) {}
+      console.log(`[requests] optimized image upload ${uploadedOriginalName}: ${(beforeBytes / 1024 / 1024).toFixed(2)} MB -> ${(afterBytes / 1024 / 1024).toFixed(2)} MB`);
     } catch (error) {
-      values = {};
+      console.warn('[requests] image optimization failed, keeping original:', error.message);
+      fs.renameSync(file.path, uploadedFilePath);
     }
+  } else {
+    fs.renameSync(file.path, uploadedFilePath);
   }
+  return { uploadedFilePath, uploadedOriginalName };
+};
 
+const dispatchRequestNow = async ({ templateId, values, uploadedFilePath = null, uploadedOriginalName = null, userId = null, username = null }) => {
   let tempDocxRoot = null;
-  let uploadedFilePath = null;
-  let uploadedOriginalName = null;
-
   try {
-    const templateRow = db.central.prepare(`
-      SELECT id, code, title, description, target_chat_id, target_chat_name, body_template, fields_json, is_active
-      FROM request_templates
-      WHERE id = ? AND is_active = 1
-    `).get(templateId);
-    const template = applyUserTemplateTarget(templateRow);
-
-    if (!template) {
-      return res.status(404).json({ error: 'Шаблон не знайдено' });
-    }
-
-    if (!template.target_chat_id) {
-      return res.status(400).json({ error: 'Для цієї заяви не вибрано чат призначення' });
-    }
-
+    const { template, templateWithFields } = loadRequestTemplateForSend(templateId, values);
     const client = getClient();
     if (!client || !client.connected) {
-      return res.status(503).json({ error: 'Telegram клієнт не підключений' });
+      const error = new Error('Telegram клієнт не підключений');
+      error.statusCode = 503;
+      throw error;
     }
 
+    const reqMeta = { userId, username };
     const targetEntity = await resolveRequestTargetEntity(client, template);
-
-    const templateWithFields = hydrateTemplateFields(parseTemplate(template));
-    if (!templateWithFields) {
-      return res.status(500).json({ error: 'Не вдалося прочитати шаблон заявки' });
-    }
-    const validationError = validateTemplate(templateWithFields, values);
-    if (validationError) {
-      return res.status(400).json({ error: validationError });
-    }
-
-    if (req.file) {
-      uploadedOriginalName = decodeMultipartFileName(req.file.originalname || '');
-      const ext = path.extname(uploadedOriginalName) || '';
-      const shouldOptimizeImage = isCompressibleImageUpload(req.file);
-      const nameParts = splitNameAndExt(uploadedOriginalName, shouldOptimizeImage ? '.jpg' : (ext || '.bin'));
-      if (shouldOptimizeImage) {
-        nameParts.ext = '.jpg';
-      }
-      let storedName = `${nameParts.base}${nameParts.ext}`;
-      const candidatePath = path.join(runtimePaths.mediaDir, storedName);
-      if (fs.existsSync(candidatePath)) {
-        storedName = `${nameParts.base}_${crypto.randomBytes(3).toString('hex')}${nameParts.ext}`;
-      }
-      uploadedFilePath = path.join(runtimePaths.mediaDir, storedName);
-      if (shouldOptimizeImage) {
-        try {
-          const beforeBytes = fs.statSync(req.file.path).size;
-          await optimizeUploadedImage(req.file.path, uploadedFilePath);
-          const afterBytes = fs.statSync(uploadedFilePath).size;
-          try { fs.unlinkSync(req.file.path); } catch (_) {}
-          console.log(`[requests] optimized image upload ${uploadedOriginalName}: ${(beforeBytes / 1024 / 1024).toFixed(2)} MB -> ${(afterBytes / 1024 / 1024).toFixed(2)} MB`);
-        } catch (error) {
-          console.warn('[requests] image optimization failed, keeping original:', error.message);
-          fs.renameSync(req.file.path, uploadedFilePath);
-        }
-      } else {
-        fs.renameSync(req.file.path, uploadedFilePath);
-      }
-    }
-
     const message = cleanupRenderedMessage(renderTemplate(templateWithFields, values)).trim();
     const chatIntro = collectTemplateChatIntro(templateWithFields, values);
 
@@ -1592,21 +1613,10 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       tempDocxRoot = generated.tempRoot;
       const caption = trimTelegramCaption(buildLogisticsStandardCaption(chatIntro));
       const formattingEntities = await buildMentionEntities(client, templateWithFields, values, caption);
-
-      const sent = await client.sendFile(targetEntity, {
-        file: generated.docxPath,
-        caption,
-        formattingEntities
-      });
+      const sent = await client.sendFile(targetEntity, { file: generated.docxPath, caption, formattingEntities });
       const sentMessage = normalizeSentMessage(sent);
-      saveRequestHistory({
-        template,
-        messageId: sentMessage?.id,
-        messageText: caption || message,
-        values,
-        req
-      });
-      return res.json({ success: true, message });
+      saveRequestHistory({ template, messageId: sentMessage?.id, messageText: caption || message, values, req: reqMeta });
+      return { message, messageId: sentMessage?.id || null };
     }
 
     if (template.code === 'purchase_request') {
@@ -1621,31 +1631,18 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       tempDocxRoot = generated.tempRoot;
       const caption = trimTelegramCaption(buildPurchaseStandardCaption(chatIntro));
       const formattingEntities = await buildMentionEntities(client, templateWithFields, values, caption);
-
-      const sent = await client.sendFile(targetEntity, {
-        file: generated.docxPath,
-        caption,
-        formattingEntities
-      });
+      const sent = await client.sendFile(targetEntity, { file: generated.docxPath, caption, formattingEntities });
       const sentMessage = normalizeSentMessage(sent);
-      saveRequestHistory({
-        template,
-        messageId: sentMessage?.id,
-        messageText: caption || message,
-        values,
-        req
-      });
-      return res.json({ success: true, message });
+      saveRequestHistory({ template, messageId: sentMessage?.id, messageText: caption || message, values, req: reqMeta });
+      return { message, messageId: sentMessage?.id || null };
     }
 
     const isWarehouseIssue = isWarehouseIssueTemplate(template);
-    const includeIntroInBody = !isWarehouseIssue;
     const outgoingMessage = [
-      includeIntroInBody ? chatIntro : '',
+      isWarehouseIssue ? '' : chatIntro,
       message
     ].filter(Boolean).join('\n\n').trim();
     const outgoingMentionEntities = await buildMentionEntities(client, templateWithFields, values, outgoingMessage);
-
 
     if (uploadedFilePath) {
       const sent = await client.sendFile(targetEntity, {
@@ -1654,29 +1651,190 @@ router.post('/send', upload.single('file'), (req, res, next) => {
         formattingEntities: outgoingMentionEntities
       });
       const sentMessage = normalizeSentMessage(sent);
-      saveRequestHistory({
-        template,
-        messageId: sentMessage?.id,
-        messageText: outgoingMessage,
-        values,
-        req
-      });
-    } else {
-      const sent = await client.sendMessage(targetEntity, {
-        message: outgoingMessage,
-        formattingEntities: outgoingMentionEntities
-      });
-      saveRequestHistory({
-        template,
-        messageId: sent?.id,
-        messageText: outgoingMessage,
-        values,
-        req
-      });
+      saveRequestHistory({ template, messageId: sentMessage?.id, messageText: outgoingMessage, values, req: reqMeta });
+      return { message, messageId: sentMessage?.id || null };
     }
 
-    res.json({ success: true, message });
+    const sent = await client.sendMessage(targetEntity, {
+      message: outgoingMessage,
+      formattingEntities: outgoingMentionEntities
+    });
+    saveRequestHistory({ template, messageId: sent?.id, messageText: outgoingMessage, values, req: reqMeta });
+    return { message, messageId: sent?.id || null };
+  } finally {
+    if (tempDocxRoot) {
+      fs.rmSync(tempDocxRoot, { recursive: true, force: true });
+    }
+  }
+};
+
+let scheduledRequestsProcessing = false;
+const processScheduledRequests = async () => {
+  if (scheduledRequestsProcessing) return;
+  scheduledRequestsProcessing = true;
+  try {
+    const rows = db.central.prepare(`
+      SELECT *
+      FROM scheduled_requests
+      WHERE status = 'pending' AND datetime(scheduled_at) <= datetime('now')
+      ORDER BY datetime(scheduled_at) ASC, id ASC
+      LIMIT 5
+    `).all();
+
+    for (const row of rows) {
+      const locked = db.central.prepare(`
+        UPDATE scheduled_requests
+        SET status = 'sending', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'pending'
+      `).run(row.id);
+      if (!locked.changes) continue;
+
+      try {
+        let values = {};
+        try { values = row.values_json ? JSON.parse(row.values_json) : {}; } catch (_) {}
+        const result = await context.runWithContext({ userId: row.created_by_user_id }, () => dispatchRequestNow({
+          templateId: row.template_id,
+          values,
+          uploadedFilePath: row.attachment_path || null,
+          uploadedOriginalName: row.attachment_name || null,
+          userId: row.created_by_user_id || null,
+          username: row.created_by_username || null
+        }));
+        db.central.prepare(`
+          UPDATE scheduled_requests
+          SET status = 'sent', message_id = ?, sent_at = ?, updated_at = CURRENT_TIMESTAMP, last_error = NULL
+          WHERE id = ?
+        `).run(Number.isFinite(Number(result?.messageId)) ? Number(result.messageId) : null, new Date().toISOString(), row.id);
+      } catch (error) {
+        const message = String(error?.message || error);
+        const isTelegramDisconnected = /Telegram клієнт не підключений/i.test(message);
+        const attempts = isTelegramDisconnected ? Number(row.attempts || 0) : Number(row.attempts || 0) + 1;
+        const retryable = isTelegramDisconnected || attempts < 3;
+        db.central.prepare(`
+          UPDATE scheduled_requests
+          SET status = ?, attempts = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(retryable ? 'pending' : 'failed', attempts, message.slice(0, 1000), row.id);
+      }
+    }
   } catch (error) {
+    console.error('scheduled requests processor error:', error);
+  } finally {
+    scheduledRequestsProcessing = false;
+  }
+};
+
+if (!global.__tgcrmScheduledRequestsTimer) {
+  global.__tgcrmScheduledRequestsTimer = setInterval(processScheduledRequests, 30000);
+  setTimeout(processScheduledRequests, 3000);
+}
+
+router.get('/scheduled', (req, res) => {
+  try {
+    const userId = Number(req.userId || 0);
+    if (!Number.isFinite(userId) || userId <= 0) return res.status(401).json({ error: 'Unauthorized. Please login.' });
+    const rows = db.central.prepare(`
+      SELECT *
+      FROM scheduled_requests
+      WHERE created_by_user_id = ? AND status IN ('pending', 'sending', 'failed')
+      ORDER BY datetime(scheduled_at) ASC, id ASC
+      LIMIT 200
+    `).all(userId);
+    return res.json({ items: rows.map(toScheduledRequestDto) });
+  } catch (error) {
+    console.error('scheduled requests list error:', error);
+    return res.status(500).json({ error: 'Не вдалося завантажити відкладені заявки' });
+  }
+});
+
+router.delete('/scheduled/:id', (req, res) => {
+  try {
+    const id = Number.parseInt(String(req.params.id || ''), 10);
+    const userId = Number(req.userId || 0);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Некоректний ID заявки' });
+    const row = db.central.prepare('SELECT * FROM scheduled_requests WHERE id = ? AND created_by_user_id = ?').get(id, userId);
+    if (!row) return res.status(404).json({ error: 'Відкладену заявку не знайдено' });
+    if (!['pending', 'failed'].includes(String(row.status || ''))) {
+      return res.status(400).json({ error: 'Цю заявку вже не можна скасувати' });
+    }
+    db.central.prepare(`
+      UPDATE scheduled_requests
+      SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(id);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('scheduled request cancel error:', error);
+    return res.status(500).json({ error: 'Не вдалося скасувати відкладену заявку' });
+  }
+});
+
+router.post('/send', upload.single('file'), (req, res, next) => {
+  const userId = req.userId || context.getUserId();
+  if (userId) {
+    context.runWithContext({ userId }, next);
+  } else {
+    next();
+  }
+}, async (req, res) => {
+  const templateId = req.body.templateId;
+  let values = req.body.values;
+  if (typeof values === 'string') {
+    try { values = JSON.parse(values); } catch (_) { values = {}; }
+  }
+
+  let uploadedFilePath = null;
+  let uploadedOriginalName = null;
+
+  try {
+    const scheduledAt = normalizeScheduledAt(req.body.scheduleAt);
+    const isScheduled = Boolean(scheduledAt);
+    if (isScheduled && new Date(scheduledAt).getTime() <= Date.now() + 30000) {
+      return res.status(400).json({ error: 'Оберіть час відправлення хоча б на 1 хвилину вперед' });
+    }
+
+    const { template } = loadRequestTemplateForSend(templateId, values);
+    const prepared = await prepareRequestUploadFile(req.file);
+    uploadedFilePath = prepared.uploadedFilePath;
+    uploadedOriginalName = prepared.uploadedOriginalName;
+
+    if (isScheduled) {
+      const info = db.central.prepare(`
+        INSERT INTO scheduled_requests (
+          template_id, template_code, template_title, target_chat_id, target_chat_name,
+          values_json, attachment_path, attachment_name, scheduled_at, status,
+          created_by_user_id, created_by_username, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(
+        Number(template.id),
+        String(template.code || ''),
+        String(template.title || ''),
+        String(template.target_chat_id || ''),
+        String(template.target_chat_name || ''),
+        JSON.stringify(values || {}),
+        uploadedFilePath || null,
+        uploadedOriginalName || null,
+        scheduledAt,
+        req.userId || null,
+        req.username || null
+      );
+      const row = db.central.prepare('SELECT * FROM scheduled_requests WHERE id = ?').get(Number(info.lastInsertRowid));
+      return res.json({ success: true, scheduled: true, item: toScheduledRequestDto(row) });
+    }
+
+    const result = await dispatchRequestNow({
+      templateId,
+      values,
+      uploadedFilePath,
+      uploadedOriginalName,
+      userId: req.userId || null,
+      username: req.username || null
+    });
+    return res.json({ success: true, message: result.message });
+  } catch (error) {
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+    }
     console.error('requests/send error:', {
       templateId,
       templateCode: String(req.body?.templateCode || ''),
@@ -1685,17 +1843,15 @@ router.post('/send', upload.single('file'), (req, res, next) => {
       message: error?.message || String(error),
       stack: error?.stack || null
     });
+    const statusCode = Number(error?.statusCode || 500);
     const rawMessage = String(error?.message || '').trim();
     const safeMessage = rawMessage && !/^internal server error$/i.test(rawMessage)
       ? rawMessage
       : 'Помилка відправки заяви. Перевірте підключення Telegram і шаблон.';
-    res.status(500).json({ error: safeMessage });
-  } finally {
-    if (tempDocxRoot) {
-      fs.rmSync(tempDocxRoot, { recursive: true, force: true });
-    }
+    return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({ error: safeMessage });
   }
 });
+
 
 router.get('/history', (req, res) => {
   try {
