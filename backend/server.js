@@ -226,6 +226,16 @@ app.post('/api/system/login', authLimiter, async (req, res) => {
   }
 });
 
+app.get('/api/system/me', verifyAuthToken, (req, res) => {
+  res.json({
+    user: {
+      id: req.userId,
+      username: req.username,
+      role: req.userRole
+    }
+  });
+});
+
 app.patch('/api/system/users/:id/role', verifyAuthToken, requireAdmin, (req, res) => {
   try {
     const targetUserId = Number.parseInt(req.params.id, 10);

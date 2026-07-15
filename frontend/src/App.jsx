@@ -152,14 +152,45 @@ function App({ currentUser: initialUser }) {
   const [activeTab, setActiveTab] = useState('messenger');
   const [currentUser, setCurrentUser] = useState(initialUser || localStorage.getItem('saas_username') || null);
   useEffect(() => {
-      try {
-          const token = localStorage.getItem('saas_token');
+      let cancelled = false;
+      const applyLocalAdminHint = () => {
+          try {
+              const token = localStorage.getItem('saas_token');
+              const username = String(localStorage.getItem('saas_username') || '').toLowerCase();
+              const byOwnerLogin = username === 'villomi' || username === 'olegvillomi';
+              if (!token) {
+                  setIsSystemAdmin(byOwnerLogin);
+                  return byOwnerLogin;
+              }
+              const payload = JSON.parse(atob(token.split('.')[1] || ''));
+              const byRole = String(payload?.role || '') === 'admin';
+              setIsSystemAdmin(byRole || byOwnerLogin);
+              return byRole || byOwnerLogin;
+          } catch (_) {
+              return false;
+          }
+      };
+
+      applyLocalAdminHint();
+
+      const syncAdminRole = async () => {
+          const token = String(localStorage.getItem('saas_token') || '').trim();
           if (!token) return;
-          const payload = JSON.parse(atob(token.split('.')[1] || ''));
-          const byRole = String(payload?.role || '') === 'admin';
-          const byOwnerLogin = String(localStorage.getItem('saas_username') || '').toLowerCase() === 'villomi';
-          setIsSystemAdmin(byRole || byOwnerLogin);
-      } catch (_) {}
+          try {
+              const res = await fetch(buildApiUrlWithToken('/system/me'), { cache: 'no-store' });
+              const data = await parseApiJson(res, 'Не вдалося перевірити користувача');
+              if (cancelled) return;
+              const username = String(data?.user?.username || localStorage.getItem('saas_username') || '').toLowerCase();
+              const byOwnerLogin = username === 'villomi' || username === 'olegvillomi';
+              setCurrentUser(data?.user?.username || localStorage.getItem('saas_username') || null);
+              setIsSystemAdmin(String(data?.user?.role || '') === 'admin' || byOwnerLogin);
+          } catch (_) {
+              if (!cancelled) applyLocalAdminHint();
+          }
+      };
+
+      syncAdminRole();
+      return () => { cancelled = true; };
   }, []);
   const [isCompactLayout, setIsCompactLayout] = useState(() => (
       typeof window !== 'undefined' ? window.innerWidth < 1200 : false
@@ -3619,7 +3650,7 @@ function App({ currentUser: initialUser }) {
       if (!isSystemAdmin) return;
       setLoadingAdminUsers(true);
       try {
-          const res = await fetch(`${API_URL}/system/users`);
+          const res = await fetch(buildApiUrlWithToken('/system/users'), { cache: 'no-store' });
           const data = await parseApiJson(res, 'Не вдалося завантажити користувачів');
           const users = Array.isArray(data?.users) ? data.users : [];
           setAdminUsers(users);
@@ -3633,7 +3664,7 @@ function App({ currentUser: initialUser }) {
   const loadAdminPermissions = async (userId) => {
       if (!isSystemAdmin || !userId) return;
       try {
-          const res = await fetch(`${API_URL}/system/users/${userId}/permissions`);
+          const res = await fetch(buildApiUrlWithToken(`/system/users/${userId}/permissions`), { cache: 'no-store' });
           const data = await parseApiJson(res, 'Не вдалося завантажити доступи');
           setSelectedAdminPermissions(data?.permissions || {});
       } catch (error) {
@@ -3643,7 +3674,7 @@ function App({ currentUser: initialUser }) {
 
   const handleAdminRoleChange = async (userId, role) => {
       try {
-          const res = await fetch(`${API_URL}/system/users/${userId}/role`, {
+          const res = await fetch(buildApiUrlWithToken(`/system/users/${userId}/role`), {
               method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role })
           });
           const data = await parseApiJson(res, 'Не вдалося змінити роль');
@@ -3657,7 +3688,7 @@ function App({ currentUser: initialUser }) {
       if (!selectedAdminUserId) return;
       try {
           const patch = { [key]: value };
-          const res = await fetch(`${API_URL}/system/users/${selectedAdminUserId}/permissions`, {
+          const res = await fetch(buildApiUrlWithToken(`/system/users/${selectedAdminUserId}/permissions`), {
               method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ permissions: patch })
           });
           const data = await parseApiJson(res, 'Не вдалося оновити доступ');
