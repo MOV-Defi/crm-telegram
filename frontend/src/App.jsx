@@ -1435,84 +1435,107 @@ function App({ currentUser: initialUser }) {
 
   useEffect(() => {
     let intervalMessages;
-    if (isAuthenticated && selectedDialog) {
+    let pollInFlight = false;
+    let activeController = null;
+    if (activeTab === 'messenger' && isAuthenticated && selectedDialog) {
         const dialogId = String(selectedDialog.id);
-        const pollMessages = () => {
-            fetch(buildMessagesUrl(dialogId, { limit: 80, v: Date.now() }, selectedDialog), { cache: 'no-store' })
-              .then(res => res.json())
-              .then(data => {
-                  if (activeDialogIdRef.current === dialogId && Array.isArray(data)) {
-                      setMessages(prev => mergeMessagesForDialog(dialogId, [...prev, ...data]));
-                  }
-              })
-              .catch(console.error);
+        const pollMessages = async () => {
+            if (pollInFlight) return;
+            pollInFlight = true;
+            activeController = new AbortController();
+            try {
+              const res = await fetch(buildMessagesUrl(dialogId, { limit: 80, v: Date.now() }, selectedDialog), {
+                cache: 'no-store',
+                signal: activeController.signal
+              });
+              const data = await res.json();
+              if (activeDialogIdRef.current === dialogId && Array.isArray(data)) {
+                  setMessages(prev => mergeMessagesForDialog(dialogId, [...prev, ...data]));
+              }
+            } catch (error) {
+              if (error?.name !== 'AbortError') console.error(error);
+            } finally {
+              pollInFlight = false;
+              activeController = null;
+            }
         };
         intervalMessages = setInterval(pollMessages, 10000);
     }
-    return () => clearInterval(intervalMessages);
-  }, [isAuthenticated, selectedDialog?.id, localOutgoingMessagesByChat]);
+    return () => {
+      clearInterval(intervalMessages);
+      activeController?.abort();
+    };
+  }, [activeTab, isAuthenticated, selectedDialog?.id, localOutgoingMessagesByChat]);
 
   useEffect(() => {
       let intervalDialogs;
-      if (isAuthenticated) {
+      let pollInFlight = false;
+      let activeController = null;
+      if (activeTab === 'messenger' && isAuthenticated) {
           const fetchInitial = () => {
-              fetch(`${API_URL}/chat/local_pins?v=${Date.now()}`, { cache: 'no-store' })
+              fetch(API_URL + '/chat/local_pins?v=' + Date.now(), { cache: 'no-store' })
                 .then(res => res.json())
                 .then(data => { if (Array.isArray(data)) setLocalPins(data); })
                 .catch(console.error);
 
-              fetch(`${API_URL}/chat/dialogs?v=${Date.now()}`, { cache: 'no-store' })
+              fetch(API_URL + '/chat/dialogs?v=' + Date.now(), { cache: 'no-store' })
                 .then(res => res.json())
                 .then(data => {
                     if (Array.isArray(data)) setDialogs(data.sort((a,b) => b.date - a.date));
                 })
                 .catch(console.error);
 
-              fetch(`${API_URL}/chat/folders?v=${Date.now()}`, { cache: 'no-store' })
+              fetch(API_URL + '/chat/folders?v=' + Date.now(), { cache: 'no-store' })
                 .then(res => res.json())
-                .then(data => {
-                    if (Array.isArray(data)) setFolders(data);
-                })
+                .then(data => { if (Array.isArray(data)) setFolders(data); })
                 .catch(console.error);
-
-              fetch(`${API_URL}/tags?v=${Date.now()}`, { cache: 'no-store' }).then(r=>r.json()).then(data => Array.isArray(data) && setTags(data)).catch(()=>{});
-              fetch(`${API_URL}/tags/assignments?v=${Date.now()}`, { cache: 'no-store' }).then(r=>r.json()).then(data => Array.isArray(data) && setAssignments(data)).catch(()=>{});
+              fetch(API_URL + '/tags?v=' + Date.now(), { cache: 'no-store' })
+                .then(r => r.json()).then(data => Array.isArray(data) && setTags(data)).catch(() => {});
+              fetch(API_URL + '/tags/assignments?v=' + Date.now(), { cache: 'no-store' })
+                .then(r => r.json()).then(data => Array.isArray(data) && setAssignments(data)).catch(() => {});
           };
 
-          const pollUpdates = () => {
-              fetch(`${API_URL}/chat/local_pins?v=${Date.now()}`, { cache: 'no-store' })
-                .then(res => res.json())
-                .then(data => { if (Array.isArray(data)) setLocalPins(data); })
-                .catch(console.error);
-
-              // Only pull top 50 to prevent freezing backend every 10 seconds
-              fetch(`${API_URL}/chat/dialogs?limit=50&v=${Date.now()}`, { cache: 'no-store' })
-                .then(res => res.json())
-                .then(data => {
-                    if (Array.isArray(data)) {
-                        setDialogs(prev => {
-                            const map = new Map(prev.map(d => [d.id, d]));
-                            data.forEach(d => map.set(d.id, d));
-                            return Array.from(map.values()).sort((a, b) => b.date - a.date);
-                        });
-                    }
-                })
-                .catch(console.error);
-              // Also update folders quietly
-              fetch(`${API_URL}/chat/folders?v=${Date.now()}`, { cache: 'no-store' })
-                .then(res => res.json())
-                .then(data => { if (Array.isArray(data)) setFolders(data); }).catch(console.error);
+          const pollUpdates = async () => {
+              if (pollInFlight) return;
+              pollInFlight = true;
+              activeController = new AbortController();
+              try {
+                const signal = activeController.signal;
+                const [pinsRes, dialogsRes, foldersRes] = await Promise.all([
+                  fetch(API_URL + '/chat/local_pins?v=' + Date.now(), { cache: 'no-store', signal }),
+                  fetch(API_URL + '/chat/dialogs?limit=50&v=' + Date.now(), { cache: 'no-store', signal }),
+                  fetch(API_URL + '/chat/folders?v=' + Date.now(), { cache: 'no-store', signal })
+                ]);
+                const [pins, data, foldersData] = await Promise.all([
+                  pinsRes.json(), dialogsRes.json(), foldersRes.json()
+                ]);
+                if (Array.isArray(pins)) setLocalPins(pins);
+                if (Array.isArray(data)) {
+                    setDialogs(prev => {
+                        const map = new Map(prev.map(d => [d.id, d]));
+                        data.forEach(d => map.set(d.id, d));
+                        return Array.from(map.values()).sort((a, b) => b.date - a.date);
+                    });
+                }
+                if (Array.isArray(foldersData)) setFolders(foldersData);
+              } catch (error) {
+                if (error?.name !== 'AbortError') console.error(error);
+              } finally {
+                pollInFlight = false;
+                activeController = null;
+              }
           };
 
           setLoadingDialogs(true);
           fetchInitial();
           setLoadingDialogs(false);
-
-          // Force-polling for dialogs (sidebar updates)
           intervalDialogs = setInterval(pollUpdates, 10000);
       }
-      return () => clearInterval(intervalDialogs);
-  }, [isAuthenticated]);
+      return () => {
+        clearInterval(intervalDialogs);
+        activeController?.abort();
+      };
+  }, [activeTab, isAuthenticated]);
 
   useEffect(() => {
       if (activeTab === 'crm' || activeTab === 'bulk' || activeTab === 'tagsManager' || activeTab === 'requests' || activeTab === 'tasks' || activeTab === 'documentTemplates') {

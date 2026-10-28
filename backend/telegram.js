@@ -21,6 +21,7 @@ const loadTelegramDependencies = () => {
 
 const { TelegramClient, StringSession, ConnectionTCPObfuscated, ConnectionTCPAbridged } = loadTelegramDependencies();
 const db = require('./db');
+const { getTelegramApiSettings } = require('./telegram-api-settings');
 const context = require('./context');
 const runtimePaths = require('./runtime-paths');
 const fs = require('fs');
@@ -47,6 +48,8 @@ const TELEGRAM_CONNECTION_RETRIES = parsePositiveInt(process.env.TELEGRAM_CONNEC
 const TELEGRAM_RETRY_DELAY_MS = parsePositiveInt(process.env.TELEGRAM_RETRY_DELAY_MS, 1500);
 const TELEGRAM_USE_HTTPS_PORT = parseBooleanEnv(process.env.TELEGRAM_USE_HTTPS_PORT, true);
 const TELEGRAM_CONNECTION_MODE = String(process.env.TELEGRAM_CONNECTION_MODE || 'obfuscated').trim().toLowerCase();
+const TELEGRAM_IDLE_TIMEOUT_MS = parsePositiveInt(process.env.TELEGRAM_IDLE_TIMEOUT_MINUTES, 5) * 60 * 1000;
+const TELEGRAM_STATE_RETENTION_MS = parsePositiveInt(process.env.TELEGRAM_STATE_RETENTION_MINUTES, 30) * 60 * 1000;
 
 const getTelegramConnectionClass = () => {
     if (TELEGRAM_CONNECTION_MODE === 'abridged') return ConnectionTCPAbridged;
@@ -89,11 +92,43 @@ const getTenantState = () => {
             authErrorLogged: false,
             apiId: null,
             apiHash: null,
-            sessionString: ''
+            sessionString: '',
+            initPromise: null,
+            connectPromise: null,
+            lastUsedAt: Date.now()
         });
     }
     return clientsData.get(userId);
 };
+
+const touchTelegramState = (state) => {
+    if (state) state.lastUsedAt = Date.now();
+};
+
+const sweepIdleTelegramClients = () => {
+    const now = Date.now();
+    for (const [userId, state] of clientsData) {
+        if (state.initPromise || state.connectPromise || state.authFlowActive) continue;
+
+        if (state.client && state.client.connected && now - Number(state.lastUsedAt || 0) >= TELEGRAM_IDLE_TIMEOUT_MS) {
+            const client = state.client;
+            console.log(`[User ${userId}] Відключаю неактивний Telegram-клієнт для економії RAM.`);
+            client.disconnect().catch((error) => {
+                console.warn(`[User ${userId}] Не вдалося відключити неактивний Telegram-клієнт:`, error?.message || error);
+            });
+            state.client = null;
+            state.clientOwnerUserId = null;
+            state.lastUsedAt = now;
+        }
+
+        if (!state.client && now - Number(state.lastUsedAt || 0) >= TELEGRAM_STATE_RETENTION_MS) {
+            clientsData.delete(userId);
+        }
+    }
+};
+
+const telegramIdleSweepTimer = setInterval(sweepIdleTelegramClients, 60 * 1000);
+telegramIdleSweepTimer.unref?.();
 
 const resetAuthState = (state) => {
     state.authCache = { phoneNumber: null, phoneCode: null, password: null };
@@ -263,6 +298,10 @@ const withTimeout = (promise, timeoutMs, label) => {
 };
 
 const connectTelegramClient = async (state, reason = 'connect') => {
+    touchTelegramState(state);
+    if (state.connectPromise) return state.connectPromise;
+
+    state.connectPromise = (async () => {
     if (!state.client) {
         throw new Error('Telegram клієнт не ініціалізовано');
     }
@@ -287,6 +326,7 @@ const connectTelegramClient = async (state, reason = 'connect') => {
             try {
                 console.log(`[User ${context.getUserId()}] Telegram ${reason}: ${profileName} attempt ${attempt}/${attemptsPerProfile}`);
                 await withTimeout(state.client.connect(), timeoutMs, 'Telegram connect');
+                touchTelegramState(state);
                 console.log(`[User ${context.getUserId()}] Telegram ${reason}: connected via ${profileName}`);
                 return state.client;
             } catch (error) {
@@ -304,12 +344,31 @@ const connectTelegramClient = async (state, reason = 'connect') => {
     }
 
     throw lastError || new Error('Telegram connect failed');
+
+    })().finally(() => {
+        state.connectPromise = null;
+    });
+
+    return state.connectPromise;
 };
 
 const initTelegramClient = async (apiId, apiHash) => {
   const state = getTenantState();
+  touchTelegramState(state);
+  if (state.client?.connected && String(state.apiId) === String(apiId) && String(state.apiHash) === String(apiHash)) {
+    return state.client;
+  }
+  if (state.initPromise) return state.initPromise;
+
+  state.initPromise = (async () => {
   const userId = context.getUserId();
   const sessionString = getSession();
+  const previousClient = state.client;
+  if (previousClient) {
+    try {
+      await previousClient.disconnect();
+    } catch (_) {}
+  }
   resetAuthState(state);
   state.apiId = apiId;
   state.apiHash = apiHash;
@@ -338,6 +397,11 @@ const initTelegramClient = async (apiId, apiHash) => {
   }
 
   return state.client;
+  })().finally(() => {
+    state.initPromise = null;
+  });
+
+  return state.initPromise;
 };
 
 const getAuthStep = () => {
@@ -354,6 +418,7 @@ const getAuthStep = () => {
 
 const startAuthFlow = async () => {
     const state = getTenantState();
+    touchTelegramState(state);
     if (!state.client) {
         return { success: false, error: 'Telegram клієнт не ініціалізовано' };
     }
@@ -404,6 +469,7 @@ const startAuthFlow = async () => {
 const resolveAuthStep = (step, value) => {
     try {
         const state = getTenantState();
+        touchTelegramState(state);
         if (!String(value || '').trim()) return false;
         if (state.authResolvers[step]) {
             state.authCache[step] = value;
@@ -425,6 +491,7 @@ const getClient = () => {
     try {
         const state = getTenantState();
         const currentUserId = context.getUserId();
+        if (state.client?.connected) touchTelegramState(state);
         if (state.client && state.clientOwnerUserId !== currentUserId) {
             console.warn(`[User ${currentUserId}] Blocked foreign telegram client reuse (owner: ${state.clientOwnerUserId}).`);
             return null;
@@ -444,6 +511,20 @@ const getAuthError = () => {
     }
 };
 
+const getReadyTelegramClient = async () => {
+    const state = getTenantState();
+    touchTelegramState(state);
+
+    if (state.client?.connected) return state.client;
+    if (state.authFlowActive) return null;
+
+    const { apiId, apiHash } = getTelegramApiSettings();
+    if (!apiId || !apiHash) return null;
+
+    const client = await initTelegramClient(apiId, apiHash);
+    return client?.connected ? client : null;
+};
+
 const disconnectTelegramClient = async () => {
     try {
         const state = getTenantState();
@@ -457,6 +538,7 @@ const disconnectTelegramClient = async () => {
         resetAuthState(state);
         state.authFlowPromise = null;
         state.authFlowActive = false;
+        state.lastUsedAt = 0;
     } catch (e) {}
 };
 
@@ -478,6 +560,7 @@ const logoutTelegramClient = async () => {
         resetAuthState(state);
         state.authFlowPromise = null;
         state.authFlowActive = false;
+        state.lastUsedAt = 0;
         db.prepare("DELETE FROM settings WHERE key = 'tg_session'").run();
         try {
           const filePath = getSessionFilePath(userId);
@@ -491,6 +574,7 @@ module.exports = {
     startAuthFlow,
     resolveAuthStep,
     getClient,
+    getReadyTelegramClient,
     getAuthStep,
     getAuthError,
     disconnectTelegramClient,

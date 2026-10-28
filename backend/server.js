@@ -47,6 +47,15 @@ app.use(express.json());
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX_ATTEMPTS = 20;
 const authAttemptMap = new Map();
+const MAX_AUTH_ATTEMPT_ENTRIES = 5000;
+const cleanupAuthAttemptMap = (now) => {
+  for (const [key, value] of authAttemptMap) {
+    if (Number(value?.resetAt || 0) <= now) authAttemptMap.delete(key);
+  }
+  while (authAttemptMap.size > MAX_AUTH_ATTEMPT_ENTRIES) {
+    authAttemptMap.delete(authAttemptMap.keys().next().value);
+  }
+};
 
 const base64UrlEncode = (value) => Buffer.from(value).toString('base64url');
 const base64UrlDecodeJson = (value) => JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
@@ -83,6 +92,7 @@ const getClientIp = (req) =>
 const authLimiter = (req, res, next) => {
   const key = `${getClientIp(req)}:${req.path}`;
   const now = Date.now();
+  cleanupAuthAttemptMap(now);
   const state = authAttemptMap.get(key);
 
   if (!state || now > state.resetAt) {
@@ -534,7 +544,6 @@ app.use('/api/projects', projectsRoutes);
 
 const TELEGRAM_BOT_API = 'https://api.telegram.org';
 const APP_TIME_ZONE = 'Europe/Kiev';
-const sentRepeatCache = new Map();
 const sendBotMessageForUser = async (userId, text) => {
   return context.runWithContext({ userId }, async () => {
     const enabled = String(db.prepare("SELECT value FROM settings WHERE key='bot_enabled'").get()?.value || '0') === '1';
@@ -542,13 +551,23 @@ const sendBotMessageForUser = async (userId, text) => {
     const token = String(db.prepare("SELECT value FROM settings WHERE key='bot_token'").get()?.value || '').trim();
     const chatId = String(db.prepare("SELECT value FROM settings WHERE key='bot_chat_id'").get()?.value || '').trim();
     if (!token || !chatId) return false;
-    const r = await fetch(`${TELEGRAM_BOT_API}/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: String(text || '') })
-    });
-    const data = await r.json().catch(() => ({}));
-    return !!(r.ok && data?.ok);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const r = await fetch(`${TELEGRAM_BOT_API}/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: String(text || '') }),
+        signal: controller.signal
+      });
+      const data = await r.json().catch(() => ({}));
+      return !!(r.ok && data?.ok);
+    } catch (error) {
+      console.warn(`[User ${userId}] Bot API request failed:`, error?.message || error);
+      return false;
+    } finally {
+      clearTimeout(timeout);
+    }
   });
 };
 
@@ -654,7 +673,10 @@ const buildTaskDailyDigestText = (dailyTasks, today) => {
   return [...header, ...rows].join('\n');
 };
 
-setInterval(async () => {
+let taskSchedulerProcessing = false;
+const taskSchedulerInterval = setInterval(async () => {
+  if (taskSchedulerProcessing) return;
+  taskSchedulerProcessing = true;
   try {
     const users = db.central.prepare('SELECT id FROM users').all();
     const { today, nowTime } = getAppNowParts();
@@ -674,12 +696,6 @@ setInterval(async () => {
           if (!Number.isFinite(ts) || ts > Date.now()) continue;
           if (!task.reminderRepeat && task.reminderSentAt) continue;
 
-          const key = `${u.id}:${task.id}:${task.reminderAt}`;
-          if (task.reminderRepeat) {
-            const repeatKey = `${key}:${today}:${nowTime}`;
-            if (sentRepeatCache.has(repeatKey)) continue;
-            sentRepeatCache.set(repeatKey, Date.now());
-          }
           const ok = await sendBotMessageForUser(u.id, `Нагадування по задачі\nЗадача: ${task.title || 'Без назви'}`);
           if (!ok) continue;
 
@@ -751,8 +767,11 @@ setInterval(async () => {
     }
   } catch (e) {
     console.error('Task scheduler error:', e.message);
+  } finally {
+    taskSchedulerProcessing = false;
   }
 }, 60000);
+taskSchedulerInterval.unref?.();
 
 // Сервінг фронтенду
 const resolveFrontendDistDir = () => {

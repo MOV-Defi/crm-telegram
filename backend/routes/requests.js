@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const context = require('../context');
 const runtimePaths = require('../runtime-paths');
-const { getClient } = require('../telegram');
+const { getReadyTelegramClient } = require('../telegram');
 const multer = require('multer');
 const fs = require('fs');
 const os = require('os');
@@ -1588,7 +1588,7 @@ const dispatchRequestNow = async ({ templateId, values, uploadedFilePath = null,
   let tempDocxRoot = null;
   try {
     const { template, templateWithFields } = loadRequestTemplateForSend(templateId, values);
-    const client = getClient();
+    const client = await getReadyTelegramClient();
     if (!client || !client.connected) {
       const error = new Error('Telegram клієнт не підключений');
       error.statusCode = 503;
@@ -1726,7 +1726,9 @@ const processScheduledRequests = async () => {
 
 if (!global.__tgcrmScheduledRequestsTimer) {
   global.__tgcrmScheduledRequestsTimer = setInterval(processScheduledRequests, 30000);
-  setTimeout(processScheduledRequests, 3000);
+  global.__tgcrmScheduledRequestsTimer.unref?.();
+  const initialScheduledRequestsTimer = setTimeout(processScheduledRequests, 3000);
+  initialScheduledRequestsTimer.unref?.();
 }
 
 router.get('/scheduled', (req, res) => {

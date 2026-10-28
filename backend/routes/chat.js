@@ -23,6 +23,33 @@ const mediaRetryAfterByMessage = new Map();
 const MEDIA_RETRY_MS = 15 * 60 * 1000;
 const MEDIA_BATCH_LIMIT = 4;
 const MEDIA_REQUEST_DELAY_MS = 1300;
+const MAX_SENDER_ENTITY_CACHE = 5000;
+const MAX_RETRY_CACHE_ENTRIES = 10000;
+const backgroundJobsInFlight = new Map();
+
+const getScopedCacheKey = (userId, value) => String(userId || 'anonymous') + ':' + String(value);
+
+const cleanupChatRuntimeCaches = () => {
+  const now = Date.now();
+  for (const [key, value] of senderEntityRuntimeCache) {
+    if (!value || now - Number(value.ts || 0) >= SENDER_ENTITY_TTL_MS) senderEntityRuntimeCache.delete(key);
+  }
+  for (const [key, value] of avatarRetryAfterByEntity) {
+    if (Number(value || 0) <= now) avatarRetryAfterByEntity.delete(key);
+  }
+  for (const [key, value] of mediaRetryAfterByMessage) {
+    if (Number(value || 0) <= now) mediaRetryAfterByMessage.delete(key);
+  }
+  while (senderEntityRuntimeCache.size > MAX_SENDER_ENTITY_CACHE) {
+    senderEntityRuntimeCache.delete(senderEntityRuntimeCache.keys().next().value);
+  }
+  while (avatarRetryAfterByEntity.size > MAX_RETRY_CACHE_ENTRIES) {
+    avatarRetryAfterByEntity.delete(avatarRetryAfterByEntity.keys().next().value);
+  }
+  while (mediaRetryAfterByMessage.size > MAX_RETRY_CACHE_ENTRIES) {
+    mediaRetryAfterByMessage.delete(mediaRetryAfterByMessage.keys().next().value);
+  }
+};
 
 const isAvatarTransientError = (error) => {
   const text = String(error?.message || error || '').toLowerCase();
@@ -279,6 +306,7 @@ const buildInputDialogPeer = async (client, peerCandidate) => {
 
 router.get('/dialogs', async (req, res) => {
   try {
+    cleanupChatRuntimeCaches();
     let client = getClient();
     if (!client || !client.connected) {
       const idRow = db.prepare("SELECT value FROM settings WHERE key = 'api_id'").get();
@@ -348,18 +376,23 @@ router.get('/dialogs', async (req, res) => {
     res.json(formattedDialogs);
 
     const userId = context.getUserId();
+    const backgroundKey = 'dialogs:' + String(userId);
+    if (backgroundJobsInFlight.has(backgroundKey)) return;
+    backgroundJobsInFlight.set(backgroundKey, true);
+    const backgroundDialogs = dialogs.slice(0, 100);
     setTimeout(() => {
         context.runWithContext({ userId }, async () => {
+          try {
             const uploadDir = runtimePaths.avatarsDir;
             if(!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, {recursive: true});
 
             // Ліниве завантаження: обмежений батч, щоб не навантажувати Telegram API.
             let processed = 0;
-            for (const dialog of dialogs) {
+            for (const dialog of backgroundDialogs) {
                 if (processed >= AVATAR_BATCH_LIMIT) break;
                 const id = dialog.entity?.id ? dialog.entity.id.toString() : null;
                 if (id && dialog.entity && !avatarMap.has(id)) {
-                    const blockedUntil = avatarRetryAfterByEntity.get(id) || 0;
+                    const blockedUntil = avatarRetryAfterByEntity.get(getScopedCacheKey(userId, id)) || 0;
                     if (Date.now() < blockedUntil) continue;
                     try {
                         // isBig: false завантажує малу версію дуже швидко (відвертає зависання)
@@ -381,7 +414,7 @@ router.get('/dialogs', async (req, res) => {
                         }
                     } catch (e) {
                        if (isAvatarTransientError(e)) {
-                         avatarRetryAfterByEntity.set(id, Date.now() + AVATAR_RETRY_MS);
+                         avatarRetryAfterByEntity.set(getScopedCacheKey(userId, id), Date.now() + AVATAR_RETRY_MS);
                          console.warn(`[User ${userId}] Пропускаю аватар ${id} на 10 хв: ${e.message}`);
                        } else {
                          console.error(`[User ${userId}] Помилка аватару ${id}:`, e.message);
@@ -392,6 +425,11 @@ router.get('/dialogs', async (req, res) => {
                     await new Promise(r => setTimeout(r, AVATAR_REQUEST_DELAY_MS));
                 }
             }
+          } finally {
+            backgroundJobsInFlight.delete(backgroundKey);
+          }
+        }).catch((error) => {
+          console.error(`[User ${userId}] Фонове оновлення аватарів діалогів:`, error?.message || error);
         });
     }, 100);
 
@@ -597,6 +635,7 @@ router.delete('/folders/:id', async (req, res) => {
 
 router.get('/messages/:id', async (req, res) => {
   try {
+    cleanupChatRuntimeCaches();
     const client = getClient();
     if (!client || !client.connected) {
       return res.status(401).json({ error: 'Telegram клієнт не підключений' });
@@ -807,12 +846,13 @@ router.get('/messages/:id', async (req, res) => {
       for (const entityId of staleAvatarIds) removeAvatarStmt.run(entityId);
     }
 
+    const userIdMessages = context.getUserId();
     const nowTs = Date.now();
     const senderIds = [...new Set(messages.map(m => m.senderId ? m.senderId.toString() : null).filter(Boolean))];
     const entityCache = {};
     const senderEntities = {};
     for (const sid of senderIds) {
-        const cached = senderEntityRuntimeCache.get(sid);
+        const cached = senderEntityRuntimeCache.get(getScopedCacheKey(userIdMessages, sid));
         if (cached && (nowTs - cached.ts) < SENDER_ENTITY_TTL_MS) {
             if (cached.entity) senderEntities[sid] = cached.entity;
             if (cached.name) entityCache[sid] = cached.name;
@@ -825,7 +865,7 @@ router.get('/messages/:id', async (req, res) => {
                 : (ent.title || 'Користувач');
             senderEntities[sid] = ent;
             entityCache[sid] = name;
-            senderEntityRuntimeCache.set(sid, { entity: ent, name, ts: nowTs });
+            senderEntityRuntimeCache.set(getScopedCacheKey(userIdMessages, sid), { entity: ent, name, ts: nowTs });
         } catch (e) {
             // Ігноруємо помилки отримання сутності
         }
@@ -875,9 +915,12 @@ router.get('/messages/:id', async (req, res) => {
 
     res.json(formattedMessages.reverse()); // Щоб старі були зверху
     
-    const userIdMessages = context.getUserId();
+    const backgroundKey = 'messages:' + String(userIdMessages) + ':' + String(rawPeerId);
+    if (backgroundJobsInFlight.has(backgroundKey)) return;
+    backgroundJobsInFlight.set(backgroundKey, true);
     setTimeout(() => {
         context.runWithContext({ userId: userIdMessages }, async () => {
+          try {
             const avatarUploadDir = runtimePaths.avatarsDir;
             if(!fs.existsSync(avatarUploadDir)) fs.mkdirSync(avatarUploadDir, {recursive: true});
 
@@ -886,7 +929,7 @@ router.get('/messages/:id', async (req, res) => {
                 if (processedSenders >= AVATAR_BATCH_LIMIT) break;
                 const entity = senderEntities[sid];
                 if (!entity || avatarMap.has(sid)) continue;
-                const blockedUntil = avatarRetryAfterByEntity.get(sid) || 0;
+                const blockedUntil = avatarRetryAfterByEntity.get(getScopedCacheKey(userIdMessages, sid)) || 0;
                 if (Date.now() < blockedUntil) continue;
 
                 try {
@@ -905,7 +948,7 @@ router.get('/messages/:id', async (req, res) => {
                     }
                 } catch (e) {
                     if (isAvatarTransientError(e)) {
-                      avatarRetryAfterByEntity.set(sid, Date.now() + AVATAR_RETRY_MS);
+                      avatarRetryAfterByEntity.set(getScopedCacheKey(userIdMessages, sid), Date.now() + AVATAR_RETRY_MS);
                       console.warn(`[User ${userIdMessages}] Пропускаю аватар відправника ${sid} на 10 хв: ${e.message}`);
                     } else {
                       console.error(`[User ${userIdMessages}] Помилка аватару відправника ${sid}:`, e.message);
@@ -923,7 +966,7 @@ router.get('/messages/:id', async (req, res) => {
             for (const m of messages) {
                 if (m.media && !mediaMap.has(m.id)) {
                     if (processedMedia >= MEDIA_BATCH_LIMIT) break;
-                    const retryKey = `${rawPeerId}:${m.id}`;
+                    const retryKey = getScopedCacheKey(userIdMessages, rawPeerId + ':' + m.id);
                     const blockedUntil = mediaRetryAfterByMessage.get(retryKey) || 0;
                     if (Date.now() < blockedUntil) continue;
                     try {
@@ -973,6 +1016,11 @@ router.get('/messages/:id', async (req, res) => {
                     }
                 }
             }
+          } finally {
+            backgroundJobsInFlight.delete(backgroundKey);
+          }
+        }).catch((error) => {
+          console.error(`[User ${userIdMessages}] Фонове завантаження медіа повідомлень:`, error?.message || error);
         });
     }, 100);
 
