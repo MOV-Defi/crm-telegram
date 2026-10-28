@@ -215,6 +215,20 @@ const saveSession = (sessionString) => {
   }
 };
 
+const clearStoredSession = (userId) => {
+  try {
+    db.prepare("DELETE FROM settings WHERE key = 'tg_session'").run();
+  } catch (error) {
+    console.warn(`[User ${userId}] Failed to clear stored Telegram session from database:`, error?.message || error);
+  }
+  try {
+    const filePath = getSessionFilePath(userId);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch (error) {
+    console.warn(`[User ${userId}] Failed to clear stored Telegram session file:`, error?.message || error);
+  }
+};
+
 const normalizeTelegramSessionTransport = (stringSession, port = (TELEGRAM_USE_HTTPS_PORT ? 443 : 80)) => {
   if (!port) return;
   const dcId = stringSession.dcId || DEFAULT_TELEGRAM_DC.dcId;
@@ -283,6 +297,12 @@ const isTelegramNetworkError = (error) => {
         message.includes('connection closed') ||
         message.includes('not connected')
     );
+};
+
+const isInvalidTelegramSessionError = (error) => {
+    const message = String(error?.message || error || '').toUpperCase();
+    return ['AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'AUTH_KEY_DUPLICATED', 'USER_DEACTIVATED']
+        .some((marker) => message.includes(marker));
 };
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -383,16 +403,22 @@ const initTelegramClient = async (apiId, apiHash) => {
       return state.client;
     } catch (e) {
       console.error(`[User ${context.getUserId()}] Не вдалося підключитися до Telegram за існуючою сесією:`, e?.message || e);
-      setAuthError(state, e);
+      const invalidSession = isInvalidTelegramSessionError(e);
       try {
         await state.client.disconnect();
       } catch (_) {}
-      state.sessionString = '';
+      if (invalidSession) {
+        clearStoredSession(userId);
+        state.sessionString = '';
+      }
       state.client = createTelegramClient('', apiId, apiHash, getTelegramConnectionProfiles()[0]);
       state.clientOwnerUserId = userId;
       resetAuthState(state);
       state.apiId = apiId;
       state.apiHash = apiHash;
+      setAuthError(state, invalidSession
+        ? new Error('Telegram-сесія більше недійсна. Підключіть Telegram повторно.')
+        : e);
     }
   }
 

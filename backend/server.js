@@ -379,7 +379,7 @@ const waitForTelegramAuthStep = async (userId, expectedSteps, timeoutMs = 12000)
 app.post('/api/auth/start', async (req, res) => {
   try {
     let client = getClient();
-    if (!client) {
+    if (!client || !client.connected) {
       const { apiId: API_ID, apiHash: API_HASH, source: apiSettingsSource } = getTelegramApiSettings();
       if (apiSettingsSource && apiSettingsSource !== 'tenant') {
         console.log(`[User ${req.userId}] Telegram API settings loaded from ${apiSettingsSource}`);
