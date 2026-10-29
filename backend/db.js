@@ -799,6 +799,7 @@ ensureRequestTemplate({
 Проект: {{project_name}}
 Менеджер: {{manager_name}}
 ФОП / компанія закупки: {{legal_entity}}
+Валюта документа: {{document_currency}}
 
 {{items_list}}
 
@@ -813,6 +814,18 @@ ensureRequestTemplate({
     { key: 'project_name', label: 'Проект', type: 'text', required: true, placeholder: 'Назва проекту' },
     { key: 'manager_name', label: 'Менеджер', type: 'text', required: true, placeholder: 'ПІБ менеджера' },
     { key: 'legal_entity', label: 'ФОП / компанія закупки', type: 'text', required: false, placeholder: 'Через який ФОП або компанію закупаємо' },
+    {
+      key: 'document_currency',
+      label: 'Валюта документа',
+      type: 'select',
+      required: true,
+      defaultValue: 'UAH',
+      options: [
+        { value: 'UAH', label: 'грн' },
+        { value: 'USD', label: 'USD ($)' },
+        { value: 'EUR', label: 'EUR (€)' }
+      ]
+    },
     {
       key: 'items_list',
       label: 'Список товарів',

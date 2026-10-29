@@ -1106,6 +1106,7 @@ const writePurchaseDocx = (values, fileNameBase = 'purchase-request') => {
     paragraphXml(`Дата: ${formatted.request_date || ''}`),
     paragraphXml(`Проект: ${formatted.project_name || ''}`),
     paragraphXml(`Менеджер: ${formatted.manager_name || ''}`),
+    paragraphXml(`Валюта документа: ${formatted.document_currency || 'UAH'}`),
     paragraphXml(''),
     buildPurchaseTableXml(rows),
     paragraphXml(''),
