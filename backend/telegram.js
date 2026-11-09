@@ -455,6 +455,7 @@ const startAuthFlow = async () => {
     state.authFlowActive = true;
     
     state.authFlowPromise = (async () => {
+        let authSucceeded = false;
         try {
             console.log(`[User ${context.getUserId()}] Починаємо client.start()...`);
             await connectTelegramClient(state, 'auth start');
@@ -480,6 +481,7 @@ const startAuthFlow = async () => {
             console.log(`[User ${context.getUserId()}] Ви успішно авторизовані!`);
             saveSession(state.client.session.save());
             state.sessionString = state.client.session.save();
+            authSucceeded = true;
             return { success: true };
         } catch (error) {
             const message = setAuthError(state, error);
@@ -487,6 +489,16 @@ const startAuthFlow = async () => {
         } finally {
             state.authFlowActive = false;
             state.authFlowPromise = null;
+            if (!authSucceeded && state.client) {
+                const failedClient = state.client;
+                state.client = null;
+                state.clientOwnerUserId = null;
+                try {
+                    await failedClient.disconnect();
+                } catch (disconnectError) {
+                    console.warn(`[User ${context.getUserId()}] Failed to close Telegram client after auth failure:`, disconnectError?.message || disconnectError);
+                }
+            }
         }
     })();
     return state.authFlowPromise;

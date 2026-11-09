@@ -37,7 +37,7 @@ window.fetch = async (...args) => {
             } catch (_) {
                 errorMessage = '';
             }
-            const isAuthTokenError = /unauthorized|invalid or expired token|invalid token payload|user not found/i.test(errorMessage);
+            const isAuthTokenError = clonedResponse.headers.get('X-Saas-Auth-Error') === '1';
             if (isAuthTokenError) {
                 console.warn('SaaS session expired or invalid. Redirecting to login...');
                 localStorage.removeItem('saas_token');

@@ -149,18 +149,22 @@ const bootstrapAdminFromEnv = async () => {
 };
 
 const verifyAuthToken = (req, res, next) => {
+  const authTokenError = (status, error) => {
+    res.setHeader('X-Saas-Auth-Error', '1');
+    return res.status(status).json({ error });
+  };
   const authHeader = req.headers.authorization;
   const headerToken = authHeader && authHeader.startsWith('Bearer ')
     ? authHeader.slice('Bearer '.length).trim()
     : '';
   const queryToken = String(req.query?.token || '').trim();
   const token = headerToken || queryToken;
-  if (!token) return res.status(401).json({ error: 'Unauthorized. Please login.' });
+  if (!token) return authTokenError(401, 'Unauthorized. Please login.');
   try {
     const decoded = verifyJwtLikeToken(token, JWT_SECRET);
     const userId = Number.parseInt(String(decoded.userId), 10);
     if (!Number.isFinite(userId)) {
-      return res.status(401).json({ error: 'Invalid token payload' });
+      return authTokenError(401, 'Invalid token payload');
     }
 
     // Important: resolve current role from DB on each request.
@@ -169,7 +173,7 @@ const verifyAuthToken = (req, res, next) => {
       .prepare('SELECT id, username, role FROM users WHERE id = ?')
       .get(userId);
     if (!user) {
-      return res.status(401).json({ error: 'User not found' });
+      return authTokenError(401, 'User not found');
     }
 
     req.userId = user.id;
@@ -177,7 +181,7 @@ const verifyAuthToken = (req, res, next) => {
     req.userRole = String(user.role || 'user');
     return context.runWithContext({ userId: user.id }, next);
   } catch (_error) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    return authTokenError(401, 'Invalid or expired token');
   }
 };
 
